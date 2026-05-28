@@ -16,8 +16,13 @@ Distribution hardening:
 - MCP parity now includes `verify_file`, `extract_plan`, and `apply_plan`, with stdio client regression coverage for listing and calling the new tools.
 
 Remaining polish:
-- Real external publish / `npx -y tedit` smoke testing still requires an actual published package.
-- The MCP tool layer is intentionally thin, but future CLI/MCP parity work can further extract `cli.ts` command wrappers into shared command modules.
+- Publish smoke testing is higher priority than internal wrapper refactors:
+  verify `npx -y tedit@<version> --version`, CLI startup, MCP startup, bin
+  shebang/executable bit, package size, and no `postinstall` script from a
+  clean packed or published artifact.
+- The MCP tool layer is intentionally thin. Extract `cli.ts` command wrappers
+  into shared command modules only if CLI/MCP behavior starts to diverge in a
+  way tests cannot comfortably cover.
 
 
 

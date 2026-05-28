@@ -12,9 +12,12 @@ Implemented:
 
 Remaining follow-ups:
 
-- Generalize plan/apply beyond extract component plans.
-- Add true shared-module helper movement as its own high-risk planned step.
-- Add richer `plan inspect` summary output.
+- Keep the current plan schema extract-specific until a second concrete risky
+  refactor use case lands. Do not generalize from the extract shape alone.
+- Add richer `plan inspect` summary output for the existing extract plan before
+  expanding the plan format.
+- Treat true shared-module helper movement as a future high-risk planned step,
+  likely through a separate symbol/file-move command rather than an extract flag.
 
 ## Summary
 
@@ -32,7 +35,9 @@ result.
    safety checks used by normal `tedit` commands.
 
 This keeps simple edits fast while giving risky refactors an explicit decision
-point.
+point. For now, keep this contract scoped to `extract-component-plan`; a generic
+plan schema should wait for a second implemented plan type so the abstraction is
+derived from real differences rather than guessed extension points.
 
 ## Proposed command shape
 

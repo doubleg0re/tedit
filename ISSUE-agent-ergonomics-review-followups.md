@@ -14,11 +14,12 @@ Implemented in v1:
 
 Remaining:
 
-- Backup lifecycle cleanup under a runtime state folder such as
-  `.tedit-state/backups`; `.tedit/` is reserved for the local package sandbox.
-- Agent-default result policy. Agents are the primary caller, so compact
-  `summary` / `files` / `next` should be default, with human/debug verbosity
-  available by opt-in.
+- Agent-default result policy based on the output channel: MCP, pipes,
+  scripts, and CI default to compact machine-readable results; TTY terminal
+  usage stays detailed unless explicitly overridden.
+- Backup lifecycle cleanup under a repo-local `.tedit-cache/backups` cache for
+  v1, with room to move to an XDG state path later. `.tedit/` is reserved for
+  the local package sandbox in this repo.
 
 ## Priority
 
@@ -104,61 +105,83 @@ Acceptance criteria:
 - Regression coverage calls each new MCP tool through a stdio client.
 - README's MCP tool list includes the new generation tools.
 
-### 2. Agent-shaped MCP result mode
+### 2. Compact machine-result mode
 
-Keep existing structured JSON, but add a consistent top-level compact summary
-for MCP responses. The agent should not have to infer the result from nested
-fields.
+Keep existing structured JSON, but add a stable compact result contract for
+machine callers. The default should follow the output channel rather than a
+caller identity:
 
-Suggested common fields:
+- MCP and non-TTY CLI stdout default to compact machine-readable results.
+- TTY CLI stdout stays detailed and human-friendly.
+- Explicit `--output compact|detailed`, `TEDIT_OUTPUT=compact|detailed`, or MCP
+  `output: "compact" | "detailed"` overrides the auto default.
+
+Suggested compact fields:
 
 ```json
 {
   "success": true,
+  "ok": true,
   "changed": true,
   "written": false,
   "summary": "1 file would change; parse verified with tsx",
   "files": [
     {
-      "file": "src/Page.tsx",
+      "path": "src/Page.tsx",
+      "change": "update",
       "changed": true,
       "written": false,
       "parser": "tsx",
+      "hunks": 1,
+      "bytesDelta": 42,
       "diffAvailable": true
     }
-  ],
-  "next": ["rerun with write=true to apply"]
+  ]
 }
 ```
+
+`next` is allowed, but it is not a filler field. Include it only for
+deterministic, non-obvious, safe follow-ups such as an exact dry-run command to
+apply, a safer fuzzy retry, or a backup restore command. Do not emit generic
+"verify this" advice after every success.
 
 Acceptance criteria:
 
 - `edit`, `multiedit`, `patch`, `write_file`, `extract`, and `apply_plan` expose
-  compact `summary`, `files`, and `next` fields.
-- Full diffs remain available, but callers can request compact responses without
-  losing the decision-critical facts.
-- CLI behavior remains backward-compatible.
+  compact `success`/`ok`, `summary`, and `files` fields for MCP and non-TTY use.
+- Full diffs and internal payloads remain available through detailed output or
+  explicit include flags.
+- TTY CLI behavior remains detailed unless compact output is explicitly selected.
+- Tests cover compact success, dry-run, failure, and detailed/full-diff requests.
 
 ### 3. Backup lifecycle cleanup
 
 Sidecar `.tedit.bak` files are safe but noisy. Keep the safety property while
 moving toward a more manageable lifecycle.
 
-Preferred direction:
+Preferred v1 direction:
 
-- Default non-git backups to `.tedit-state/backups/<timestamp>/<relative-file>.bak`
-  instead of `<file>.tedit.bak` when possible. `.tedit/` stays reserved for the
-  local package sandbox.
-- Write a manifest that maps original file path, backup path, reason, and time.
-- Add `tedit backups list` and `tedit backups clean --older-than <duration>`.
+- Default non-git backups to
+  `.tedit-cache/backups/<timestamp>/<relative-file>.bak` instead of
+  `<file>.tedit.bak` when possible. This is repo-local, gitignored, and
+  intentionally session-scoped. `.tedit/` stays reserved for the local package
+  sandbox in this repo.
+- Allow a future global backend such as
+  `$XDG_STATE_HOME/tedit/<repo-fingerprint>/backups` without changing the
+  manifest shape.
+- Write a manifest that maps original file path, backup path, reason, time,
+  original hash, replacement hash when available, command, and write policy.
+- Add `tedit backups list`, `tedit backups restore <id>`, and
+  `tedit backups clean --older-than <duration> --dry-run|--write`. Cleaning is
+  dry-run by default.
 - Keep `--backup`, `--no-backup`, and existing env behavior compatible.
 - Continue excluding backup artifacts from package checks.
 
 Acceptance criteria:
 
 - Backup creation no longer litters edited directories by default.
-- Users can list and clean tedit-created backups without touching unrelated
-  files.
+- Users can list, restore, and clean tedit-created backups without touching
+  unrelated files.
 - Existing sidecar backup behavior can remain behind a compatibility setting.
 - `npm run pack:check` fails if any backup artifact enters the package tarball.
 
@@ -180,66 +203,72 @@ Examples:
 
 Acceptance criteria:
 
-- Base edit failures include a `next` array with one to three concrete recovery
-  suggestions.
+- Base edit failures include a `next` array only when there are one to three
+  deterministic, non-obvious, safe recovery suggestions.
 - Selector ambiguity includes stable selector candidate hints, not only generated
   node ids.
+- Successful operations omit `next` unless the caller must take a specific
+  follow-up action, such as applying a dry-run or restoring a backup.
 - MCP callers receive the same recovery hints in structured content.
 
-### 5. Agent-default result policy
+### 5. Output override and detailed mode
 
-Agents are the primary caller, especially through MCP. That means the compact,
-decision-oriented result shape should be the default instead of an opt-in
-profile.
+The primary split is machine output vs terminal output, not agent vs human. MCP,
+pipes, scripts, and CI should default to compact output because the caller must
+make a decision from structured facts. Interactive terminal usage should remain
+detailed because a maintainer debugging `tedit` needs to see what happened.
 
-The profile concept should be inverted:
+Use `output` rather than `profile` as the public naming:
 
 ```bash
-TEDIT_PROFILE=debug
+TEDIT_OUTPUT=detailed
+tedit edit README.md --find old --replace new --output compact
 ```
 
-or per-call:
+or per MCP call:
 
 ```json
-{ "profile": "debug" }
+{ "output": "detailed", "includeDiffs": true, "includeDetails": true }
 ```
 
-Default agent behavior:
+Compact behavior:
 
-- compact `summary`, enriched `files`, and `next` fields are present where
-  applicable,
-- diffs and large payloads are omitted unless requested,
-- parse verification is always reported,
-- backup policy is included only when relevant to the decision,
-- failure `next` hints are included by default.
+- include stable `success`/`ok`, `summary`, and enriched `files` fields,
+- omit diffs and large payloads unless requested,
+- report parse verification and write policy only when relevant to the
+  decision,
+- include `next` only for deterministic, non-obvious, safe follow-ups.
 
-Debug / human behavior:
+Detailed behavior:
 
-- include full diffs and internal payloads,
-- preserve terminal-friendly verbose output for troubleshooting,
+- include full diffs, nested results, diagnostics, and internal payloads needed
+  for debugging,
+- preserve terminal-friendly verbose output for TTY CLI usage,
 - allow explicit flags such as `includeDiffs`, `includeDetails`, or
-  `profile: "debug"`.
+  `output: "detailed"`.
 
 Acceptance criteria:
 
-- MCP mutating tools use the agent result policy by default without requiring
-  `profile: "agent"`.
-- MCP callers can request full diagnostic output with `profile: "debug"` or
+- MCP mutating tools and non-TTY CLI output use compact results by default.
+- TTY CLI output remains detailed by default.
+- MCP callers can request full diagnostic output with `output: "detailed"` or
   explicit include flags.
-- CLI keeps a clear verbose/debug path if defaults become more compact.
-- Tests cover default compact success, dry-run, failure, and explicit
-  debug/full-diff requests.
+- Tests cover compact success, dry-run, failure, deterministic `next`, TTY
+  detailed defaults, and explicit full-diff requests.
 
 ## Recommended implementation order
 
-1. Add MCP `write_file` and `create_file` first. This removes the biggest reason
-   to keep using shell-based `write --from-stdin`.
-2. Add compact MCP result fields for `edit`, `multiedit`, `patch`, and new write
-   tools.
-3. Add failure `next` hints to base edit and selector errors.
-4. Move backup handling toward manifest-backed `.tedit-state/backups` storage.
-5. Make the agent result policy the default; add debug/human opt-ins for full
-   diffs and internal payloads.
+1. Lock the compact result contract and output-selection rules first:
+   MCP/non-TTY compact, TTY detailed, explicit `output` override.
+2. Apply that policy across `edit`, `multiedit`, `patch`, write/create tools,
+   `extract`, and `apply_plan`, with deterministic-only `next` hints.
+3. Add publish-oriented smoke checks before broad distribution: `npx -y`, bin
+   shebang/executable bit, package size, no `postinstall`, CLI startup, and MCP
+   startup from the packed artifact.
+4. Move backup handling toward manifest-backed `.tedit-cache/backups` storage
+   with `list`, `restore`, and dry-run-by-default `clean`.
+5. Defer plan/apply generalization and deeper extract/text follow-ups until a
+   second concrete use case proves the abstraction boundary.
 
 ## Non-goals
 
@@ -255,6 +284,10 @@ Before closing this issue, repeat the same kind of session that produced it:
 
 - Use MCP tools instead of shell for at least one new file, one exact edit, one
   multiedit, one patch, and one parse verification.
+- Confirm MCP and non-TTY CLI output default to compact results, while TTY CLI
+  output stays detailed unless `--output compact` is set.
 - Confirm no temporary JSON/spec files are needed for common edits.
-- Confirm no backup artifact leaks into `npm run pack:check`.
-- Run `npm test` and a direct MCP stdio client smoke test.
+- Confirm backup artifacts do not leak into `npm run pack:check`, and that a
+  created backup can be listed and restored.
+- Run `npm test`, packed-artifact smoke tests, and a direct MCP stdio client
+  smoke test.
