@@ -2,6 +2,7 @@ node_modules/
 dist/
 .omx/
 .claude/
+.tedit/
 
 .DS_Store
 *.log
