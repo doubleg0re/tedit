@@ -738,6 +738,8 @@ test("rules command exposes registered rules", () => {
   assert.deepEqual(result.rules[1].extensions, [".json", ".jsonl", ".ndjson"]);
   assert.equal(result.rules[2].name, "yaml");
   assert.deepEqual(result.rules[2].extensions, [".yaml", ".yml"]);
+  assert.equal(result.rules[3].name, "markdown");
+  assert.deepEqual(result.rules[3].extensions, [".md", ".markdown", ".mdx"]);
 });
 
 test("json rule can inspect and edit object properties and scalar values", () => {
@@ -793,6 +795,30 @@ test("yaml rule edits mapping keys and sequence items", () => {
   assert.match(updated, /features:\n  - keep/);
   assert.doesNotMatch(updated, /host:/);
   assert.doesNotMatch(updated, /old/);
+});
+
+test("markdown rule edits frontmatter sections and code blocks", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "README.md");
+  writeFileSync(file, "---\ntitle: Demo\n---\n# Intro\nOld paragraph\n\n## Usage\n\n```ts\nconst oldValue = 1;\n```\n\n### Remove Me\ngone\n");
+
+  const frontmatter = JSON.parse(run(["find", file, "frontmatter", "--json"]));
+  assert.equal(frontmatter.matches[0].attributes.path, "$/frontmatter");
+
+  run(["prop", "set", file, "frontmatter", "draft", "false", "--write"]);
+  run(["prop", "remove", file, "frontmatter", "title", "--write"]);
+  run(["rename", file, "heading[level=2]", "--to", "Guide", "--write"]);
+  run(["text", "set", file, "code[lang=ts]", "--value", "const newValue = 2;", "--write"]);
+  run(["append", file, "heading[level=2]", "--element", '{"text":"Extra note."}', "--write"]);
+  run(["remove", file, "heading[level=3]", "--write"]);
+
+  const updated = readFileSync(file, "utf8");
+  assert.match(updated, /---\ndraft: false\n---/);
+  assert.match(updated, /## Guide/);
+  assert.match(updated, /```ts\nconst newValue = 2;\n```/);
+  assert.match(updated, /Extra note\./);
+  assert.doesNotMatch(updated, /title: Demo/);
+  assert.doesNotMatch(updated, /Remove Me|gone/);
 });
 
 test("rename does not reprint unrelated conditional JSX attribute consequents", () => {
@@ -1558,7 +1584,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       arguments: { file: mcpCreateFile, source: "# Created\n", write: true },
     });
     assert.equal(createFileResult.isError, undefined);
-    assert.equal(createFileResult.structuredContent.parser, "markdown-lite");
+    assert.equal(createFileResult.structuredContent.parser, "markdown");
     assert.equal(createFileResult.structuredContent.files[0].change, "create");
     assert.equal(readFileSync(mcpCreateFile, "utf8"), "# Created\n");
 
@@ -1804,7 +1830,7 @@ test("base edit verifies lightweight Markdown fences before writing", () => {
 
   const result = JSON.parse(run(["edit", file, "--find", "old", "--replace", "new", "--write", "--json"]));
   assert.equal(result.parse_verified, true);
-  assert.equal(result.parser, "markdown-lite");
+  assert.equal(result.parser, "markdown");
 
   const failed = runFail(["edit", file, "--find", "\n```\n", "--replace", "\n", "--write"]);
   assert.equal(failed.status, 1);
@@ -1828,7 +1854,7 @@ test("verify-file reports current parser coverage", () => {
   assert.equal(json.parse_verified, true);
   assert.equal(json.parser, "json");
   assert.equal(markdown.parse_verified, true);
-  assert.equal(markdown.parser, "markdown-lite");
+  assert.equal(markdown.parser, "markdown");
   assert.equal(text.parse_verified, false);
   assert.equal(text.parser, undefined);
 });

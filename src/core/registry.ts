@@ -3,12 +3,14 @@ import { fail } from "../errors.js";
 import { jsxAdapter } from "../rules/jsx/adapter.js";
 import { jsonAdapter } from "../rules/json/adapter.js";
 import { yamlAdapter } from "../rules/yaml/adapter.js";
+import { markdownAdapter } from "../rules/markdown/adapter.js";
 import type { DocumentAdapter, StructuredDocument } from "./document.js";
 
 const adapters: DocumentAdapter[] = [
   jsxAdapter,
   jsonAdapter,
   yamlAdapter,
+  markdownAdapter,
 ];
 
 export function getAdapterForFile(filePath: string): DocumentAdapter {
