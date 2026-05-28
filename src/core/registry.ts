@@ -1,10 +1,12 @@
 import { extname } from "node:path";
 import { fail } from "../errors.js";
 import { jsxAdapter } from "../rules/jsx/adapter.js";
+import { jsonAdapter } from "../rules/json/adapter.js";
 import type { DocumentAdapter, StructuredDocument } from "./document.js";
 
 const adapters: DocumentAdapter[] = [
   jsxAdapter,
+  jsonAdapter,
 ];
 
 export function getAdapterForFile(filePath: string): DocumentAdapter {

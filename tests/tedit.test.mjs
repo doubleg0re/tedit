@@ -729,11 +729,48 @@ test("--dry-run is explicit and conflicts with --write", () => {
   assert.match(failed.body.error, /--write or --dry-run/);
 });
 
-test("rules command exposes the jsx rule", () => {
+test("rules command exposes registered rules", () => {
   const result = JSON.parse(run(["rules", "--json"]));
   assert.equal(result.success, true);
   assert.equal(result.rules[0].name, "jsx");
   assert.deepEqual(result.rules[0].extensions, [".js", ".jsx", ".ts", ".tsx"]);
+  assert.equal(result.rules[1].name, "json");
+  assert.deepEqual(result.rules[1].extensions, [".json", ".jsonl", ".ndjson"]);
+});
+
+test("json rule can inspect and edit object properties and scalar values", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "config.json");
+  writeFileSync(file, JSON.stringify({
+    name: "demo",
+    scripts: { build: "vite build" },
+    flags: ["old", "keep"],
+    unused: true
+  }, null, 2) + "\n");
+
+  const found = JSON.parse(run(["find", file, "scripts", "--json"]));
+  assert.equal(found.matches[0].attributes.path, "$.scripts");
+
+  run(["prop", "set", file, "scripts", "dev", "vite", "--write"]);
+  run(["text", "set", file, "name", "--value", "demo-next", "--write"]);
+  run(["remove", file, '[path="$.flags[0]"]', "--write"]);
+  run(["prop", "remove", file, "root", "unused", "--write"]);
+  const updated = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(updated.name, "demo-next");
+  assert.equal(updated.scripts.dev, "vite");
+  assert.deepEqual(updated.flags, ["keep"]);
+  assert.equal("unused" in updated, false);
+});
+
+test("jsonl rule edits line records as root array items", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "events.jsonl");
+  writeFileSync(file, "{\"id\":1,\"ok\":false}\n{\"id\":2,\"ok\":false}\n");
+  run(["prop", "set", file, '[path="$[0]"]', "ok", "true", "--write"]);
+
+  const lines = readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(lines[0].ok, true);
+  assert.equal(lines[1].ok, false);
 });
 
 test("rename does not reprint unrelated conditional JSX attribute consequents", () => {

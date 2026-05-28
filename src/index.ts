@@ -1,4 +1,5 @@
 export { BaseTreeDocument } from "./core/base-tree-document.js";
+export { BaseRuleDocument } from "./core/base-rule-document.js";
 export { matchesSimpleSelector, parseSelector, selectorHasScope } from "./core/tree-selector.js";
 export type { AttrSelector, ParsedSelector, PseudoSelector, SelectorCombinator, SelectorPart, SimpleSelector } from "./core/tree-selector.js";
 export { openDocumentForFile, parseDocumentForFile, getAdapterForFile, getOptionalAdapterForFile, hasAdapterForFile, listRules } from "./core/registry.js";
@@ -16,6 +17,7 @@ export type {
   ValueSpec,
 } from "./core/document.js";
 export { JsxDocument, openJsxDocument } from "./rules/jsx/document.js";
+export { JsonDocument, openJsonDocument, parseJsonDocument } from "./rules/json/document.js";
 export { runFlow, validateFlow } from "./flow.js";
 export type { FlowStep, FlowRoot } from "./flow.js";
 export { commitWorkspaceUpdates, runWorkspaceFlow } from "./workspace-flow.js";
