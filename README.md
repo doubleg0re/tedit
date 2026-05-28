@@ -258,7 +258,13 @@ registered language rules such as JSX/TSX, JSON files, and Markdown
 files, the edited result is parsed or lightly verified before writing;
 parse failures return `PARSE_BROKEN_AFTER_EDIT` and leave the file
 untouched. Unknown extensions remain bytes-only and report
-`parse_verified: false`.
+`parse_verified: false`. Use `verify-file` to run the same parser coverage
+against the current file without planning an edit.
+
+```bash
+tedit verify-file src/config.json --json
+tedit verify-file README.md
+```
 
 ```bash
 tedit edit README.md --find "old text" --replace "new text"

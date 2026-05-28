@@ -138,6 +138,19 @@ Completion criteria:
 - Plan/apply validates hashes or anchors before writing.
 - Regression tests cover failed verification leaving files unchanged.
 
+Status — 2026-05-28: complete for the current verification-layer scope.
+
+Evidence:
+
+- `verify-file <file>` exposes current-file parse verification without
+  planning an edit.
+- README documents JSON, Markdown-lite, registered language, and unknown-file
+  verification behavior.
+- `apply-plan` validates source/target hashes before writing.
+- Regression tests cover parser coverage reporting and invalid parseable files
+  leaving contents unchanged.
+- `npm test` passes with 125 tests.
+
 ## 5. MCP / Distribution
 
 Purpose: make `tedit` easy for agent hosts to discover and call.

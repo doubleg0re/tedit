@@ -66,6 +66,9 @@ async function main(): Promise<void> {
     case "verify":
       commandVerify(args);
       return;
+    case "verify-file":
+      commandVerifyFile(args);
+      return;
     case "patch":
       commandPatch(args);
       return;
@@ -637,6 +640,20 @@ function commandVerify(args: ParsedArgs): void {
     else process.stdout.write(formatMultieditFailureSummary(result, edits, summarySpecName(args)) + "\n");
     process.exitCode = 1;
   }
+}
+
+function commandVerifyFile(args: ParsedArgs): void {
+  const [filePath] = requirePositionals(args, 1, "verify-file <file>");
+  const verification = verifyParseForFile(filePath, readFileSync(filePath, "utf8"));
+  const result = {
+    success: true,
+    file: filePath,
+    parse_verified: verification.verified,
+    ...(verification.parser ? { parser: verification.parser } : {}),
+  };
+  output(args, result, verification.verified
+    ? `${filePath}: parse verified (${verification.parser})`
+    : `${filePath}: no parser registered`);
 }
 
 function commandPatch(args: ParsedArgs): void {
@@ -1535,6 +1552,7 @@ Usage:
   tedit multiedit --from-stdin [--summary[=files|edits]|--quiet] [--diff-out <file>] [--dry-run|--write] < edits.json
   tedit verify <edits-json> [--summary[=files|edits]|--quiet] [--diff-out <file>]
   tedit verify --from-stdin [--summary[=files|edits]|--quiet] [--diff-out <file>] < edits.json
+  tedit verify-file <file> [--json]
   tedit patch <patch-file> [--quiet] [--diff-out <file>] [--dry-run|--write]
   tedit patch --from-stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit patch --stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
@@ -1619,6 +1637,14 @@ function shortHelp(command: string): string | null {
         "  tedit verify --from-stdin [--summary[=files|edits]|--quiet] < edits.json",
         "",
         "Runs a multiedit spec as an explicit dry-run and prints terse summary output by default.",
+      ].join("\n");
+    case "verify-file":
+      return [
+        "tedit verify-file",
+        "Usage:",
+        "  tedit verify-file <file> [--json]",
+        "",
+        "Runs tedit parse verification for the current file without planning an edit.",
       ].join("\n");
     case "patch":
       return [

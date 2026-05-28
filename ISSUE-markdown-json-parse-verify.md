@@ -10,6 +10,7 @@ Landed:
 - `.md` / `.markdown` universal edits run the no-dependency `markdown-lite` fence verifier.
 - Successful JSON/Markdown edits report `parse_verified` plus `parser`.
 - Parse failures return `PARSE_BROKEN_AFTER_EDIT` and leave files untouched.
+- `tedit verify-file <file> [--json]` runs the same parser coverage against the current file without planning an edit.
 
 ## Priority
 

@@ -1566,6 +1566,39 @@ test("base edit verifies lightweight Markdown fences before writing", () => {
   assert.equal(readFileSync(file, "utf8"), "# Title\n\n```ts\nconst value = \"new\";\n```\n");
 });
 
+test("verify-file reports current parser coverage", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const jsonFile = join(dir, "config.json");
+  const markdownFile = join(dir, "README.md");
+  const textFile = join(dir, "notes.txt");
+  writeFileSync(jsonFile, "{\"enabled\":true}\n");
+  writeFileSync(markdownFile, "# Notes\n\n```ts\nconst ok = true;\n```\n");
+  writeFileSync(textFile, "plain\n");
+
+  const json = JSON.parse(run(["verify-file", jsonFile, "--json"]));
+  const markdown = JSON.parse(run(["verify-file", markdownFile, "--json"]));
+  const text = JSON.parse(run(["verify-file", textFile, "--json"]));
+
+  assert.equal(json.parse_verified, true);
+  assert.equal(json.parser, "json");
+  assert.equal(markdown.parse_verified, true);
+  assert.equal(markdown.parser, "markdown-lite");
+  assert.equal(text.parse_verified, false);
+  assert.equal(text.parser, undefined);
+});
+
+test("verify-file fails on invalid parseable files without modifying them", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "config.json");
+  writeFileSync(file, "{\"enabled\":}\n");
+
+  const failed = runFail(["verify-file", file, "--json"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
+  assert.equal(readFileSync(file, "utf8"), "{\"enabled\":}\n");
+});
+
 test("write creates files and verifies JSON before overwrite", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "config.json");
@@ -1712,7 +1745,7 @@ test("CLI version and subcommand help are concise", () => {
   assert.doesNotMatch(help, /tedit scaffold/);
 
   const topics = [
-    "edit", "multiedit", "verify", "patch", "actions", "analyze-state",
+    "edit", "multiedit", "verify", "verify-file", "patch", "actions", "analyze-state",
     "refactor-state", "find", "inspect", "append", "prepend", "wrap",
     "unwrap", "remove", "rename", "insertComment", "text", "prop",
     "imports", "expr", "extract", "apply-plan", "create", "write", "scaffold", "new",
