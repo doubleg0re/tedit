@@ -351,45 +351,65 @@ function verifyFrontmatterFence(lines: string[]): void {
   const first = lines[0].replace(/^\uFEFF/, "");
   if (first.trim() !== "---") return;
 
+  const status = frontmatterStatus(lines);
+  if (status === "unclosed") throw new Error("Unclosed frontmatter fence opened at line 1.");
+}
+
+function frontmatterStatus(lines: string[]): "closed" | "unclosed" | "not-frontmatter" {
   let hasFrontmatterContent = false;
   for (let index = 1; index < lines.length; index++) {
     const line = lines[index].trim();
-    if (line === "---" || line === "...") return;
+    if (line === "---" || line === "...") return hasFrontmatterContent ? "closed" : "not-frontmatter";
     if (/^[^:#][^:]*:\s*.*$/.test(line)) {
       hasFrontmatterContent = true;
       continue;
     }
     if (!line || line.startsWith("#")) continue;
-    if (hasFrontmatterContent) break;
-    return;
+    return hasFrontmatterContent ? "unclosed" : "not-frontmatter";
   }
-  if (hasFrontmatterContent) throw new Error("Unclosed frontmatter fence opened at line 1.");
+  return hasFrontmatterContent ? "unclosed" : "not-frontmatter";
 }
 
 function verifyYamlLite(source: string): void {
-  const stack: Array<{ indent: number; acceptsChildren: boolean; line: number }> = [{ indent: -1, acceptsChildren: true, line: 0 }];
+  const stack: Array<{ indent: number; acceptsChildren: boolean; line: number; keys: Set<string> }> = [{ indent: -1, acceptsChildren: true, line: 0, keys: new Set() }];
   const lines = source.split(/\r?\n/);
+  let sawContent = false;
   for (let index = 0; index < lines.length; index++) {
     const raw = lines[index];
     if (!raw.trim() || raw.trimStart().startsWith("#")) continue;
-    if (/^\t+/.test(raw)) throw new Error(`YAML tabs are not supported at line ${index + 1}.`);
+    const trimmed = raw.trimStart();
+    if (trimmed === "---") {
+      if (sawContent) throw new Error(`Multiple YAML documents are not supported at line ${index + 1}.`);
+      sawContent = true;
+      continue;
+    }
+    if (trimmed === "...") {
+      const remaining = lines.slice(index + 1).some((line) => line.trim() && !line.trimStart().startsWith("#"));
+      if (remaining) throw new Error(`YAML content after document end marker is not supported at line ${index + 1}.`);
+      return;
+    }
+    sawContent = true;
+    if (/^[ \t]*\t/.test(raw)) throw new Error(`YAML tabs are not supported at line ${index + 1}.`);
     const indent = raw.match(/^ */)?.[0].length ?? 0;
+    if (indent % 2 !== 0) throw new Error(`YAML indentation must use multiples of two spaces at line ${index + 1}.`);
     while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop();
     const parent = stack[stack.length - 1];
     if (indent > parent.indent && !parent.acceptsChildren) {
       throw new Error(`Indented child under scalar YAML value at line ${index + 1}.`);
     }
-    const trimmed = raw.trimStart();
     const sequence = trimmed.match(/^-\s+(.*)$/);
     if (sequence) {
       const value = sequence[1].trim();
-      stack.push({ indent, acceptsChildren: value.length === 0, line: index + 1 });
+      stack.push({ indent, acceptsChildren: value.length === 0, line: index + 1, keys: new Set() });
       continue;
     }
     const mapping = trimmed.match(/^([^:#][^:]*):(\s*(.*))?$/);
     if (!mapping) continue;
+    const key = mapping[1].trim();
+    if (parent.keys.has(key)) throw new Error(`Duplicate YAML key "${key}" at line ${index + 1}.`);
+    parent.keys.add(key);
     const value = (mapping[3] ?? "").trim();
-    stack.push({ indent, acceptsChildren: value.length === 0, line: index + 1 });
+    stack.push({ indent, acceptsChildren: value.length === 0, line: index + 1, keys: new Set() });
   }
 }
 

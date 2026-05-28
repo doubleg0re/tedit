@@ -1941,6 +1941,38 @@ test("verify-file reports current parser coverage", () => {
   assert.equal(text.parser, undefined);
 });
 
+test("verify-file enforces Markdown and YAML lightweight boundaries", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const thematic = join(dir, "thematic.md");
+  const frontmatterEnd = join(dir, "frontmatter.md");
+  const mdxList = join(dir, "List.mdx");
+  const validYaml = join(dir, "valid.yaml");
+  const tabYaml = join(dir, "tab.yaml");
+  const oddIndentYaml = join(dir, "odd.yaml");
+  const duplicateYaml = join(dir, "duplicate.yaml");
+  const multiDocYaml = join(dir, "multi.yaml");
+  writeFileSync(thematic, "---\ncontent\ntitle: Not frontmatter\n");
+  writeFileSync(frontmatterEnd, "---\ntitle: Demo\n...\n# Body\n");
+  writeFileSync(mdxList, "# List\n\n- <Component prop=\"x\" />\n");
+  writeFileSync(validYaml, "---\nserver:\n  host: localhost\n...\n");
+  writeFileSync(tabYaml, "server:\n  \thost: localhost\n");
+  writeFileSync(oddIndentYaml, "server:\n host: localhost\n");
+  writeFileSync(duplicateYaml, "server:\n  host: localhost\n  host: 127.0.0.1\n");
+  writeFileSync(multiDocYaml, "name: one\n---\nname: two\n");
+
+  assert.equal(JSON.parse(run(["verify-file", thematic, "--json"])).parse_verified, true);
+  assert.equal(JSON.parse(run(["verify-file", frontmatterEnd, "--json"])).parse_verified, true);
+  assert.equal(JSON.parse(run(["verify-file", mdxList, "--json"])).parse_verified, true);
+  assert.equal(JSON.parse(run(["verify-file", validYaml, "--json"])).parser, "yaml-lite");
+  assert.equal(JSON.parse(run(["find", frontmatterEnd, "frontmatter", "--json"])).matches[0].attributes.path, "$/frontmatter");
+  assert.equal(JSON.parse(run(["find", thematic, "paragraph", "--json"])).matches[0].attributes.text, "---\ncontent\ntitle: Not frontmatter");
+
+  for (const file of [tabYaml, oddIndentYaml, duplicateYaml, multiDocYaml]) {
+    const failed = runFail(["verify-file", file, "--json"]);
+    assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
+  }
+});
+
 test("verify-file fails on invalid parseable files without modifying them", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "config.json");
