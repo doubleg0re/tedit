@@ -6,6 +6,7 @@ import { parseElementShorthand } from "./chain.js";
 import { getOptionalAdapterForFile, listRules } from "./core/registry.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
+import { formatAgentResult, outputOptionsFromRecord } from "./output.js";
 import { runMultiedit, runMultieditInput } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
 import { analyzeState } from "./quality.js";
@@ -47,6 +48,9 @@ const writeFlagSchema = {
   dryRun: z.boolean().optional().describe("Force dry-run mode."),
   backup: z.boolean().optional().describe("Force .tedit.bak backup creation."),
   noBackup: z.boolean().optional().describe("Disable .tedit.bak backup creation."),
+  output: z.enum(["compact", "detailed"]).optional().describe("Response shape. MCP defaults to compact; use detailed for full diffs and internals."),
+  includeDiffs: z.boolean().optional().describe("Include diffs in compact responses."),
+  includeDetails: z.boolean().optional().describe("Return the detailed response shape."),
 } satisfies z.ZodRawShape;
 
 const fileSchema = z.string().min(1).describe("Target file path.");
@@ -505,12 +509,13 @@ function runNewFileTool(args: unknown): unknown {
 
 function runWholeFileTool(input: JsonRecord, label: string, kind: string, source: string, extraResult: Record<string, unknown> = {}): unknown {
   const filePath = requiredString(input.file, label + " requires file.");
-  if (existsSync(filePath) && !booleanValue(input.overwrite)) {
+  const existed = existsSync(filePath);
+  if (existed && !booleanValue(input.overwrite)) {
     fail("FILE_EXISTS", "Refusing to overwrite existing file: " + filePath + ". Pass overwrite=true to bypass.");
   }
 
   const parseVerification = verifyParseForFile(filePath, source);
-  const previous = existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
+  const previous = existed ? readFileSync(filePath, "utf8") : "";
   const changed = previous !== source;
   const diff = unifiedDiff(previous, source, filePath);
   const warnings = fileLengthWarnings(filePath, previous, source);
@@ -527,6 +532,7 @@ function runWholeFileTool(input: JsonRecord, label: string, kind: string, source
   return withAgentFields({
     success: true,
     file: filePath,
+    existed,
     changed,
     written: shouldWrite && changed,
     parse_verified: parseVerification.verified,
@@ -535,7 +541,7 @@ function runWholeFileTool(input: JsonRecord, label: string, kind: string, source
     warnings,
     write_policy: writePolicyReport(policy, backup),
     ...(diff ? { diff } : {}),
-  });
+  }, input);
 }
 
 function runEditTool(args: unknown): unknown {
@@ -575,7 +581,7 @@ function runEditTool(args: unknown): unknown {
     warnings,
     write_policy: writePolicyReport(policy, backup),
     ...(plan.diff ? { diff: plan.diff } : {}),
-  });
+  }, input);
 }
 
 function runMultieditTool(args: unknown): unknown {
@@ -583,15 +589,15 @@ function runMultieditTool(args: unknown): unknown {
   if (input.input !== undefined && input.edits !== undefined) {
     fail("INVALID_MCP_INPUT", "multiedit accepts only one of input or edits.");
   }
-  if (input.input !== undefined) return withAgentFields(runMultieditInput(requiredString(input.input, "multiedit input must be a string."), writeFlagsFromInput(input)));
+  if (input.input !== undefined) return withAgentFields(runMultieditInput(requiredString(input.input, "multiedit input must be a string."), writeFlagsFromInput(input)), input);
   const edits = input.edits;
   if (!Array.isArray(edits)) fail("INVALID_MCP_INPUT", "multiedit requires edits array or input string.");
-  return withAgentFields(runMultiedit(edits, writeFlagsFromInput(input)));
+  return withAgentFields(runMultiedit(edits, writeFlagsFromInput(input)), input);
 }
 
 function runPatchTool(args: unknown): unknown {
   const input = recordInput(args, "patch");
-  return withAgentFields(runPatchInput(requiredString(input.patch, "patch requires patch."), writeFlagsFromInput(input)));
+  return withAgentFields(runPatchInput(requiredString(input.patch, "patch requires patch."), writeFlagsFromInput(input)), input);
 }
 
 function runActionsTool(args: unknown): unknown {
@@ -599,13 +605,21 @@ function runActionsTool(args: unknown): unknown {
   const filePath = optionalString(input.file);
   const adapter = filePath ? getOptionalAdapterForFile(filePath) : null;
   const languageRules = adapter ? [adapter.rule] : filePath ? [] : listRules();
-  const actions = [
+  const tools = TEDIT_MCP_TOOLS.map((tool) => ({
+    name: tool.name,
+    title: tool.title,
+    description: tool.description,
+    readOnly: tool.annotations?.readOnlyHint === true,
+  }));
+  const actions = [...new Set([
+    ...tools.map((tool) => tool.name),
     ...BASE_ACTIONS,
     ...languageRules.flatMap((rule) => rule.actions),
-  ];
+  ])];
   return {
     success: true,
     ...(filePath ? { file: filePath } : {}),
+    tools,
     rules: [
       { name: "base", extensions: ["*"], actions: BASE_ACTIONS },
       ...languageRules,
@@ -658,7 +672,7 @@ function runApplyPlanTool(args: unknown): unknown {
     overwrite: booleanValue(input.overwrite),
     only: stringArray(input.only, "only"),
     skip: stringArray(input.skip, "skip"),
-  }));
+  }), input);
 }
 
 function runWorkspaceTool(args: unknown): unknown {
@@ -668,7 +682,7 @@ function runWorkspaceTool(args: unknown): unknown {
   return withAgentFields(runWorkspaceFlow(steps as WorkspaceFlowStep[], {
     params: recordOrUndefined(input.params, "chain_workspace params"),
     ...writeFlagsFromInput(input),
-  }));
+  }), input);
 }
 
 function extractOptionsFromInput(input: JsonRecord): ExtractOptions {
@@ -719,7 +733,7 @@ function runExtractTool(args: unknown): unknown {
     ...(input.maxProps === undefined ? {} : { maxProps: input.maxProps }),
     ...(input.acceptLargeProps === undefined ? {} : { acceptLargeProps: input.acceptLargeProps }),
   };
-  return withAgentFields(runWorkspaceFlow([step], writeFlagsFromInput(input)));
+  return withAgentFields(runWorkspaceFlow([step], writeFlagsFromInput(input)), input);
 }
 
 function singleStepTool(config: SingleStepConfig): TeditMcpTool {
@@ -732,7 +746,7 @@ function singleStepTool(config: SingleStepConfig): TeditMcpTool {
     handler: (args) => {
       const input = recordInput(args, config.name);
       const result = runWorkspaceFlow([config.buildStep(input)], writeFlagsFromInput(input));
-      return config.readOnly ? result : withAgentFields(result);
+      return config.readOnly ? result : withAgentFields(result, input);
     },
   };
 }
@@ -756,117 +770,8 @@ function templateParamsFromInput(value: unknown): Record<string, string> {
   fail("INVALID_MCP_INPUT", "new_file params must be an object or key=value string array.");
 }
 
-type AgentFileSummary = {
-  file: string;
-  changed?: boolean;
-  written?: boolean;
-  deleted?: boolean;
-  parse_verified?: boolean;
-  parser?: string;
-  diffAvailable?: boolean;
-};
-
-function withAgentFields<T>(result: T): T {
-  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
-  const record = result as Record<string, unknown>;
-  const files = agentFilesFromRecord(record);
-  const next = agentNextSteps(files);
-  const nextRecord: Record<string, unknown> = {
-    ...record,
-    summary: agentSummary(files),
-    ...(next.length > 0 ? { next } : {}),
-  };
-  if (Array.isArray(record.files)) nextRecord.files = enrichAgentFiles(record.files, record);
-  else if (files.length > 0) nextRecord.files = files;
-  return nextRecord as T;
-}
-
-function agentFilesFromRecord(record: Record<string, unknown>): AgentFileSummary[] {
-  const parseByFile = parseByFileMap(record);
-  const files: AgentFileSummary[] = [];
-  if (Array.isArray(record.files)) {
-    for (const value of record.files) {
-      const file = compactFileFrom(value, parseByFile);
-      if (file) files.push(file);
-    }
-  }
-  if (files.length === 0) {
-    const file = compactFileFrom(record, parseByFile);
-    if (file) files.push(file);
-  }
-  return files;
-}
-
-function enrichAgentFiles(values: unknown[], record: Record<string, unknown>): unknown[] {
-  const parseByFile = parseByFileMap(record);
-  return values.map((value) => {
-    const file = compactFileFrom(value, parseByFile);
-    if (!file || !value || typeof value !== "object" || Array.isArray(value)) return value;
-    return { ...(value as Record<string, unknown>), ...file };
-  });
-}
-
-function compactFileFrom(value: unknown, parseByFile: Map<string, AgentFileSummary>): AgentFileSummary | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (typeof record.file !== "string") return null;
-  const parse = parseByFile.get(record.file) ?? {};
-  return {
-    file: record.file,
-    ...(typeof record.changed === "boolean" ? { changed: record.changed } : {}),
-    ...(typeof record.written === "boolean" ? { written: record.written } : {}),
-    ...(record.deleted === true ? { deleted: true } : {}),
-    ...(typeof record.parse_verified === "boolean" ? { parse_verified: record.parse_verified } : {}),
-    ...(typeof record.parser === "string" ? { parser: record.parser } : {}),
-    ...parse,
-    ...(typeof record.diff === "string" && record.diff.length > 0 ? { diffAvailable: true } : {}),
-  };
-}
-
-function parseByFileMap(record: Record<string, unknown>): Map<string, AgentFileSummary> {
-  const map = new Map<string, AgentFileSummary>();
-  if (Array.isArray(record.parse)) {
-    for (const value of record.parse) {
-      const file = compactFileFrom(value, new Map());
-      if (file) map.set(file.file, file);
-    }
-  }
-  if (typeof record.file === "string" && (typeof record.parse_verified === "boolean" || typeof record.parser === "string")) {
-    map.set(record.file, {
-      file: record.file,
-      ...(typeof record.parse_verified === "boolean" ? { parse_verified: record.parse_verified } : {}),
-      ...(typeof record.parser === "string" ? { parser: record.parser } : {}),
-    });
-  }
-  return map;
-}
-
-function agentSummary(files: AgentFileSummary[]): string {
-  if (files.length === 0) return "operation succeeded";
-  const changed = files.filter((file) => file.changed).length;
-  const written = files.filter((file) => file.written).length;
-  const suffix = parseSummarySuffix(files);
-  if (written > 0) return String(written) + " " + plural("file", written) + " written" + suffix;
-  if (changed > 0) return String(changed) + " " + plural("file", changed) + " would change" + suffix;
-  return "no file changes" + suffix;
-}
-
-function parseSummarySuffix(files: AgentFileSummary[]): string {
-  const verified = files.filter((file) => file.parse_verified);
-  if (verified.length === 0) return "";
-  const parsers = [...new Set(verified.map((file) => file.parser).filter((parser): parser is string => Boolean(parser)))];
-  if (parsers.length === 1) return "; parse verified with " + parsers[0];
-  return "; parse verified";
-}
-
-function agentNextSteps(files: AgentFileSummary[]): string[] {
-  if (files.some((file) => file.changed && !file.written)) return ["rerun with write=true to apply"];
-  if (files.some((file) => file.written)) return ["review git diff or run tests for affected files"];
-  return [];
-}
-
-function plural(word: string, count: number): string {
-  return count === 1 ? word : word + "s";
+function withAgentFields<T>(result: T, input: JsonRecord = {}): T {
+  return formatAgentResult(result, outputOptionsFromRecord(input)) as T;
 }
 
 function resolveEditStrategy(input: JsonRecord): BaseFindStrategy {

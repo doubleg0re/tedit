@@ -7,6 +7,7 @@ import type { ImportEditSpec, TextMatchSpec, TextValueSpec, TreeNodeSpec, ValueS
 import { getOptionalAdapterForFile, listRules, openDocumentForFile } from "./core/registry.js";
 import { unifiedDiff } from "./diff.js";
 import { toErrorResult } from "./errors.js";
+import { formatAgentResult, parseOutputMode, type OutputMode, type OutputOptions } from "./output.js";
 import { planExtract, type HelperPolicy } from "./extract.js";
 import { parseMultieditInput, runMultiedit, runMultieditInput, type MultieditResult } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
@@ -35,14 +36,17 @@ type ParsedArgs = {
 
 type EditSpec = Record<string, unknown>;
 
+let currentArgs: ParsedArgs | undefined;
+
 main().catch((error) => {
   const result = toErrorResult(error);
-  process.stderr.write(`${JSON.stringify(result, null, 2)}\n`);
+  process.stderr.write(JSON.stringify(formatErrorResult(result), null, 2) + "\n");
   process.exitCode = 1;
 });
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  currentArgs = args;
   if (args.command === "--version" || args.command === "-v" || args.flags.version) {
     printVersion();
     return;
@@ -274,7 +278,7 @@ function commandRefactorState(args: ParsedArgs): void {
     externalDeps: externalDeps as "fail" | "params",
     ...writeFlags(args),
   });
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  output(args, result, JSON.stringify(result, null, 2));
 }
 
 function commandFind(args: ParsedArgs): void {
@@ -480,12 +484,14 @@ function commandExtract(args: ParsedArgs): void {
       ...(maxProps === undefined ? {} : { maxProps: Number(maxProps) }),
     }, plan);
     writePlanFile(planOut, refactorPlan, Boolean(args.flags.overwrite));
-    process.stdout.write(`${JSON.stringify({ success: true, plan: planOut, ...refactorPlan }, null, 2)}\n`);
+    const result = { success: true, plan: planOut, ...refactorPlan };
+    output(args, result, JSON.stringify(result, null, 2));
     return;
   }
 
   const sourceDiff = unifiedDiff(plan.source, plan.nextSource, filePath);
-  const previousNewSource = existsSync(plan.result.to) ? readFileSync(plan.result.to, "utf8") : "";
+  const targetExisted = existsSync(plan.result.to);
+  const previousNewSource = targetExisted ? readFileSync(plan.result.to, "utf8") : "";
   const newFileDiff = unifiedDiff(previousNewSource, plan.newSource, plan.result.to);
   const warnings = [
     ...fileLengthWarnings(filePath, plan.source, plan.nextSource),
@@ -506,11 +512,16 @@ function commandExtract(args: ParsedArgs): void {
     writeFileSync(plan.result.to, plan.newSource);
   }
 
-  process.stdout.write(`${JSON.stringify({
+  const result = {
     ...plan.result,
+    success: true,
     changed: plan.source !== plan.nextSource || previousNewSource !== plan.newSource,
     written: shouldWrite,
     warnings,
+    files: [
+      { file: filePath, existed: true, changed: plan.source !== plan.nextSource, written: shouldWrite, warnings: fileLengthWarnings(filePath, plan.source, plan.nextSource), write_policy: writePolicyReport(sourcePolicy, sourceBackup), ...(sourceBackup.path ? { backup: sourceBackup.path } : {}), ...(sourceDiff ? { diff: sourceDiff } : {}) },
+      { file: plan.result.to, existed: targetExisted, changed: previousNewSource !== plan.newSource, written: shouldWrite, warnings: fileLengthWarnings(plan.result.to, previousNewSource, plan.newSource), write_policy: writePolicyReport(targetPolicy, targetBackup), ...(targetBackup.path ? { backup: targetBackup.path } : {}), ...(newFileDiff ? { diff: newFileDiff } : {}) },
+    ],
     write_policy: {
       source: writePolicyReport(sourcePolicy, sourceBackup),
       newFile: writePolicyReport(targetPolicy, targetBackup),
@@ -519,7 +530,8 @@ function commandExtract(args: ParsedArgs): void {
       source: sourceDiff,
       newFile: newFileDiff,
     },
-  }, null, 2)}\n`);
+  };
+  output(args, result, JSON.stringify(result, null, 2));
 }
 
 function commandApplyPlan(args: ParsedArgs): void {
@@ -535,7 +547,7 @@ function commandApplyPlan(args: ParsedArgs): void {
   });
   writeDiffOut(args, result);
   if (quietRequested(args)) return;
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  output(args, result, JSON.stringify(result, null, 2));
 }
 
 function commandCreate(args: ParsedArgs): void {
@@ -586,7 +598,7 @@ function commandWorkspaceFlow(args: ParsedArgs): void {
     params,
     ...writeFlags(args),
   });
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  output(args, result, JSON.stringify(result, null, 2));
 }
 
 function commandMultiedit(args: ParsedArgs): void {
@@ -604,7 +616,7 @@ function commandMultiedit(args: ParsedArgs): void {
   if (!summaryRequested(args)) {
     const result = runMultieditInput(input, writeFlags(args));
     writeDiffOut(args, result);
-    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    output(args, result, JSON.stringify(result, null, 2));
     return;
   }
 
@@ -629,14 +641,14 @@ function commandVerify(args: ParsedArgs): void {
     writeDiffOut(args, result);
     if (quietRequested(args)) return;
     if (args.flags.json) {
-      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+      output(args, result, JSON.stringify(result, null, 2));
       return;
     }
     process.stdout.write(formatMultieditSummary(result, edits, summarySpecName(args), summaryModeOrDefault(args)) + "\n");
   } catch (error) {
     const result = toErrorResult(error);
     if (quietRequested(args)) process.stderr.write(JSON.stringify(result, null, 2) + "\n");
-    else if (args.flags.json) process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    else if (args.flags.json) output(args, result, JSON.stringify(result, null, 2));
     else process.stdout.write(formatMultieditFailureSummary(result, edits, summarySpecName(args)) + "\n");
     process.exitCode = 1;
   }
@@ -665,7 +677,7 @@ function commandPatch(args: ParsedArgs): void {
   const result = runPatchInput(input, writeFlags(args));
   writeDiffOut(args, result);
   if (quietRequested(args)) return;
-  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  output(args, result, JSON.stringify(result, null, 2));
 }
 
 function commandChain(args: ParsedArgs): void {
@@ -685,7 +697,7 @@ function commandChain(args: ParsedArgs): void {
 
   if (segments.some((segment) => ["create", "write", "edit"].includes(segment.action))) {
     const result = runWorkspaceFlow(fileChainToWorkspaceFlow(filePath, segments), writeFlags(args));
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    output(args, result, JSON.stringify(result, null, 2));
     return;
   }
   const doc = openDocumentForFile(filePath);
@@ -716,7 +728,7 @@ function commandWorkspaceChain(args: ParsedArgs): void {
     params,
     ...writeFlags(args),
   });
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  output(args, result, JSON.stringify(result, null, 2));
 }
 
 function commandRules(args: ParsedArgs): void {
@@ -746,7 +758,7 @@ function finishMutation(args: ParsedArgs, doc: { filePath: string; source: strin
 
   output(
     args,
-    { success: true, changed, written: shouldWrite && changed, result, warnings, write_policy: writePolicyReport(policy, backup), ...(diff ? { diff } : {}) },
+    { success: true, file: doc.filePath, changed, written: shouldWrite && changed, result, warnings, write_policy: writePolicyReport(policy, backup), ...(backup.path ? { backup: backup.path } : {}), ...(diff ? { diff } : {}) },
     withWarnings(
       withWritePolicyNotes(
         shouldWrite
@@ -764,13 +776,14 @@ function finishCreation(args: ParsedArgs, filePath: string, source: string, resu
   if (args.flags.write && args.flags["dry-run"]) {
     throw new Error("Use only one of --write or --dry-run.");
   }
-  if (existsSync(filePath) && !args.flags.overwrite) {
+  const existed = existsSync(filePath);
+  if (existed && !args.flags.overwrite) {
     throw new Error(`Refusing to overwrite existing file: ${filePath}. Use --overwrite to bypass.`);
   }
 
   const parseVerification = verifyParseForFile(filePath, source);
 
-  const previous = existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
+  const previous = existed ? readFileSync(filePath, "utf8") : "";
   const changed = previous !== source;
   const diff = unifiedDiff(previous, source, filePath);
   const warnings = fileLengthWarnings(filePath, previous, source);
@@ -788,6 +801,8 @@ function finishCreation(args: ParsedArgs, filePath: string, source: string, resu
     args,
     {
       success: true,
+      file: filePath,
+      existed,
       changed,
       written: shouldWrite && changed,
       parse_verified: parseVerification.verified,
@@ -1323,11 +1338,44 @@ function truncateSummary(value: string, max: number): string {
   return compact.length > max ? compact.slice(0, Math.max(0, max - 3)) + "..." : compact;
 }
 
+function formatErrorResult(result: ErrorResult): unknown {
+  if (!currentArgs) return result;
+  try {
+    return formatAgentResult(result, outputOptions(currentArgs));
+  } catch {
+    return result;
+  }
+}
+
 function output(args: ParsedArgs, json: unknown, text: string): void {
   writeDiffOut(args, json);
   if (quietRequested(args)) return;
+  if (outputMode(args) === "compact") {
+    process.stdout.write(JSON.stringify(formatAgentResult(json, outputOptions(args)), null, 2) + "\n");
+    return;
+  }
   if (args.flags.json) process.stdout.write(JSON.stringify(json, null, 2) + "\n");
   else process.stdout.write(text + "\n");
+}
+
+function outputMode(args: ParsedArgs): OutputMode {
+  const explicit = parseOutputMode(stringFlag(args, "output") ?? process.env.TEDIT_OUTPUT, "--output/TEDIT_OUTPUT");
+  if (explicit) return explicit;
+  if (args.flags.json) return "detailed";
+  return process.stdout.isTTY ? "detailed" : "compact";
+}
+
+function outputOptions(args: ParsedArgs): OutputOptions {
+  return {
+    mode: outputMode(args),
+    includeDiffs: booleanFlag(args, "include-diffs") || booleanFlag(args, "includeDiffs"),
+    includeDetails: booleanFlag(args, "include-details") || booleanFlag(args, "includeDetails"),
+  };
+}
+
+function booleanFlag(args: ParsedArgs, name: string): boolean {
+  const value = args.flags[name];
+  return value === true || value === "true";
 }
 
 function writeDiffOut(args: ParsedArgs, result: unknown): void {

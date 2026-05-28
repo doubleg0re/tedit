@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { toErrorResult } from "./errors.js";
+import { formatAgentResult, outputOptionsFromRecord } from "./output.js";
 import { TEDIT_MCP_TOOLS } from "./mcp-tools.js";
 import { packageVersion } from "./version.js";
 
@@ -21,7 +22,7 @@ for (const tool of TEDIT_MCP_TOOLS) {
       try {
         return toMcpResult(tool.handler(args));
       } catch (error) {
-        return toMcpError(error);
+        return toMcpError(error, args);
       }
     },
   );
@@ -40,11 +41,15 @@ function toMcpResult(result: unknown): CallToolResult {
   };
 }
 
-function toMcpError(error: unknown): CallToolResult {
-  const result = toErrorResult(error);
+function toMcpError(error: unknown, args: unknown): CallToolResult {
+  const raw = toErrorResult(error);
+  const options = args && typeof args === "object" && !Array.isArray(args)
+    ? outputOptionsFromRecord(args as Record<string, unknown>)
+    : {};
+  const result = formatAgentResult(raw, options);
   return {
     content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    structuredContent: result,
+    structuredContent: toStructuredContent(result),
     isError: true,
   };
 }

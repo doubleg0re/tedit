@@ -1368,6 +1368,17 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "scaffold_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "new_file"));
 
+    const actionsDiscovery = await client.callTool({
+      name: "actions",
+      arguments: {},
+    });
+    assert.equal(actionsDiscovery.isError, undefined);
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("multiedit"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("create_file"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("verify_file"));
+    assert.ok(actionsDiscovery.structuredContent.tools.some((tool) => tool.name === "multiedit"));
+
     const result = await client.callTool({
       name: "edit",
       arguments: { file, find: "old value", replace: "new value", write: true },
@@ -1376,10 +1387,23 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(result.isError, undefined);
     assert.equal(result.structuredContent.success, true);
     assert.equal(result.structuredContent.written, true);
+    assert.equal(result.structuredContent.ok, true);
     assert.match(result.structuredContent.summary, /1 file written/);
+    assert.equal(result.structuredContent.files[0].path, file);
     assert.equal(result.structuredContent.files[0].diffAvailable, true);
-    assert.deepEqual(result.structuredContent.next, ["review git diff or run tests for affected files"]);
+    assert.equal(result.structuredContent.diff, undefined);
+    assert.equal(result.structuredContent.write_policy, undefined);
+    assert.equal(result.structuredContent.next, undefined);
     assert.equal(readFileSync(file, "utf8"), "# Title\nnew value\n");
+
+    const detailedEdit = await client.callTool({
+      name: "edit",
+      arguments: { file, find: "new value", replace: "final value", dryRun: true, output: "detailed" },
+    });
+    assert.equal(detailedEdit.isError, undefined);
+    assert.match(detailedEdit.structuredContent.diff, /final value/);
+    assert.ok(detailedEdit.structuredContent.write_policy);
+    assert.deepEqual(detailedEdit.structuredContent.next, ["rerun with write=true to apply"]);
 
     const failedEdit = await client.callTool({
       name: "edit",
@@ -1395,6 +1419,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(writeFileResult.isError, undefined);
     assert.equal(writeFileResult.structuredContent.parser, "json");
+    assert.equal(writeFileResult.structuredContent.files[0].change, "create");
     assert.match(writeFileResult.structuredContent.summary, /1 file written; parse verified with json/);
     assert.equal(readFileSync(mcpWriteFile, "utf8"), "{\"ok\":true}\n");
 
@@ -1404,6 +1429,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(createFileResult.isError, undefined);
     assert.equal(createFileResult.structuredContent.parser, "markdown-lite");
+    assert.equal(createFileResult.structuredContent.files[0].change, "create");
     assert.equal(readFileSync(mcpCreateFile, "utf8"), "# Created\n");
 
     const scaffoldResult = await client.callTool({
@@ -1847,6 +1873,48 @@ test("CLI version and subcommand help are concise", () => {
     assert.match(topicHelp, /^tedit /, topic);
     assert.doesNotMatch(topicHelp, /Unknown help topic/, topic);
   }
+});
+
+test("cli non-tty defaults to compact output and detailed override keeps legacy diff text", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "notes.txt");
+  writeFileSync(file, "old\n");
+
+  const compact = JSON.parse(runRaw(["edit", file, "--find", "old", "--replace", "new", "--dry-run"]));
+
+  assert.equal(compact.success, true);
+  assert.equal(compact.ok, true);
+  assert.equal(compact.changed, true);
+  assert.equal(compact.written, false);
+  assert.match(compact.summary, /1 file would change/);
+  assert.equal(compact.files[0].path, file);
+  assert.equal(compact.files[0].diffAvailable, true);
+  assert.equal(compact.diff, undefined);
+  assert.deepEqual(compact.next, ["rerun with write=true to apply"]);
+  assert.equal(readFileSync(file, "utf8"), "old\n");
+
+  const detailed = runRaw(["edit", file, "--find", "old", "--replace", "new", "--dry-run", "--output", "detailed"]);
+  assert.match(detailed, /^--- /m);
+  assert.match(detailed, /\+new/);
+});
+
+test("cli non-tty failures use compact error output", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "notes.txt");
+  writeFileSync(file, "old\n");
+
+  const failed = spawnSync(process.execPath, [cli, "edit", file, "--find", "missing", "--replace", "new"], {
+    encoding: "utf8",
+    env: rawEnv(),
+  });
+  const body = JSON.parse(failed.stderr);
+
+  assert.equal(failed.status, 1);
+  assert.equal(body.success, false);
+  assert.equal(body.ok, false);
+  assert.equal(body.code, "MATCH_NONE");
+  assert.match(body.summary, /No match found/);
+  assert.equal(body.details, undefined);
 });
 
 test("edit quiet mode suppresses stdout while diff-out captures detail", () => {
@@ -2457,7 +2525,7 @@ test("git ignored files default to dry-run unless write is explicit", () => {
 function run(args) {
   return execFileSync(process.execPath, [cli, ...args], {
     encoding: "utf8",
-    env: { ...process.env, FORCE_COLOR: "0" },
+    env: detailedEnv(),
   });
 }
 
@@ -2465,7 +2533,15 @@ function runWithInput(args, input) {
   return execFileSync(process.execPath, [cli, ...args], {
     encoding: "utf8",
     input,
-    env: { ...process.env, FORCE_COLOR: "0" },
+    env: detailedEnv(),
+  });
+}
+
+function runRaw(args, input) {
+  return execFileSync(process.execPath, [cli, ...args], {
+    encoding: "utf8",
+    ...(input === undefined ? {} : { input }),
+    env: rawEnv(),
   });
 }
 
@@ -2473,7 +2549,7 @@ function runInCwd(args, cwd) {
   return execFileSync(process.execPath, [cli, ...args], {
     encoding: "utf8",
     cwd,
-    env: { ...process.env, FORCE_COLOR: "0" },
+    env: detailedEnv(),
   });
 }
 
@@ -2481,12 +2557,22 @@ function runFail(args, input) {
   const result = spawnSync(process.execPath, [cli, ...args], {
     encoding: "utf8",
     input,
-    env: { ...process.env, FORCE_COLOR: "0" },
+    env: detailedEnv(),
   });
   return {
     status: result.status,
     body: JSON.parse(result.stderr || result.stdout),
   };
+}
+
+function detailedEnv() {
+  return { ...process.env, FORCE_COLOR: "0", TEDIT_OUTPUT: "detailed" };
+}
+
+function rawEnv() {
+  const env = { ...process.env, FORCE_COLOR: "0" };
+  delete env.TEDIT_OUTPUT;
+  return env;
 }
 
 function mkdirp(path) {
