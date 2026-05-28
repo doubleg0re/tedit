@@ -1328,14 +1328,21 @@ test("npm pack includes CLI and MCP distribution files", () => {
   assert.ok(files.includes("dist/mcp-tools.js"));
   assert.ok(files.includes("README.md"));
   assert.ok(files.includes("package.json"));
+  assert.ok(files.every((file) => !file.endsWith(".bak") && !file.endsWith(".tedit.bak")));
 });
 
 test("mcp server lists tools and runs universal edit", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "notes.txt");
   const jsxFile = join(dir, "Page.tsx");
+  const jsonFile = join(dir, "config.json");
+  const extractFile = join(dir, "Extract.tsx");
+  const extractOut = join(dir, "components", "PageCard.tsx");
+  const extractPlan = join(dir, ".tedit", "plans", "extract-card.json");
   writeFileSync(file, "# Title\nold value\n");
   writeFileSync(jsxFile, chainFixture());
+  writeFileSync(jsonFile, "{\"enabled\":true}\n");
+  writeFileSync(extractFile, extractFixture());
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -1349,6 +1356,9 @@ test("mcp server lists tools and runs universal edit", async () => {
     const tools = await client.listTools();
     assert.ok(tools.tools.some((tool) => tool.name === "edit"));
     assert.ok(tools.tools.some((tool) => tool.name === "chain_workspace"));
+    assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "extract_plan"));
+    assert.ok(tools.tools.some((tool) => tool.name === "apply_plan"));
 
     const result = await client.callTool({
       name: "edit",
@@ -1368,6 +1378,30 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(wrapResult.isError, undefined);
     assert.equal(wrapResult.structuredContent.success, true);
     assert.match(readFileSync(jsxFile, "utf8"), /<div className="flex gap-4"><DailyPlanBody \/><\/div>/);
+
+    const verifyResult = await client.callTool({
+      name: "verify_file",
+      arguments: { file: jsonFile },
+    });
+    assert.equal(verifyResult.isError, undefined);
+    assert.equal(verifyResult.structuredContent.parse_verified, true);
+    assert.equal(verifyResult.structuredContent.parser, "json");
+
+    const planResult = await client.callTool({
+      name: "extract_plan",
+      arguments: { from: extractFile, selector: "Card", to: extractOut, name: "PageCard", planOut: extractPlan },
+    });
+    assert.equal(planResult.isError, undefined);
+    assert.equal(planResult.structuredContent.kind, "extract-component-plan");
+    assert.equal(existsSync(extractOut), false);
+
+    const applyResult = await client.callTool({
+      name: "apply_plan",
+      arguments: { plan: extractPlan, write: true },
+    });
+    assert.equal(applyResult.isError, undefined);
+    assert.equal(applyResult.structuredContent.written, true);
+    assert.match(readFileSync(extractOut, "utf8"), /export function PageCard/);
   } finally {
     await client.close();
   }

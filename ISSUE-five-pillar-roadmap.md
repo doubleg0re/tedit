@@ -169,6 +169,18 @@ Completion criteria:
 - Pack checks cover CLI/MCP bins and required published files.
 - Tool schemas expose the same safety defaults as the CLI.
 
+Status — 2026-05-28: complete for the current MCP/distribution scope.
+
+Evidence:
+
+- MCP exposes `verify_file`, `extract_plan`, and `apply_plan` alongside the
+  existing edit/refactor tools.
+- MCP regression coverage lists those tools and calls them through the stdio
+  server.
+- README tool list includes the new MCP parity surface.
+- Pack checks cover CLI/MCP bins, required published files, and backup-artifact exclusion.
+- `npm test` passes with 125 tests.
+
 ## Sequencing
 
 Work proceeds in order. When a pillar is complete, update this file with the

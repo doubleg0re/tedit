@@ -12,6 +12,8 @@ Distribution hardening:
 - Package metadata exposes both `tedit` and `tedit-mcp` bins.
 - The MCP server version is read from package metadata instead of being hardcoded.
 - Regression coverage runs `npm pack --dry-run --json` and asserts that the CLI/MCP dist files, README, and package metadata are included.
+- `npm run pack:check` now fails if backup artifacts such as `.bak` or `.tedit.bak` enter the package tarball.
+- MCP parity now includes `verify_file`, `extract_plan`, and `apply_plan`, with stdio client regression coverage for listing and calling the new tools.
 
 Remaining polish:
 - Real external publish / `npx -y tedit` smoke testing still requires an actual published package.

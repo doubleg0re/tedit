@@ -1,13 +1,14 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod/v4";
-import { BASE_ACTIONS, parseLineRange, planBaseEdit, type BaseEditMutation, type BaseFindStrategy } from "./base-edit.js";
+import { BASE_ACTIONS, parseLineRange, planBaseEdit, verifyParseForFile, type BaseEditMutation, type BaseFindStrategy } from "./base-edit.js";
 import { parseElementShorthand } from "./chain.js";
 import { getOptionalAdapterForFile, listRules } from "./core/registry.js";
 import { fail } from "./errors.js";
 import { runMultiedit, runMultieditInput } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
 import { analyzeState } from "./quality.js";
-import { runRefactorState } from "./refactor-state.js";
+import { runRefactorState } from "./refactor-state.js";import { applyRefactorPlan, buildExtractComponentPlan, writePlanFile } from "./refactor-plan.js";
+import type { ExtractOptions, HelperPolicy } from "./extract.js";
 import { runWorkspaceFlow, type WorkspaceFlowOptions, type WorkspaceFlowStep } from "./workspace-flow.js";
 import { fileLengthWarnings } from "./quality.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
@@ -119,6 +120,17 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     handler: runAnalyzeStateTool,
   },
   {
+    name: "verify_file",
+    title: "Verify File",
+    description: "Run tedit parse verification for the current file without planning an edit.",
+    inputSchema: {
+      file: fileSchema,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runVerifyFileTool,
+  },
+
+  {
     name: "refactor_state",
     title: "Refactor State",
     description: "Apply tedit's React state refactor helper, including custom hook extraction.",
@@ -131,6 +143,49 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     },
     handler: runRefactorStateTool,
   },
+  {
+    name: "extract_plan",
+    title: "Extract Plan",
+    description: "Generate a reviewable extract-component plan file without changing source files.",
+    inputSchema: {
+      from: fileSchema,
+      selector: selectorSchema,
+      to: z.string().min(1),
+      name: z.string().min(1),
+      planOut: z.string().min(1),
+      export: z.enum(["named", "default"]).optional(),
+      exportKind: z.enum(["named", "default"]).optional(),
+      slots: z.unknown().optional(),
+      slot: z.unknown().optional(),
+      depth: z.number().int().optional(),
+      autoSlot: z.boolean().optional(),
+      helpers: z.string().optional(),
+      helpersPolicy: z.string().optional(),
+      helper: z.unknown().optional(),
+      helperOverrides: z.unknown().optional(),
+      overwrite: z.boolean().optional(),
+      typecheck: z.boolean().optional(),
+      maxProps: z.number().int().optional(),
+      acceptLargeProps: z.boolean().optional(),
+    },
+    handler: runExtractPlanTool,
+  },
+  {
+    name: "apply_plan",
+    title: "Apply Plan",
+    description: "Validate and apply a tedit refactor plan.",
+    inputSchema: {
+      plan: z.string().min(1).optional(),
+      file: z.string().min(1).optional(),
+      path: z.string().min(1).optional(),
+      only: z.union([z.string(), z.array(z.string())]).optional(),
+      skip: z.union([z.string(), z.array(z.string())]).optional(),
+      overwrite: z.boolean().optional(),
+      ...writeFlagSchema,
+    },
+    handler: runApplyPlanTool,
+  },
+
   {
     name: "chain_workspace",
     title: "Workspace Chain",
@@ -452,6 +507,18 @@ function runAnalyzeStateTool(args: unknown): unknown {
   return analyzeState(requiredString(input.file, "analyze_state requires file."));
 }
 
+function runVerifyFileTool(args: unknown): unknown {
+  const input = recordInput(args, "verify_file");
+  const filePath = requiredString(input.file, "verify_file requires file.");
+  const verification = verifyParseForFile(filePath, readFileSync(filePath, "utf8"));
+  return {
+    success: true,
+    file: filePath,
+    parse_verified: verification.verified,
+    ...(verification.parser ? { parser: verification.parser } : {}),
+  };
+}
+
 function runRefactorStateTool(args: unknown): unknown {
   const input = recordInput(args, "refactor_state");
   return runRefactorState(requiredString(input.file, "refactor_state requires file."), {
@@ -459,6 +526,26 @@ function runRefactorStateTool(args: unknown): unknown {
     to: optionalString(input.to),
     name: optionalString(input.name),
     ...writeFlagsFromInput(input),
+  });
+}
+
+function runExtractPlanTool(args: unknown): unknown {
+  const input = recordInput(args, "extract_plan");
+  const planOut = requiredString(input.planOut, "extract_plan requires planOut.");
+  const options = extractOptionsFromInput(input);
+  const plan = buildExtractComponentPlan(options);
+  writePlanFile(planOut, plan, booleanValue(input.overwrite));
+  return { success: true, plan: planOut, ...plan };
+}
+
+function runApplyPlanTool(args: unknown): unknown {
+  const input = recordInput(args, "apply_plan");
+  const planPath = requiredString(pick(input, "plan", "file", "path"), "apply_plan requires plan, file, or path.");
+  return applyRefactorPlan(planPath, {
+    ...writeFlagsFromInput(input),
+    overwrite: booleanValue(input.overwrite),
+    only: stringArray(input.only, "only"),
+    skip: stringArray(input.skip, "skip"),
   });
 }
 
@@ -470,6 +557,31 @@ function runWorkspaceTool(args: unknown): unknown {
     params: recordOrUndefined(input.params, "chain_workspace params"),
     ...writeFlagsFromInput(input),
   });
+}
+
+function extractOptionsFromInput(input: JsonRecord): ExtractOptions {
+  const exportKind = pick(input, "exportKind", "export") ?? "named";
+  const helpersPolicy = pick(input, "helpersPolicy", "helpers") ?? "ask";
+  if (exportKind !== "named" && exportKind !== "default") fail("INVALID_MCP_INPUT", "extract export/exportKind must be named or default.");
+  if (helpersPolicy !== "ask" && helpersPolicy !== "move" && helpersPolicy !== "share" && helpersPolicy !== "as-prop") {
+    fail("INVALID_MCP_INPUT", "extract helpers/helpersPolicy must be ask, move, share, or as-prop.");
+  }
+  return {
+    from: requiredString(input.from, "extract requires from."),
+    selector: requiredString(input.selector, "extract requires selector."),
+    to: requiredString(input.to, "extract requires to."),
+    name: requiredString(input.name, "extract requires name."),
+    exportKind: exportKind as "named" | "default",
+    slots: stringArray(input.slots ?? input.slot, "slots"),
+    ...(input.depth === undefined ? {} : { depth: optionalInteger(input.depth, "depth") }),
+    autoSlot: booleanValue(input.autoSlot),
+    typecheck: booleanValue(input.typecheck),
+    helpersPolicy: helpersPolicy as HelperPolicy,
+    helperOverrides: stringArray(input.helperOverrides ?? input.helper, "helperOverrides"),
+    overwrite: booleanValue(input.overwrite),
+    acceptLargeProps: booleanValue(input.acceptLargeProps),
+    ...(input.maxProps === undefined ? {} : { maxProps: optionalInteger(input.maxProps, "maxProps") }),
+  };
 }
 
 function runExtractTool(args: unknown): unknown {
@@ -709,6 +821,13 @@ function requiredValue(value: unknown, message: string): unknown {
 function requiredString(value: unknown, message: string): string {
   if (typeof value !== "string" || value.length === 0) fail("INVALID_MCP_INPUT", message);
   return value;
+}
+
+function stringArray(value: unknown, label: string): string[] {
+  if (value === undefined) return [];
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) return value;
+  fail("INVALID_MCP_INPUT", `${label} must be a string or string array.`);
 }
 
 function optionalString(value: unknown): string | undefined {
