@@ -41,6 +41,18 @@ Completion criteria:
 - README examples that show the recommended agent loop:
   `verify -> write/apply -> diff-out`.
 
+Status — 2026-05-28: complete for the current agent runtime scope.
+
+Evidence:
+
+- `tedit help <command>` now covers every command family exposed in the main
+  help, including creation, selector, flow, and rule-discovery commands.
+- Main help and README document quiet/diff side-file behavior for create/write
+  style generation commands.
+- Regression tests cover full help-topic availability and `write --quiet
+  --diff-out` behavior.
+- `npm test` passes with 119 tests.
+
 ## 2. Safe Refactor Engine
 
 Purpose: move high-risk JSX/TSX refactors out of handwritten multi-file edits

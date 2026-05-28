@@ -329,7 +329,12 @@ before writing:
 tedit write src/config.json --source '{"timeout":5000}' --write
 tedit write src/config.json --from-file generated/config.json --overwrite --write
 tedit write src/config.json --from-stdin --overwrite --write < generated/config.json
+tedit write src/config.json --from-file generated/config.json --dry-run --quiet --diff-out config.diff
 ```
+
+`create`, `write`, `scaffold`, and `new` share the same quiet and diff side-file
+behavior as edits, so agents can verify generated files without streaming the
+full file body through stdout.
 
 `multiedit` applies many universal base edits as one atomic operation.
 Same-file edits see the in-memory result of earlier edits, and no file is

@@ -1624,6 +1624,20 @@ test("CLI version and subcommand help are concise", () => {
   assert.match(help, /tedit verify/);
   assert.match(help, /explicit dry-run/);
   assert.doesNotMatch(help, /tedit scaffold/);
+
+  const topics = [
+    "edit", "multiedit", "verify", "patch", "actions", "analyze-state",
+    "refactor-state", "find", "inspect", "append", "prepend", "wrap",
+    "unwrap", "remove", "rename", "insertComment", "text", "prop",
+    "imports", "expr", "extract", "create", "write", "scaffold", "new",
+    "flow", "workspace-flow", "wflow", "chain", "chain-workspace", "wchain",
+    "rules"
+  ];
+  for (const topic of topics) {
+    const topicHelp = run(["help", topic]);
+    assert.match(topicHelp, /^tedit /, topic);
+    assert.doesNotMatch(topicHelp, /Unknown help topic/, topic);
+  }
 });
 
 test("edit quiet mode suppresses stdout while diff-out captures detail", () => {
@@ -1637,6 +1651,18 @@ test("edit quiet mode suppresses stdout while diff-out captures detail", () => {
   assert.equal(output, "");
   assert.equal(readFileSync(file, "utf8"), "old\n");
   assert.match(readFileSync(diff, "utf8"), /\+new/);
+});
+
+test("write quiet mode suppresses stdout while diff-out captures detail", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "created.txt");
+  const diff = join(dir, "write.diff");
+
+  const output = run(["write", file, "--source", "created", "--dry-run", "--quiet", "--diff-out", diff]);
+
+  assert.equal(output, "");
+  assert.equal(existsSync(file), false);
+  assert.match(readFileSync(diff, "utf8"), /\+created/);
 });
 
 test("verify runs multiedit specs as terse dry-runs", () => {

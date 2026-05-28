@@ -1523,15 +1523,15 @@ Usage:
   tedit expr toTernary <file> <selector> [--alternate <expr>] [--dry-run|--write]
   tedit expr toShortCircuit <file> <selector> [--dry-run|--write]
   tedit extract <file> <selector> --to <new-file> --name <ComponentName> [--slot '<selector>.children[=prop]'|--depth N --auto-slot] [--typecheck] [--helpers ask|move|share|as-prop] [--helper name=move|share|leave|as-prop] [--max-props N|--accept-large-props] [--export named|default] [--overwrite] [--dry-run|--write]
-  tedit create <file> --source <source> [--overwrite] [--dry-run|--write]
-  tedit create <file> --from-file <source-file> [--overwrite] [--dry-run|--write]
-  tedit create <file> --from-stdin [--overwrite] [--dry-run|--write]
-  tedit write <file> --source <source> [--overwrite] [--dry-run|--write]
-  tedit write <file> --from-file <source-file> [--overwrite] [--dry-run|--write]
-  tedit write <file> --from-stdin [--overwrite] [--dry-run|--write]
-  tedit scaffold <file> --spec <json-or-file> [--overwrite] [--dry-run|--write]
+  tedit create <file> --source <source> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
+  tedit create <file> --from-file <source-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
+  tedit create <file> --from-stdin [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
+  tedit write <file> --source <source> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
+  tedit write <file> --from-file <source-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
+  tedit write <file> --from-stdin [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
+  tedit scaffold <file> --spec <json-or-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
   tedit scaffold <file> --directives "use client" --imports "@/lib/utils:cn" --export "function:Button(props)" --body 'button.children="Save"' [--write]
-  tedit new <template> <file> --param name=Button [--overwrite] [--dry-run|--write]
+  tedit new <template> <file> --param name=Button [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
   tedit flow <file> <flow-json> [--params <json-or-file>] [--dry-run|--write]
   tedit workspace-flow <flow-json> [--params <json-or-file>] [--dry-run|--write]
   tedit chain <file> find <selector> as body :: append '@body' PageHead :: append '$ret.id' LeftPanel [--write]
@@ -1589,6 +1589,48 @@ function shortHelp(command: string): string | null {
       return "tedit extract\nUsage:\n  tedit extract <file> <selector> --to <new-file> --name <ComponentName> [--typecheck] [--helpers ask|move|share|as-prop] [--dry-run|--write]";
     case "refactor-state":
       return "tedit refactor-state\nUsage:\n  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--dry-run|--write]";
+    case "actions":
+      return "tedit actions\nUsage:\n  tedit actions [file] [--json]\n\nLists universal base actions and file-specific language actions.";
+    case "analyze-state":
+      return "tedit analyze-state\nUsage:\n  tedit analyze-state <file> [--json]\n\nReports useState clusters, handler usage, and refactor guidance.";
+    case "find":
+      return "tedit find\nUsage:\n  tedit find <file> <selector> [--json]\n\nFinds JSX/TSX nodes using tedit's CSS-like selector language.";
+    case "inspect":
+      return "tedit inspect\nUsage:\n  tedit inspect <file> [selector] [--id <id>] [--json]\n\nPrints structural details for a matched node.";
+    case "append":
+    case "prepend":
+      return "tedit " + command + "\nUsage:\n  tedit " + command + " <file> <selector> --element <json-or-shorthand> [--dry-run|--write]";
+    case "wrap":
+      return "tedit wrap\nUsage:\n  tedit wrap <file> <selector> --with <tag-or-json> [--dry-run|--write]";
+    case "unwrap":
+    case "remove":
+      return "tedit " + command + "\nUsage:\n  tedit " + command + " <file> <selector> [--dry-run|--write]";
+    case "rename":
+      return "tedit rename\nUsage:\n  tedit rename <file> <selector> --to <name> [--dry-run|--write]";
+    case "insertComment":
+      return "tedit insertComment\nUsage:\n  tedit insertComment <file> <selector> <text> [--position inside-start|inside-end|before|after] [--write]";
+    case "text":
+      return "tedit text\nUsage:\n  tedit text set <file> <selector> --value <text> [--dry-run|--write]\n  tedit text set <file> <selector> --expr <expr> [--dry-run|--write]\n  tedit text replace <file> <selector> --match-text <text> --with-text <text> [--dry-run|--write]";
+    case "prop":
+      return "tedit prop\nUsage:\n  tedit prop set <file> <selector> <name> [value] [--expr <code>] [--dry-run|--write]\n  tedit prop remove <file> <selector> <name> [--dry-run|--write]";
+    case "imports":
+      return "tedit imports\nUsage:\n  tedit imports add <file> --from <source> --named A,B [--default Name] [--dry-run|--write]\n  tedit imports remove <file> --from <source> --named A,B [--dry-run|--write]\n  tedit imports rename <file> --from <source> --name Old --to New [--dry-run|--write]\n  tedit imports move <file> --from <source> --to <source> --named A,B [--dry-run|--write]";
+    case "expr":
+      return "tedit expr\nUsage:\n  tedit expr replace <file> <selector> --code <expr> [--dry-run|--write]\n  tedit expr wrap <file> <selector> --code 'cond ? $expr : null' [--dry-run|--write]\n  tedit expr unwrap <file> <selector> [--dry-run|--write]\n  tedit expr toTernary <file> <selector> [--alternate <expr>] [--dry-run|--write]\n  tedit expr toShortCircuit <file> <selector> [--dry-run|--write]";
+    case "create":
+    case "write":
+      return "tedit " + command + "\nUsage:\n  tedit " + command + " <file> --source <source> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]\n  tedit " + command + " <file> --from-file <source-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]\n  tedit " + command + " <file> --from-stdin [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]";
+    case "scaffold":
+      return "tedit scaffold\nUsage:\n  tedit scaffold <file> --spec <json-or-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]\n  tedit scaffold <file> --directives \"use client\" --imports \"@/lib/utils:cn\" --export \"function:Button(props)\" --body 'button.children=\"Save\"' [--write]";
+    case "new":
+      return "tedit new\nUsage:\n  tedit new <template> <file> --param name=Button [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]";
+    case "flow":
+      return "tedit flow\nUsage:\n  tedit flow <file> <flow-json> [--params <json-or-file>] [--dry-run|--write]";
+    case "workspace-flow":
+    case "wflow":
+      return "tedit workspace-flow\nUsage:\n  tedit workspace-flow <flow-json> [--params <json-or-file>] [--dry-run|--write]";
+    case "rules":
+      return "tedit rules\nUsage:\n  tedit rules [--json]\n\nLists registered language rules.";
     case "chain":
       return "tedit chain\nUsage:\n  tedit chain <file> <step> :: <step> [--write]\n  tedit chain <file> --from-file <chain-file> [--dry-run|--write]";
     case "chain-workspace":
