@@ -14,9 +14,11 @@ Implemented in v1:
 
 Remaining:
 
-- Backup lifecycle cleanup under `.tedit/backups`.
-- Explicit `profile: "agent"` / `TEDIT_PROFILE=agent` defaults once the result
-  shape has more dogfood time.
+- Backup lifecycle cleanup under a runtime state folder such as
+  `.tedit-state/backups`; `.tedit/` is reserved for the local package sandbox.
+- Agent-default result policy. Agents are the primary caller, so compact
+  `summary` / `files` / `next` should be default, with human/debug verbosity
+  available by opt-in.
 
 ## Priority
 
@@ -144,8 +146,9 @@ moving toward a more manageable lifecycle.
 
 Preferred direction:
 
-- Default non-git backups to `.tedit/backups/<timestamp>/<relative-file>.bak`
-  instead of `<file>.tedit.bak` when possible.
+- Default non-git backups to `.tedit-state/backups/<timestamp>/<relative-file>.bak`
+  instead of `<file>.tedit.bak` when possible. `.tedit/` stays reserved for the
+  local package sandbox.
 - Write a manifest that maps original file path, backup path, reason, and time.
 - Add `tedit backups list` and `tedit backups clean --older-than <duration>`.
 - Keep `--backup`, `--no-backup`, and existing env behavior compatible.
@@ -183,37 +186,49 @@ Acceptance criteria:
   node ids.
 - MCP callers receive the same recovery hints in structured content.
 
-### 5. Agent default profile
+### 5. Agent-default result policy
 
-Add an explicit profile for agent hosts so the default behavior is consistent
-across CLI and MCP usage.
+Agents are the primary caller, especially through MCP. That means the compact,
+decision-oriented result shape should be the default instead of an opt-in
+profile.
 
-Possible shape:
+The profile concept should be inverted:
 
 ```bash
-TEDIT_PROFILE=agent
+TEDIT_PROFILE=debug
 ```
 
 or per-call:
 
 ```json
-{ "profile": "agent" }
+{ "profile": "debug" }
 ```
 
-Suggested defaults for `agent` profile:
+Default agent behavior:
 
-- compact result shape by default,
-- dry-run when outside git or ignored, matching current safety behavior,
-- diffs omitted unless requested,
-- parse verification always reported,
-- backup policy included only when relevant,
-- failure `next` hints included by default.
+- compact `summary`, enriched `files`, and `next` fields are present where
+  applicable,
+- diffs and large payloads are omitted unless requested,
+- parse verification is always reported,
+- backup policy is included only when relevant to the decision,
+- failure `next` hints are included by default.
+
+Debug / human behavior:
+
+- include full diffs and internal payloads,
+- preserve terminal-friendly verbose output for troubleshooting,
+- allow explicit flags such as `includeDiffs`, `includeDetails`, or
+  `profile: "debug"`.
 
 Acceptance criteria:
 
-- `profile: "agent"` is accepted by MCP mutating tools.
-- CLI can opt in via env or flag without changing current defaults.
-- Tests cover profile defaults for success, dry-run, and failure paths.
+- MCP mutating tools use the agent result policy by default without requiring
+  `profile: "agent"`.
+- MCP callers can request full diagnostic output with `profile: "debug"` or
+  explicit include flags.
+- CLI keeps a clear verbose/debug path if defaults become more compact.
+- Tests cover default compact success, dry-run, failure, and explicit
+  debug/full-diff requests.
 
 ## Recommended implementation order
 
@@ -222,8 +237,9 @@ Acceptance criteria:
 2. Add compact MCP result fields for `edit`, `multiedit`, `patch`, and new write
    tools.
 3. Add failure `next` hints to base edit and selector errors.
-4. Move backup handling toward manifest-backed `.tedit/backups` storage.
-5. Add `profile: "agent"` once the above pieces are stable enough to group.
+4. Move backup handling toward manifest-backed `.tedit-state/backups` storage.
+5. Make the agent result policy the default; add debug/human opt-ins for full
+   diffs and internal payloads.
 
 ## Non-goals
 
