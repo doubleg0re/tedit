@@ -209,6 +209,70 @@ export function applyRefactorPlan(planPath: string, options: ApplyPlanOptions = 
   };
 }
 
+export type InspectPlanResult = {
+  success: true;
+  kind: RefactorPlanKind;
+  plan: string;
+  source: string;
+  target: string;
+  component: string;
+  summary: string;
+  stale: boolean;
+  steps_total: number;
+  risks: Record<RefactorPlanRisk, number>;
+  files: Array<{
+    role: "source" | "target";
+    file: string;
+    exists: boolean;
+    expected_hash: string | null;
+    actual_hash: string | null;
+    stale: boolean;
+  }>;
+  steps: RefactorPlanStep[];
+};
+
+export function inspectRefactorPlan(planPath: string): InspectPlanResult {
+  const plan = loadRefactorPlan(planPath);
+  const source = inspectPlanFile("source", plan.source, plan.source_hash);
+  const target = inspectPlanFile("target", plan.target, plan.target_hash);
+  const risks = countRisks(plan.steps);
+  const stale = source.stale || target.stale;
+  return {
+    success: true,
+    kind: plan.kind,
+    plan: planPath,
+    source: plan.source,
+    target: plan.target,
+    component: plan.options.name,
+    summary: plan.kind + ": " + plan.steps.length + " step" + (plan.steps.length === 1 ? "" : "s") + ", " + risks.high + " high risk, " + (stale ? "stale" : "ready"),
+    stale,
+    steps_total: plan.steps.length,
+    risks,
+    files: [source, target],
+    steps: plan.steps,
+  };
+}
+
+function inspectPlanFile(role: "source" | "target", file: string, expectedHash: string | null): InspectPlanResult["files"][number] {
+  const exists = existsSync(file);
+  const actualHash = exists ? sha256(readFileSync(file, "utf8")) : null;
+  return {
+    role,
+    file,
+    exists,
+    expected_hash: expectedHash,
+    actual_hash: actualHash,
+    stale: actualHash !== expectedHash,
+  };
+}
+
+function countRisks(steps: RefactorPlanStep[]): Record<RefactorPlanRisk, number> {
+  return steps.reduce<Record<RefactorPlanRisk, number>>((counts, step) => {
+    counts[step.risk] += 1;
+    return counts;
+  }, { low: 0, medium: 0, high: 0 });
+}
+
 function normalizeExtractOptions(options: ExtractOptions): SerializableExtractOptions {
   return {
     from: options.from,

@@ -1146,6 +1146,14 @@ test("extract plan-out writes a validated plan and apply-plan applies it", () =>
   assert.throws(() => readFileSync(out, "utf8"));
   assert.doesNotMatch(readFileSync(file, "utf8"), /PageCard/);
 
+  const inspect = JSON.parse(run(["plan", "inspect", planPath, "--json"]));
+  assert.equal(inspect.success, true);
+  assert.equal(inspect.component, "PageCard");
+  assert.equal(inspect.stale, false);
+  assert.equal(inspect.steps_total, 2);
+  assert.equal(inspect.risks.medium, 1);
+  assert.match(run(["plan", "inspect", planPath]), /extract-component-plan: 2 steps, 0 high risk, ready/);
+
   const dryRun = JSON.parse(run(["apply-plan", planPath, "--dry-run", "--diff-out", join(dir, "extract.diff")]));
   assert.equal(dryRun.success, true);
   assert.equal(dryRun.written, false);
@@ -1869,7 +1877,7 @@ test("CLI version and subcommand help are concise", () => {
     "edit", "multiedit", "verify", "verify-file", "patch", "actions", "analyze-state",
     "refactor-state", "find", "inspect", "append", "prepend", "wrap",
     "unwrap", "remove", "rename", "insertComment", "text", "prop",
-    "imports", "expr", "extract", "apply-plan", "create", "write", "scaffold", "new",
+    "imports", "expr", "extract", "apply-plan", "plan", "create", "write", "scaffold", "new",
     "flow", "workspace-flow", "wflow", "chain", "chain-workspace", "wchain",
     "rules", "backups"
   ];

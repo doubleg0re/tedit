@@ -11,7 +11,7 @@ import { formatAgentResult, parseOutputMode, type OutputMode, type OutputOptions
 import { planExtract, type HelperPolicy } from "./extract.js";
 import { parseMultieditInput, runMultiedit, runMultieditInput, type MultieditResult } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
-import { runRefactorState } from "./refactor-state.js";import { applyRefactorPlan, buildExtractComponentPlan, writePlanFile } from "./refactor-plan.js";
+import { runRefactorState } from "./refactor-state.js";import { applyRefactorPlan, buildExtractComponentPlan, inspectRefactorPlan, writePlanFile, type InspectPlanResult } from "./refactor-plan.js";
 import { analyzeState, fileLengthWarnings, formatFileLengthWarnings, type FileLengthWarning } from "./quality.js";
 import { loadParams, parseFlowInput, runFlow } from "./flow.js";
 import {
@@ -125,6 +125,9 @@ async function main(): Promise<void> {
       return;
     case "apply-plan":
       commandApplyPlan(args);
+      return;
+    case "plan":
+      commandPlan(args);
       return;
     case "create":
       commandCreate(args);
@@ -535,6 +538,13 @@ function commandExtract(args: ParsedArgs): void {
     },
   };
   output(args, result, JSON.stringify(result, null, 2));
+}
+
+function commandPlan(args: ParsedArgs): void {
+  const [action, planPath] = requirePositionals(args, 2, "plan inspect <plan-json>");
+  if (action !== "inspect") throw new Error("Unknown plan action: " + action);
+  const result = inspectRefactorPlan(planPath);
+  output(args, result, formatPlanInspect(result));
 }
 
 function commandApplyPlan(args: ParsedArgs): void {
@@ -1365,6 +1375,22 @@ function truncateSummary(value: string, max: number): string {
   return compact.length > max ? compact.slice(0, Math.max(0, max - 3)) + "..." : compact;
 }
 
+function formatPlanInspect(result: InspectPlanResult): string {
+  return [
+    result.summary,
+    "source: " + formatPlanFileStatus(result.files.find((file) => file.role === "source")),
+    "target: " + formatPlanFileStatus(result.files.find((file) => file.role === "target")),
+    "steps:",
+    ...result.steps.map((step) => "  - " + step.id + " [" + step.risk + "] " + step.kind + (step.file ? " " + step.file : "")),
+  ].join("\n");
+}
+
+function formatPlanFileStatus(file: InspectPlanResult["files"][number] | undefined): string {
+  if (!file) return "missing";
+  if (!file.exists) return file.file + " (missing)";
+  return file.file + (file.stale ? " (stale)" : " (ready)");
+}
+
 function formatErrorResult(result: ErrorResult): unknown {
   if (!currentArgs) return result;
   try {
@@ -1664,6 +1690,7 @@ Usage:
   tedit expr toShortCircuit <file> <selector> [--dry-run|--write]
   tedit extract <file> <selector> --to <new-file> --name <ComponentName> [--slot '<selector>.children[=prop]'|--depth N --auto-slot] [--typecheck] [--helpers ask|move|share|as-prop] [--helper name=move|share|leave|as-prop] [--max-props N|--accept-large-props] [--export named|default] [--overwrite] [--plan-out <plan-json>|--dry-run|--write]
   tedit apply-plan <plan-json> [--only <step-id>] [--skip <step-id>] [--quiet] [--diff-out <file>] [--dry-run|--write]
+  tedit plan inspect <plan-json> [--json]
   tedit create <file> --source <source> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
   tedit create <file> --from-file <source-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
   tedit create <file> --from-stdin [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
@@ -1741,6 +1768,8 @@ function shortHelp(command: string): string | null {
       return "tedit extract\nUsage:\n  tedit extract <file> <selector> --to <new-file> --name <ComponentName> [--typecheck] [--helpers ask|move|share|as-prop] [--plan-out <plan-json>|--dry-run|--write]";
     case "apply-plan":
       return "tedit apply-plan\nUsage:\n  tedit apply-plan <plan-json> [--only <step-id>] [--skip <step-id>] [--quiet] [--diff-out <file>] [--dry-run|--write]\n\nValidates and applies a tedit refactor plan. Defaults to dry-run unless --write is passed.";
+    case "plan":
+      return "tedit plan\nUsage:\n  tedit plan inspect <plan-json> [--json]\n\nSummarizes a saved tedit refactor plan before apply-plan.";
     case "refactor-state":
       return "tedit refactor-state\nUsage:\n  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--dry-run|--write]";
     case "actions":
