@@ -309,7 +309,9 @@ tedit edit README.md --spec edit.json
 
 Matching is strict by default: one match is required unless
 `--replace-all` is present. `--expect-count N` adds an explicit count
-guard for mass edits.
+guard for mass edits. Regex replacement text is literal: `$&`, `$1`, and
+named backreferences are written as text rather than expanded like JavaScript
+`String.replace` templates.
 
 ```bash
 tedit edit styles.css --find-regex '\bred\b' --replace blue --replace-all --expect-count 2 --write

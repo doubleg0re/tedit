@@ -56,6 +56,8 @@ Deliverable:
 
 ### P5. Cross-rule parity and parser depth
 
+Status: Implemented for the remaining regex-semantics hardening item in the current slice.
+
 The current rules cover JSX/TSX, JS/TS, JSON/JSONL, YAML, Markdown/MDX, and markup. CSS remains deliberately deferred.
 
 Deliverable:
@@ -65,4 +67,4 @@ Deliverable:
 
 ## Current Implementation Unit
 
-P1 through P4 are implemented. The next safe slice is P5 cross-rule parity and parser-depth hardening unless a new real-world edge case changes the priority.
+P1 through P5 are implemented. Further cross-rule parity work should be driven by new real-world edge cases rather than speculative parser expansion.

@@ -34,11 +34,12 @@ Implemented after v1:
   an MCP failure-to-retry loop.
 - Plan/apply now supports `refactor-state-plan` as the second concrete planned
   workflow alongside extract-component plans.
+- Regex replacement semantics are documented and tested as literal replacement:
+  `$&` / `$1` are written as text, not expanded as backreferences.
 
 Remaining follow-ups from Claude MCP smoke:
 
-- Decide whether regex replacements should support `$&`/`$1` backreferences
-  or explicitly document literal replacement semantics.
+- None at this time.
 
 ## Priority
 

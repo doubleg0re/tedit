@@ -1914,6 +1914,17 @@ test("base edit regex replace-all honors expect-count", () => {
   assert.equal(readFileSync(file, "utf8"), ".a { color: blue; }\n.b { background: blue; }\n");
 });
 
+test("base edit regex replacement treats dollar backrefs literally", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "styles.css");
+  writeFileSync(file, "color: red;\n");
+
+  const result = JSON.parse(run(["edit", file, "--find-regex", "(red)", "--replace", "var($1)", "--replace-all", "--expect-count", "1", "--write", "--json"]));
+
+  assert.equal(result.success, true);
+  assert.equal(readFileSync(file, "utf8"), "color: var($1);\n");
+});
+
 test("base edit line ranges can delete full lines", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "lines.txt");
