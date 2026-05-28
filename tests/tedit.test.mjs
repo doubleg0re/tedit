@@ -416,6 +416,35 @@ test("unsupported selector pseudos fail with actionable diagnostics", () => {
   assert.match(pseudoElement.body.error, /Unsupported pseudo-element ::before/);
 });
 
+test("agent-facing diagnostics include rule hints next steps and snippets", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const html = join(dir, "index.html");
+  const yaml = join(dir, "config.yaml");
+  const badYaml = join(dir, "bad.yaml");
+  writeFileSync(html, '<main><p>Hello</p></main>');
+  writeFileSync(yaml, 'name: demo\n');
+  writeFileSync(badYaml, 'name: one\nname: two\n');
+
+  const missing = runFail(["remove", html, "article", "--write", "--json"]);
+  assert.equal(missing.body.code, "NODE_NOT_FOUND");
+  assert.equal(missing.body.details.rule, "markup");
+  assert.match(missing.body.details.selector_hint, /:has/);
+  assert.match(missing.body.next[0], /tedit inspect/);
+
+  const unsupported = runFail(["class", "add", yaml, "root", "highlight", "--json"]);
+  assert.equal(unsupported.body.code, "UNSUPPORTED_ACTION");
+  assert.equal(unsupported.body.details.rule, "yaml");
+  assert.match(unsupported.body.details.capability_hint, /yaml supports:/);
+  assert.match(unsupported.body.next[0], /tedit actions/);
+
+  const parseFailure = runFail(["verify-file", badYaml, "--json"]);
+  assert.equal(parseFailure.body.code, "PARSE_BROKEN_AFTER_EDIT");
+  assert.equal(parseFailure.body.details.rule, "yaml-lite");
+  assert.equal(parseFailure.body.details.line, 2);
+  assert.equal(parseFailure.body.details.snippet, "name: two");
+  assert.match(parseFailure.body.next[0], /reported line/);
+});
+
 test("class actions add remove and replace static className tokens", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "Page.tsx");

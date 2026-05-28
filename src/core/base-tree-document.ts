@@ -92,8 +92,13 @@ export abstract class BaseTreeDocument<TPath> {
     return info;
   }
 
-  protected nodeNotFoundDetails(_target: string): Record<string, unknown> | undefined {
-    return undefined;
+  protected nodeNotFoundDetails(target: string): Record<string, unknown> | undefined {
+    return {
+      rule: this.ruleName,
+      selector: target,
+      selector_hint: "Supported selector subset: tag, #id, .class, [attr], descendant, >, +, ~, :scope, :has(...), :not(...), :first-child, :last-child, :nth-of-type(n).",
+      next_step_hint: `Inspect available nodes with: tedit inspect ${this.filePath} --json, then retry with a broader selector such as * or a known tag.`,
+    };
   }
 
   private matchesSelectorPath(path: TPath, selector: ParsedSelector, partIndex = selector.parts.length - 1): boolean {

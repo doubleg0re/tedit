@@ -109,6 +109,8 @@ export abstract class BaseRuleDocument<TPath> extends BaseTreeDocument<TPath> im
       rule: this.ruleName,
       action,
       supported_actions: this.supportedActions,
+      capability_hint: `${this.ruleName} supports: ${this.supportedActions.join(", ") || "no mutations"}.`,
+      next_step_hint: "Run tedit actions <file> --json to inspect supported actions, or use tedit edit for literal text changes.",
     });
   }
 }

@@ -319,9 +319,12 @@ export function verifyParseForFile(filePath: string, source: string, enabled = t
     return { verified: true, parser };
   } catch (error) {
     fail("PARSE_BROKEN_AFTER_EDIT", "Edit would produce invalid syntax for this file type; no write was performed.", {
+      rule: parser,
       parser,
       parser_error: error instanceof Error ? error.message : String(error),
+      ...parseErrorLocation(error, source),
       ...(parser === "json" ? jsonParseLocation(error) : {}),
+      next_step_hint: "Inspect the reported line, fix the syntax, then rerun the same tedit command.",
     });
   }
 }
@@ -338,6 +341,36 @@ function jsonParseLocation(error: unknown): Record<string, unknown> {
   const match = message.match(/position\s+(\d+)/i);
   if (!match) return {};
   return { parser_position: Number(match[1]) };
+}
+
+function parseErrorLocation(error: unknown, source: string): Record<string, unknown> {
+  const line = errorLine(error, source);
+  if (!line) return {};
+  return { line, snippet: sourceLine(source, line) };
+}
+
+function errorLine(error: unknown, source: string): number | undefined {
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const loc = record.loc;
+    if (loc && typeof loc === "object" && typeof (loc as Record<string, unknown>).line === "number") return (loc as Record<string, number>).line;
+    if (typeof record.line === "number") return record.line;
+    if (typeof record.lineNumber === "number") return record.lineNumber;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const lineMatch = message.match(/line\s+(\d+)/i);
+  if (lineMatch) return Number(lineMatch[1]);
+  const positionMatch = message.match(/position\s+(\d+)/i);
+  if (positionMatch) return lineForOffset(source, Number(positionMatch[1]));
+  return undefined;
+}
+
+function lineForOffset(source: string, offset: number): number {
+  return source.slice(0, Math.max(0, offset)).split(/\r?\n/).length;
+}
+
+function sourceLine(source: string, line: number): string {
+  return source.split(/\r?\n/)[line - 1] ?? "";
 }
 
 function verifyMarkdownLite(source: string): void {

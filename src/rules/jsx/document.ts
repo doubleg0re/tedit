@@ -470,6 +470,9 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
 
   protected override nodeNotFoundDetails(target: string): Record<string, unknown> {
     return {
+      rule: this.ruleName,
+      selector: target,
+      selector_hint: "Supported selector subset: tag/component, #id, .class, [attr], descendant, >, +, ~, :scope, :has(...), :not(...), :first-child, :last-child, :nth-of-type(n), :expr.",
       base_candidates: findBaseLiteralCandidates(this.source, target),
       next_step_hint: `If the intent was literal text editing, retry with: tedit edit ${this.filePath} --find ${JSON.stringify(selectorLiteralHint(target) ?? target)} --replace <text>`,
     };
