@@ -43,6 +43,7 @@ type MarkupNode = {
 type Splice = { start: number; end: number; text: string };
 
 const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
+const RAW_TEXT_TAGS = new Set(["script", "style"]);
 
 export class MarkupDocument extends BaseRuleDocument<MarkupNode> {
   private current: string;
@@ -305,8 +306,21 @@ function scanMarkupTokens(source: string): MarkupToken[] {
       index = end + 3;
       continue;
     }
+    if (source.startsWith("<![CDATA[", start)) {
+      const end = source.indexOf("]]>", start + "<![CDATA[".length);
+      if (end < 0) fail("INVALID_MARKUP", "Unclosed CDATA section.", { offset: start });
+      tokens.push({ start, raw: source.slice(start, end + 3) });
+      index = end + 3;
+      continue;
+    }
     const end = findMarkupTagEnd(source, start);
-    tokens.push({ start, raw: source.slice(start, end + 1) });
+    const raw = source.slice(start, end + 1);
+    tokens.push({ start, raw });
+    const rawTextTag = rawTextTagName(raw);
+    if (rawTextTag) {
+      index = findRawTextClose(source, rawTextTag, end + 1);
+      continue;
+    }
     index = end + 1;
   }
   return tokens;
@@ -327,6 +341,29 @@ function findMarkupTagEnd(source: string, start: number): number {
     if (char === ">") return index;
   }
   fail("INVALID_MARKUP", "Unclosed markup tag.", { offset: start });
+}
+
+function rawTextTagName(raw: string): string | null {
+  if (raw.startsWith("</") || raw.startsWith("<!") || raw.startsWith("<?") || raw.trimEnd().endsWith("/>")) return null;
+  const match = raw.match(/^<\s*([A-Za-z][\w:.-]*)/);
+  const tag = match?.[1]?.toLowerCase();
+  return tag && RAW_TEXT_TAGS.has(tag) ? tag : null;
+}
+
+function findRawTextClose(source: string, tag: string, start: number): number {
+  const lower = source.toLowerCase();
+  const needle = `</${tag}`;
+  let cursor = start;
+  while (cursor < source.length) {
+    const closeStart = lower.indexOf(needle, cursor);
+    if (closeStart < 0) break;
+    const closeEnd = findMarkupTagEnd(source, closeStart);
+    const raw = source.slice(closeStart, closeEnd + 1);
+    const closeName = raw.slice(2, -1).trim().split(/\s+/)[0]?.toLowerCase();
+    if (closeName === tag) return closeStart;
+    cursor = closeEnd + 1;
+  }
+  fail("INVALID_MARKUP", `Unclosed raw-text tag <${tag}>.`, { tag, offset: start });
 }
 
 function parseOpeningTag(raw: string, start: number): Omit<MarkupNode, "parent" | "children"> {

@@ -898,6 +898,26 @@ test("markup rule preserves greater-than signs inside quoted attributes", () => 
   assert.equal(readFileSync(file, "utf8"), '<root><item data="a>b" id="x">One</item></root>');
 });
 
+test("markup rule ignores raw text comments and CDATA while editing real elements", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const html = join(dir, "raw.html");
+  const xml = join(dir, "raw.xml");
+  writeFileSync(html, '<main><script>if (a < b && c > d) { console.log("<p>raw</p>"); }</script><style>.x > .y { color: red; }</style><!-- <p>comment</p> --><p>Hello</p></main>');
+  writeFileSync(xml, '<root><![CDATA[<item id="raw">raw</item>]]><!-- <item id="comment" /> --><item id="real">One</item></root>');
+
+  const htmlParagraphs = JSON.parse(run(["find", html, "p", "--json"]));
+  assert.equal(htmlParagraphs.matches.length, 1);
+  assert.equal(htmlParagraphs.matches[0].preview, "<p>Hello</p>");
+  run(["text", "replace", html, "p", "--match-text", "Hello", "--with-text", "Hi", "--write"]);
+  assert.equal(readFileSync(html, "utf8"), '<main><script>if (a < b && c > d) { console.log("<p>raw</p>"); }</script><style>.x > .y { color: red; }</style><!-- <p>comment</p> --><p>Hi</p></main>');
+
+  const xmlItems = JSON.parse(run(["find", xml, "item", "--json"]));
+  assert.equal(xmlItems.matches.length, 1);
+  assert.equal(xmlItems.matches[0].attributes.id, "real");
+  run(["prop", "set", xml, "item", "status", "ok", "--write"]);
+  assert.equal(readFileSync(xml, "utf8"), '<root><![CDATA[<item id="raw">raw</item>]]><!-- <item id="comment" /> --><item id="real" status="ok">One</item></root>');
+});
+
 test("rename does not reprint unrelated conditional JSX attribute consequents", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "Page.tsx");
