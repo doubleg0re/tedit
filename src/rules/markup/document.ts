@@ -255,27 +255,27 @@ export function parseMarkupDocument(filePath: string, source: string): MarkupDoc
   return new MarkupDocument(filePath, source);
 }
 
+type MarkupToken = { raw: string; start: number };
+
 function parseMarkup(source: string): MarkupNode[] {
   const roots: MarkupNode[] = [];
   const stack: MarkupNode[] = [];
-  const tagPattern = /<!--[^]*?-->|<[^!/?][^>]*>|<\/[^>]+>/g;
-  let match: RegExpExecArray | null;
-  while ((match = tagPattern.exec(source))) {
-    const raw = match[0];
-    if (raw.startsWith("<!--")) continue;
+  for (const token of scanMarkupTokens(source)) {
+    const raw = token.raw;
+    if (raw.startsWith("<!--") || raw.startsWith("<!") || raw.startsWith("<?")) continue;
     if (raw.startsWith("</")) {
       const closeName = raw.slice(2, -1).trim().split(/\s+/)[0];
       const node = stack.pop();
       if (!node || node.tag !== closeName) fail("INVALID_MARKUP", `Unexpected closing tag </${closeName}>.`);
-      node.closeStart = match.index;
-      node.closeEnd = match.index + raw.length;
-      node.closeNameStart = match.index + 2;
+      node.closeStart = token.start;
+      node.closeEnd = token.start + raw.length;
+      node.closeNameStart = token.start + 2;
       node.closeNameEnd = node.closeNameStart + closeName.length;
       node.end = node.closeEnd;
       continue;
     }
 
-    const parsed = parseOpeningTag(raw, match.index);
+    const parsed = parseOpeningTag(raw, token.start);
     const parent = stack[stack.length - 1] ?? null;
     const node: MarkupNode = { ...parsed, parent, children: [] };
     if (parent) parent.children.push(node);
@@ -285,6 +285,48 @@ function parseMarkup(source: string): MarkupNode[] {
 
   if (stack.length > 0) fail("INVALID_MARKUP", `Unclosed tag <${stack[stack.length - 1].tag}>.`);
   return flattenMarkupNodes(roots);
+}
+
+function scanMarkupTokens(source: string): MarkupToken[] {
+  const tokens: MarkupToken[] = [];
+  let index = 0;
+  while (index < source.length) {
+    const start = source.indexOf("<", index);
+    if (start < 0) break;
+    const next = source[start + 1];
+    if (!next || !/[A-Za-z/!?]/.test(next)) {
+      index = start + 1;
+      continue;
+    }
+    if (source.startsWith("<!--", start)) {
+      const end = source.indexOf("-->", start + 4);
+      if (end < 0) fail("INVALID_MARKUP", "Unclosed markup comment.", { offset: start });
+      tokens.push({ start, raw: source.slice(start, end + 3) });
+      index = end + 3;
+      continue;
+    }
+    const end = findMarkupTagEnd(source, start);
+    tokens.push({ start, raw: source.slice(start, end + 1) });
+    index = end + 1;
+  }
+  return tokens;
+}
+
+function findMarkupTagEnd(source: string, start: number): number {
+  let quote: string | null = null;
+  for (let index = start + 1; index < source.length; index++) {
+    const char = source[index];
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === ">") return index;
+  }
+  fail("INVALID_MARKUP", "Unclosed markup tag.", { offset: start });
 }
 
 function parseOpeningTag(raw: string, start: number): Omit<MarkupNode, "parent" | "children"> {
@@ -366,7 +408,14 @@ function markupText(value: TextValueSpec): string {
 
 function innerText(source: string, node: MarkupNode): string {
   if (node.selfClosing || node.closeStart === null) return "";
-  return source.slice(node.openEnd, node.closeStart).replace(/<[^>]+>/g, "");
+  return stripMarkupTokens(source.slice(node.openEnd, node.closeStart));
+}
+
+function stripMarkupTokens(source: string): string {
+  return [...scanMarkupTokens(source)].sort((a, b) => b.start - a.start).reduce(
+    (text, token) => text.slice(0, token.start) + text.slice(token.start + token.raw.length),
+    source,
+  );
 }
 
 function normalizeClassNames(value: string | string[]): string[] {

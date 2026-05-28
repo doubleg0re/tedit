@@ -55,7 +55,7 @@ export function matchesSimpleSelector(info: TreeNodeInfo, selector: SimpleSelect
       continue;
     }
 
-    const prop = info.attributes[attr.name];
+    const prop = attr.name === "className" ? info.attributes.className ?? info.attributes.class : info.attributes[attr.name];
     if (attr.op === "exists") {
       if (prop === undefined) return false;
       continue;

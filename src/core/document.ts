@@ -98,4 +98,5 @@ export interface DocumentAdapter {
   readonly rule: RuleMetadata;
   open(filePath: string): StructuredDocument;
   parse(filePath: string, source: string): StructuredDocument;
+  verify?(filePath: string, source: string): void;
 }

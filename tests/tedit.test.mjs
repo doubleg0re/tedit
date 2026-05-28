@@ -799,6 +799,19 @@ test("yaml rule edits mapping keys and sequence items", () => {
   assert.doesNotMatch(updated, /old/);
 });
 
+test("yaml rule rejects property edits on scalar nodes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "config.yaml");
+  const original = "name: demo\n";
+  writeFileSync(file, original);
+
+  const failed = runFail(["prop", "set", file, '[path="$.name"]', "nested", "value", "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "YAML_NOT_MAPPING");
+  assert.equal(readFileSync(file, "utf8"), original);
+});
+
 test("markdown rule edits frontmatter sections and code blocks", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "README.md");
@@ -823,6 +836,24 @@ test("markdown rule edits frontmatter sections and code blocks", () => {
   assert.doesNotMatch(updated, /Remove Me|gone/);
 });
 
+test("markdown rule treats an unclosed leading thematic break as content", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "README.md");
+  const frontmatterish = join(dir, "frontmatterish.md");
+  writeFileSync(file, "---\ncontent\n");
+  writeFileSync(frontmatterish, "---\ntitle: Demo\nbody\n");
+
+  const verify = JSON.parse(run(["verify-file", file, "--json"]));
+  assert.equal(verify.parse_verified, true);
+  assert.equal(verify.parser, "markdown-lite");
+
+  const found = JSON.parse(run(["find", file, "paragraph", "--json"]));
+  assert.equal(found.matches[0].attributes.text, "---\ncontent");
+
+  const failed = runFail(["verify-file", frontmatterish, "--json"]);
+  assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
+});
+
 test("markup rule edits html and xml structures", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const html = join(dir, "index.html");
@@ -832,6 +863,8 @@ test("markup rule edits html and xml structures", () => {
 
   const found = JSON.parse(run(["find", html, "main.old", "--json"]));
   assert.equal(found.matches[0].name, "main");
+  const foundByClassAttr = JSON.parse(run(["find", html, "[class=old]", "--json"]));
+  assert.equal(foundByClassAttr.matches[0].name, "main");
 
   run(["class", "add", html, "main", "panel", "--write"]);
   run(["class", "replace", html, "main", "old", "content", "--write"]);
@@ -850,6 +883,19 @@ test("markup rule edits html and xml structures", () => {
   assert.match(updatedHtml, /<strong class="badge">New<\/strong><!-- done -->/);
   assert.doesNotMatch(updatedHtml, /<br/);
   assert.equal(readFileSync(xml, "utf8"), '<root><entry id="b">One</entry></root>');
+});
+
+test("markup rule preserves greater-than signs inside quoted attributes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "quoted.xml");
+  writeFileSync(file, '<root><item data="a>b">One</item></root>');
+
+  const found = JSON.parse(run(["find", file, 'item[data="a>b"]', "--json"]));
+  assert.equal(found.matches[0].attributes.data, "a>b");
+
+  run(["prop", "set", file, 'item[data="a>b"]', "id", "x", "--write"]);
+
+  assert.equal(readFileSync(file, "utf8"), '<root><item data="a>b" id="x">One</item></root>');
 });
 
 test("rename does not reprint unrelated conditional JSX attribute consequents", () => {
@@ -1615,7 +1661,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       arguments: { file: mcpCreateFile, source: "# Created\n", write: true },
     });
     assert.equal(createFileResult.isError, undefined);
-    assert.equal(createFileResult.structuredContent.parser, "markdown");
+    assert.equal(createFileResult.structuredContent.parser, "markdown-lite");
     assert.equal(createFileResult.structuredContent.files[0].change, "create");
     assert.equal(readFileSync(mcpCreateFile, "utf8"), "# Created\n");
 
@@ -1861,7 +1907,7 @@ test("base edit verifies lightweight Markdown fences before writing", () => {
 
   const result = JSON.parse(run(["edit", file, "--find", "old", "--replace", "new", "--write", "--json"]));
   assert.equal(result.parse_verified, true);
-  assert.equal(result.parser, "markdown");
+  assert.equal(result.parser, "markdown-lite");
 
   const failed = runFail(["edit", file, "--find", "\n```\n", "--replace", "\n", "--write"]);
   assert.equal(failed.status, 1);
@@ -1873,19 +1919,24 @@ test("verify-file reports current parser coverage", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const jsonFile = join(dir, "config.json");
   const markdownFile = join(dir, "README.md");
+  const mdxFile = join(dir, "Component.mdx");
   const textFile = join(dir, "notes.txt");
   writeFileSync(jsonFile, "{\"enabled\":true}\n");
   writeFileSync(markdownFile, "# Notes\n\n```ts\nconst ok = true;\n```\n");
+  writeFileSync(mdxFile, "# Notes\n\n<Component />\n");
   writeFileSync(textFile, "plain\n");
 
   const json = JSON.parse(run(["verify-file", jsonFile, "--json"]));
   const markdown = JSON.parse(run(["verify-file", markdownFile, "--json"]));
+  const mdx = JSON.parse(run(["verify-file", mdxFile, "--json"]));
   const text = JSON.parse(run(["verify-file", textFile, "--json"]));
 
   assert.equal(json.parse_verified, true);
   assert.equal(json.parser, "json");
   assert.equal(markdown.parse_verified, true);
-  assert.equal(markdown.parser, "markdown");
+  assert.equal(markdown.parser, "markdown-lite");
+  assert.equal(mdx.parse_verified, true);
+  assert.equal(mdx.parser, "markdown-lite");
   assert.equal(text.parse_verified, false);
   assert.equal(text.parser, undefined);
 });

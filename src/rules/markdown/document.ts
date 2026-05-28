@@ -249,7 +249,7 @@ function parseMarkdownLines(lines: string[]): MarkdownNode {
 function parseFrontmatter(lines: string[], root: MarkdownNode): number {
   if (lines[0] !== "---") return 0;
   const end = lines.findIndex((line, index) => index > 0 && line === "---");
-  if (end < 0) fail("INVALID_MARKDOWN", "Frontmatter fence is not closed.");
+  if (end < 0) return looksLikeFrontmatter(lines) ? fail("INVALID_MARKDOWN", "Frontmatter fence is not closed.") : 0;
   const node = markdownNode("$/frontmatter", "frontmatter", "frontmatter", 0, end, root, {});
   root.children.push(node);
   for (let line = 1; line < end; line++) {
@@ -259,6 +259,10 @@ function parseFrontmatter(lines: string[], root: MarkdownNode): number {
     node.children.push(markdownNode(`$/frontmatter/${key}`, key, "frontmatter-entry", line, line, node, { key, value: match[2] }));
   }
   return end + 1;
+}
+
+function looksLikeFrontmatter(lines: string[]): boolean {
+  return lines.slice(1).some((line) => /^[^:#][^:]*:\s*.*$/.test(line.trim()));
 }
 
 function parseCodeFence(lines: string[], start: number, parent: MarkdownNode, counters: Map<string, number>): number {

@@ -48,6 +48,7 @@ export class YamlDocument extends BaseRuleDocument<YamlNode> {
 
   setAttribute(target: string, name: string, value: ValueSpec): TreeNodeInfo {
     const node = this.resolvePath(target);
+    ensureMappingTarget(node, "prop.set");
     const existing = node.children.find((child) => child.key === name);
     const scalar = yamlScalarFromSpec(value);
     if (existing) {
@@ -64,6 +65,7 @@ export class YamlDocument extends BaseRuleDocument<YamlNode> {
 
   removeAttribute(target: string, name: string): TreeNodeInfo {
     const node = this.resolvePath(target);
+    ensureMappingTarget(node, "prop.remove");
     const existing = node.children.find((child) => child.key === name);
     if (!existing) return this.inspect(this.getNodeId(node));
     this.lines.splice(existing.line, existing.endLine - existing.line + 1);
@@ -156,6 +158,11 @@ export function openYamlDocument(filePath: string): YamlDocument {
 
 export function parseYamlDocument(filePath: string, source: string): YamlDocument {
   return new YamlDocument(filePath, source);
+}
+
+function ensureMappingTarget(node: YamlNode, action: string): void {
+  if (node.kind === "root" || node.kind === "mapping") return;
+  fail("YAML_NOT_MAPPING", `${action} requires a YAML mapping/root node.`, { path: node.path, kind: node.kind });
 }
 
 function parseYamlLines(lines: string[]): YamlNode {

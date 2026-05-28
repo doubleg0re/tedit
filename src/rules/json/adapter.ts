@@ -9,4 +9,5 @@ export const jsonAdapter: DocumentAdapter = {
   },
   open: openJsonDocument,
   parse: parseJsonDocument,
+  verify: parseJsonDocument,
 };

@@ -42,4 +42,7 @@ export const jsxAdapter: DocumentAdapter = {
   parse(filePath: string, source: string): JsxDocument {
     return new JsxDocument(filePath, source);
   },
+  verify(filePath: string, source: string): void {
+    new JsxDocument(filePath, source);
+  },
 };

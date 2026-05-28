@@ -9,4 +9,5 @@ export const markupAdapter: DocumentAdapter = {
   },
   open: openMarkupDocument,
   parse: parseMarkupDocument,
+  verify: parseMarkupDocument,
 };

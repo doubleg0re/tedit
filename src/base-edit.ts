@@ -307,13 +307,15 @@ export function verifyParseForFile(filePath: string, source: string, enabled = t
   if (!enabled) return { verified: false };
   const adapter = getOptionalAdapterForFile(filePath);
   const extension = extname(filePath).toLowerCase();
-  const parser = adapter?.rule.name ?? parserForExtension(extension);
+  const adapterVerifier = adapter?.verify;
+  const parser = adapterVerifier ? adapter.rule.name : parserForExtension(extension);
   if (!parser) return { verified: false };
 
   try {
-    if (adapter) adapter.parse(filePath, source);
+    if (adapterVerifier) adapterVerifier(filePath, source);
     else if (parser === "json") JSON.parse(source);
     else if (parser === "markdown-lite") verifyMarkdownLite(source);
+    else if (parser === "yaml-lite") verifyYamlLite(source);
     return { verified: true, parser };
   } catch (error) {
     fail("PARSE_BROKEN_AFTER_EDIT", "Edit would produce invalid syntax for this file type; no write was performed.", {
@@ -326,7 +328,8 @@ export function verifyParseForFile(filePath: string, source: string, enabled = t
 
 function parserForExtension(extension: string): string | undefined {
   if (extension === ".json") return "json";
-  if (extension === ".md" || extension === ".markdown") return "markdown-lite";
+  if (extension === ".md" || extension === ".markdown" || extension === ".mdx") return "markdown-lite";
+  if (extension === ".yaml" || extension === ".yml") return "yaml-lite";
   return undefined;
 }
 
@@ -348,11 +351,46 @@ function verifyFrontmatterFence(lines: string[]): void {
   const first = lines[0].replace(/^\uFEFF/, "");
   if (first.trim() !== "---") return;
 
+  let hasFrontmatterContent = false;
   for (let index = 1; index < lines.length; index++) {
     const line = lines[index].trim();
     if (line === "---" || line === "...") return;
+    if (/^[^:#][^:]*:\s*.*$/.test(line)) {
+      hasFrontmatterContent = true;
+      continue;
+    }
+    if (!line || line.startsWith("#")) continue;
+    if (hasFrontmatterContent) break;
+    return;
   }
-  throw new Error("Unclosed frontmatter fence opened at line 1.");
+  if (hasFrontmatterContent) throw new Error("Unclosed frontmatter fence opened at line 1.");
+}
+
+function verifyYamlLite(source: string): void {
+  const stack: Array<{ indent: number; acceptsChildren: boolean; line: number }> = [{ indent: -1, acceptsChildren: true, line: 0 }];
+  const lines = source.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    const raw = lines[index];
+    if (!raw.trim() || raw.trimStart().startsWith("#")) continue;
+    if (/^\t+/.test(raw)) throw new Error(`YAML tabs are not supported at line ${index + 1}.`);
+    const indent = raw.match(/^ */)?.[0].length ?? 0;
+    while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop();
+    const parent = stack[stack.length - 1];
+    if (indent > parent.indent && !parent.acceptsChildren) {
+      throw new Error(`Indented child under scalar YAML value at line ${index + 1}.`);
+    }
+    const trimmed = raw.trimStart();
+    const sequence = trimmed.match(/^-\s+(.*)$/);
+    if (sequence) {
+      const value = sequence[1].trim();
+      stack.push({ indent, acceptsChildren: value.length === 0, line: index + 1 });
+      continue;
+    }
+    const mapping = trimmed.match(/^([^:#][^:]*):(\s*(.*))?$/);
+    if (!mapping) continue;
+    const value = (mapping[3] ?? "").trim();
+    stack.push({ indent, acceptsChildren: value.length === 0, line: index + 1 });
+  }
 }
 
 function verifyCodeFences(lines: string[]): void {
