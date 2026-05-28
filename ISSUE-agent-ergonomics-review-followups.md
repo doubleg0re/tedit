@@ -2,24 +2,38 @@
 
 ## Status
 
-Partially implemented from the 2026-05-28 dogfood/review session.
+Implemented from the 2026-05-28 dogfood/review session. The remaining items
+are follow-up polish, not blockers for the current agent loop.
 
 Implemented in v1:
 
 - MCP now exposes `write_file`, `create_file`, `scaffold_file`, and `new_file`.
-- Mutating MCP results include compact `summary`, enriched `files`, and `next`
-  fields where applicable.
+- MCP/non-TTY output defaults to compact machine-readable results, while TTY CLI
+  output stays detailed unless explicitly overridden.
+- Mutating results include compact `summary`, enriched `files`, and
+  deterministic `next` fields where applicable.
+- Detailed payloads remain available through `--output detailed`,
+  `TEDIT_OUTPUT=detailed`, MCP `output: "detailed"`, `includeDiffs`, and
+  `includeDetails`.
 - MCP/CLI error results surface top-level `next` hints derived from existing
   diagnostics.
+- Backups now use a manifest-backed `.tedit-cache/backups` lifecycle by
+  default, with `tedit backups list`, `restore`, and dry-run-first `clean`.
+- `npm run pack:check` now smoke-checks the packed CLI and MCP bins and blocks
+  backup/postinstall artifacts.
 
-Remaining:
+Remaining follow-ups from Claude MCP smoke:
 
-- Agent-default result policy based on the output channel: MCP, pipes,
-  scripts, and CI default to compact machine-readable results; TTY terminal
-  usage stays detailed unless explicitly overridden.
-- Backup lifecycle cleanup under a repo-local `.tedit-cache/backups` cache for
-  v1, with room to move to an XDG state path later. `.tedit/` is reserved for
-  the local package sandbox in this repo.
+- Add a first-class plain-text `read_file` MCP tool or document the intended
+  verification path for non-JSX files.
+- Decide whether regex replacements should support `$&`/`$1` backreferences
+  or explicitly document literal replacement semantics.
+- Consider representing parser skips as `parse_verified: null` or a separate
+  `parse_skipped` flag for plain text.
+- Clean up minor action naming differences between top-level MCP tools and
+  action aliases if they hurt discoverability.
+- Continue improving exact-match and selector recovery hints where deterministic
+  suggestions are available.
 
 ## Priority
 
@@ -37,12 +51,10 @@ it is the interface around that engine:
   nested quotes.
 - Whole-file writes were implemented in the CLI but were not exposed as direct MCP
   tools; v1 now adds direct MCP generation tools.
-- `.tedit.bak` sidecar backups are useful for safety but create workspace noise
-  and can leak into packaging edge cases such as npm's `README*` auto-include
-  behavior.
-- Output is much better with `--summary`, `--quiet`, and `--diff-out`, but MCP
-  callers still need a response shape optimized for agent decisions rather than
-  human terminal output.
+- `.tedit.bak` sidecar backups were useful for safety but created workspace
+  noise; v1 moves default backups into manifest-backed `.tedit-cache/backups`.
+- Output is now compact by default for MCP and non-TTY callers, while detailed
+  output remains available for terminal debugging and explicit agent probes.
 - Failure diagnostics contain useful data, but the next action is not always
   obvious enough for a fast agent retry loop.
 
@@ -279,6 +291,15 @@ Acceptance criteria:
   mandatory context for every successful agent decision.
 
 ## Dogfood checks
+
+Latest Claude MCP smoke: PASS on 2026-05-28, saved at
+`.omx/artifacts/claude-mcp-smoke-20260528-235537.md`. Claude used MCP tools
+only for discovery, file creation, exact edit, multiedit, patch, and verification
+probes under `/tmp/tedit-claude-mcp-smoke-20260528235537`.
+
+Latest local MCP stdio smoke: PASS on 2026-05-28. A direct SDK client used
+`actions`, `create_file`, `edit`, `multiedit`, `patch`, and `verify_file`, and
+confirmed compact write results plus detailed dry-run override behavior.
 
 Before closing this issue, repeat the same kind of session that produced it:
 

@@ -92,7 +92,12 @@ and JSX mutation engines.
 }
 ```
 
-The package bin also exposes `tedit-mcp`, so installed packages can use. The test suite also runs `npm pack --dry-run --json` to catch missing CLI/MCP distribution files before publish:
+The package bin also exposes `tedit-mcp`, so installed packages can use the
+server without a source checkout. `npm run pack:check` packs the artifact and
+smoke-checks the installed bins before publish: required `dist` files, bin
+shebang and executable mode, package size, backup/postinstall exclusions,
+`npx -y --package <tgz> tedit --version`, and packed `tedit-mcp` stdio
+startup:
 
 ```json
 {
@@ -115,10 +120,14 @@ actions: `edit`, `multiedit`, `patch`, `write_file`, `create_file`,
 `expr_replace`, `expr_wrap`, `expr_unwrap`, `expr_to_ternary`,
 `expr_to_short_circuit`, and `extract`.
 
-Each tool returns the same structured JSON payload shape that the
-underlying tedit core returns. Errors are returned as MCP tool errors
-with the normal tedit `code`, `error`, and `details` fields in structured
-content.
+Mutating MCP tools default to compact machine-readable results for agent loops:
+`success`, `ok`, `summary`, `changed`, `written`, `files`, and a
+`next` array only when there is a deterministic follow-up such as applying a
+dry-run. Pass `output: "detailed"`, `includeDiffs: true`, or
+`includeDetails: true` to retrieve full diffs, matches, and write-policy
+diagnostics. Failures use the same structured tedit fields where possible,
+including `ok: false`, `code`, `error`, `details`, and actionable `next`
+hints.
 
 ## Best Fit
 
@@ -248,9 +257,14 @@ write immediately; ignored files or files outside git default to dry-run
 with a warning. Explicit `--write` and `--dry-run` always win.
 
 Set `TEDIT_DEFAULT_WRITE=true|false|auto` to force a default. Explicit
-writes outside git create `<file>.tedit.bak` unless `--no-backup` or
-`TEDIT_BACKUP=never` is set. Use `--backup` or `TEDIT_BACKUP=always`
-to force backup creation.
+writes that overwrite files outside git create manifest-backed backups under
+`.tedit-cache/backups/<id>/<relative-file>.bak` by default. Use
+`tedit backups list`, `tedit backups restore <id> [--write]`, and
+`tedit backups clean --older-than 7d [--write]` to inspect, restore, and
+clean them; restore and clean are dry-run by default. Use `--backup` or
+`TEDIT_BACKUP=always` to force backup creation, `--no-backup` or
+`TEDIT_BACKUP=never` to disable it, and `TEDIT_BACKUP_STYLE=sidecar` for
+the compatibility `<file>.tedit.bak` layout.
 
 ## Universal Base Edit
 
@@ -485,6 +499,9 @@ tedit extract src/Page.tsx Card \
   --name PageCard \
   --plan-out .tedit/plans/extract-card.json
 
+tedit plan inspect .tedit/plans/extract-card.json
+tedit plan inspect .tedit/plans/extract-card.json --json
+
 tedit apply-plan .tedit/plans/extract-card.json --dry-run --diff-out extract.diff
 tedit apply-plan .tedit/plans/extract-card.json --write
 ```
@@ -659,7 +676,7 @@ tedit new server-action src/actions/save.ts --param name=saveDraft --write
 - File creation is available through `create`, `write`, `scaffold`, and `new`; single-file `chain` can also start with `create --source ...` before structural or base edits.
 - Base `edit` is available as a standalone command, inside `workspace-flow` / `chain-workspace`, and mixed into single-file `chain` with JSX actions.
 - `patch` supports unified diff and Codex apply-patch file updates, additions, deletes, and renames.
-- Default write mode is git-aware. Outside git, commands still dry-run unless `--write` is explicit, and explicit writes create one-generation `.tedit.bak` backups by default.
+- Default write mode is git-aware. Outside git, commands still dry-run unless `--write` is explicit, and explicit overwrites create manifest-backed backups under `.tedit-cache/backups` by default. Sidecar `.tedit.bak` backups remain available with `TEDIT_BACKUP_STYLE=sidecar`.
 - Scaffold shorthand is intentionally shallow. Use `--spec` JSON for nested children and complex props.
 - For PR-quality diffs, inspect `--dry-run` output carefully until more mutation types get surgical patch implementations.
 

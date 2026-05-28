@@ -1,6 +1,6 @@
 # Plan files and apply-plan for risky refactors
 
-Status: Implemented initial extract plan/apply support on 2026-05-28.
+Status: Implemented initial extract plan/apply/inspect support on 2026-05-28.
 
 Implemented:
 
@@ -8,14 +8,14 @@ Implemented:
 - `apply-plan <plan-json> --dry-run|--write` revalidates source/target hashes and reruns the extract planner before applying.
 - `--only`, `--skip`, `--quiet`, and `--diff-out` are supported on `apply-plan`.
 - Skipping `move-helper-*` replans that helper as an explicit prop fallback.
-- Regression coverage verifies plan generation, stale source rejection, write application, and helper move skipping.
+- Regression coverage verifies plan generation, stale source rejection, write application, helper move skipping, and plan inspection output.
+- `plan inspect <plan-json> [--json]` summarizes extract plans, stale status,
+  hash checks, step counts, and risk counts before application.
 
 Remaining follow-ups:
 
 - Keep the current plan schema extract-specific until a second concrete risky
   refactor use case lands. Do not generalize from the extract shape alone.
-- Add richer `plan inspect` summary output for the existing extract plan before
-  expanding the plan format.
 - Treat true shared-module helper movement as a future high-risk planned step,
   likely through a separate symbol/file-move command rather than an extract flag.
 
