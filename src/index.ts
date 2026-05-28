@@ -20,6 +20,7 @@ export { JsxDocument, openJsxDocument } from "./rules/jsx/document.js";
 export { JsonDocument, openJsonDocument, parseJsonDocument } from "./rules/json/document.js";
 export { YamlDocument, openYamlDocument, parseYamlDocument } from "./rules/yaml/document.js";
 export { MarkdownDocument, openMarkdownDocument, parseMarkdownDocument } from "./rules/markdown/document.js";
+export { MarkupDocument, openMarkupDocument, parseMarkupDocument } from "./rules/markup/document.js";
 export { runFlow, validateFlow } from "./flow.js";
 export type { FlowStep, FlowRoot } from "./flow.js";
 export { commitWorkspaceUpdates, runWorkspaceFlow } from "./workspace-flow.js";

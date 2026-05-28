@@ -4,6 +4,7 @@ import { jsxAdapter } from "../rules/jsx/adapter.js";
 import { jsonAdapter } from "../rules/json/adapter.js";
 import { yamlAdapter } from "../rules/yaml/adapter.js";
 import { markdownAdapter } from "../rules/markdown/adapter.js";
+import { markupAdapter } from "../rules/markup/adapter.js";
 import type { DocumentAdapter, StructuredDocument } from "./document.js";
 
 const adapters: DocumentAdapter[] = [
@@ -11,6 +12,7 @@ const adapters: DocumentAdapter[] = [
   jsonAdapter,
   yamlAdapter,
   markdownAdapter,
+  markupAdapter,
 ];
 
 export function getAdapterForFile(filePath: string): DocumentAdapter {

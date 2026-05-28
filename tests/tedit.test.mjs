@@ -740,6 +740,8 @@ test("rules command exposes registered rules", () => {
   assert.deepEqual(result.rules[2].extensions, [".yaml", ".yml"]);
   assert.equal(result.rules[3].name, "markdown");
   assert.deepEqual(result.rules[3].extensions, [".md", ".markdown", ".mdx"]);
+  assert.equal(result.rules[4].name, "markup");
+  assert.deepEqual(result.rules[4].extensions, [".html", ".htm", ".xml", ".svg"]);
 });
 
 test("json rule can inspect and edit object properties and scalar values", () => {
@@ -819,6 +821,35 @@ test("markdown rule edits frontmatter sections and code blocks", () => {
   assert.match(updated, /Extra note\./);
   assert.doesNotMatch(updated, /title: Demo/);
   assert.doesNotMatch(updated, /Remove Me|gone/);
+});
+
+test("markup rule edits html and xml structures", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const html = join(dir, "index.html");
+  const xml = join(dir, "feed.xml");
+  writeFileSync(html, '<html><body><main class="old"><p>Hello</p><br /></main></body></html>');
+  writeFileSync(xml, '<root><item id="a">One</item></root>');
+
+  const found = JSON.parse(run(["find", html, "main.old", "--json"]));
+  assert.equal(found.matches[0].name, "main");
+
+  run(["class", "add", html, "main", "panel", "--write"]);
+  run(["class", "replace", html, "main", "old", "content", "--write"]);
+  run(["prop", "set", html, "p", "data-id", "greeting", "--write"]);
+  run(["text", "replace", html, "p", "--match-text", "Hello", "--with-text", "Hi", "--write"]);
+  run(["append", html, "main", "--element", '{"tag":"span","attrs":{"class":"badge"},"text":"New"}', "--write"]);
+  run(["rename", html, "span", "--to", "strong", "--write"]);
+  run(["insertComment", html, "main", "done", "--position", "inside-end", "--write"]);
+  run(["remove", html, "br", "--write"]);
+  run(["prop", "set", xml, "item[id=a]", "id", "b", "--write"]);
+  run(["rename", xml, "item", "--to", "entry", "--write"]);
+
+  const updatedHtml = readFileSync(html, "utf8");
+  assert.match(updatedHtml, /<main class="content panel">/);
+  assert.match(updatedHtml, /<p data-id="greeting">Hi<\/p>/);
+  assert.match(updatedHtml, /<strong class="badge">New<\/strong><!-- done -->/);
+  assert.doesNotMatch(updatedHtml, /<br/);
+  assert.equal(readFileSync(xml, "utf8"), '<root><entry id="b">One</entry></root>');
 });
 
 test("rename does not reprint unrelated conditional JSX attribute consequents", () => {
