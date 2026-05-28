@@ -1108,6 +1108,71 @@ test("extract dry-run returns JSON and does not write files", () => {
   assert.doesNotMatch(readFileSync(file, "utf8"), /PageCard/);
 });
 
+test("extract plan-out writes a validated plan and apply-plan applies it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  const out = join(dir, "components", "PageCard.tsx");
+  const planPath = join(dir, ".tedit", "plans", "extract-card.json");
+  writeFileSync(file, extractFixture());
+
+  const planResult = JSON.parse(run(["extract", file, "Card", "--to", out, "--name", "PageCard", "--plan-out", planPath]));
+
+  assert.equal(planResult.success, true);
+  assert.equal(planResult.kind, "extract-component-plan");
+  assert.equal(planResult.source, file);
+  assert.equal(planResult.target, out);
+  assert.deepEqual(planResult.steps.map((step) => step.id), ["create-component-file", "replace-callsite"]);
+  assert.throws(() => readFileSync(out, "utf8"));
+  assert.doesNotMatch(readFileSync(file, "utf8"), /PageCard/);
+
+  const dryRun = JSON.parse(run(["apply-plan", planPath, "--dry-run", "--diff-out", join(dir, "extract.diff")]));
+  assert.equal(dryRun.success, true);
+  assert.equal(dryRun.written, false);
+  assert.match(dryRun.files.find((entry) => entry.step === "replace-callsite").diff, /PageCard/);
+  assert.throws(() => readFileSync(out, "utf8"));
+
+  const applied = JSON.parse(run(["apply-plan", planPath, "--write"]));
+  assert.equal(applied.written, true);
+  assert.match(readFileSync(file, "utf8"), /<PageCard pageTitle=\{pageTitle\} description=\{description\} handleEdit=\{handleEdit\} \/>/);
+  assert.match(readFileSync(out, "utf8"), /export function PageCard/);
+});
+
+test("apply-plan rejects stale source hashes before writing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  const out = join(dir, "components", "PageCard.tsx");
+  const planPath = join(dir, "extract-card.json");
+  writeFileSync(file, extractFixture());
+  run(["extract", file, "Card", "--to", out, "--name", "PageCard", "--plan-out", planPath]);
+  writeFileSync(file, extractFixture().replace("pageTitle", "heading"));
+
+  const failed = runFail(["apply-plan", planPath, "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "PLAN_STALE_SOURCE");
+  assert.throws(() => readFileSync(out, "utf8"));
+});
+
+test("apply-plan can skip helper move steps by passing helpers as props", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  const out = join(dir, "components", "PageCard.tsx");
+  const planPath = join(dir, "extract-card.json");
+  writeFileSync(file, helperDependencyExtractFixture());
+  const planResult = JSON.parse(run(["extract", file, "Card", "--to", out, "--name", "PageCard", "--plan-out", planPath]));
+
+  assert.ok(planResult.steps.some((step) => step.id === "move-helper-formatTitle"));
+
+  const applied = JSON.parse(run(["apply-plan", planPath, "--skip", "move-helper-formatTitle", "--write"]));
+  const helperStep = applied.steps.find((step) => step.id === "move-helper-formatTitle");
+
+  assert.equal(helperStep.status, "skipped");
+  assert.match(readFileSync(file, "utf8"), /function formatTitle/);
+  assert.match(readFileSync(file, "utf8"), /formatTitle=\{formatTitle\}/);
+  assert.doesNotMatch(readFileSync(out, "utf8"), /function formatTitle/);
+  assert.match(readFileSync(out, "utf8"), /formatTitle: unknown; \/\/ TODO\(tedit\): infer type/);
+});
+
 test("workspace-flow extracts and mutates the created file in one transaction", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "Page.tsx");
@@ -1629,7 +1694,7 @@ test("CLI version and subcommand help are concise", () => {
     "edit", "multiedit", "verify", "patch", "actions", "analyze-state",
     "refactor-state", "find", "inspect", "append", "prepend", "wrap",
     "unwrap", "remove", "rename", "insertComment", "text", "prop",
-    "imports", "expr", "extract", "create", "write", "scaffold", "new",
+    "imports", "expr", "extract", "apply-plan", "create", "write", "scaffold", "new",
     "flow", "workspace-flow", "wflow", "chain", "chain-workspace", "wchain",
     "rules"
   ];

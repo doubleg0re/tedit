@@ -10,7 +10,7 @@ import { toErrorResult } from "./errors.js";
 import { planExtract, type HelperPolicy } from "./extract.js";
 import { parseMultieditInput, runMultiedit, runMultieditInput, type MultieditResult } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
-import { runRefactorState } from "./refactor-state.js";
+import { runRefactorState } from "./refactor-state.js";import { applyRefactorPlan, buildExtractComponentPlan, writePlanFile } from "./refactor-plan.js";
 import { analyzeState, fileLengthWarnings, formatFileLengthWarnings, type FileLengthWarning } from "./quality.js";
 import { loadParams, parseFlowInput, runFlow } from "./flow.js";
 import {
@@ -115,6 +115,9 @@ async function main(): Promise<void> {
       return;
     case "extract":
       commandExtract(args);
+      return;
+    case "apply-plan":
+      commandApplyPlan(args);
       return;
     case "create":
       commandCreate(args);
@@ -454,6 +457,30 @@ function commandExtract(args: ParsedArgs): void {
     ...(maxProps === undefined ? {} : { maxProps: Number(maxProps) }),
   });
 
+  const planOut = stringFlag(args, "plan-out");
+  if (planOut) {
+    if (args.flags.write) throw new Error("extract --plan-out only writes the plan file; apply it with tedit apply-plan.");
+    const refactorPlan = buildExtractComponentPlan({
+      from: filePath,
+      selector,
+      to: requiredStringFlag(args, "to", "extract requires --to."),
+      name: requiredStringFlag(args, "name", "extract requires --name."),
+      exportKind: exportFlag,
+      slots: stringFlags(args, "slot"),
+      ...(depth === undefined ? {} : { depth: Number(depth) }),
+      autoSlot: Boolean(args.flags["auto-slot"]),
+      typecheck: Boolean(args.flags.typecheck),
+      helpersPolicy: helpersPolicy as HelperPolicy,
+      helperOverrides: stringFlags(args, "helper"),
+      overwrite: Boolean(args.flags.overwrite),
+      acceptLargeProps: Boolean(args.flags["accept-large-props"]),
+      ...(maxProps === undefined ? {} : { maxProps: Number(maxProps) }),
+    }, plan);
+    writePlanFile(planOut, refactorPlan, Boolean(args.flags.overwrite));
+    process.stdout.write(`${JSON.stringify({ success: true, plan: planOut, ...refactorPlan }, null, 2)}\n`);
+    return;
+  }
+
   const sourceDiff = unifiedDiff(plan.source, plan.nextSource, filePath);
   const previousNewSource = existsSync(plan.result.to) ? readFileSync(plan.result.to, "utf8") : "";
   const newFileDiff = unifiedDiff(previousNewSource, plan.newSource, plan.result.to);
@@ -490,6 +517,22 @@ function commandExtract(args: ParsedArgs): void {
       newFile: newFileDiff,
     },
   }, null, 2)}\n`);
+}
+
+function commandApplyPlan(args: ParsedArgs): void {
+  const [planPath] = requirePositionals(args, 1, "apply-plan <plan-json>");
+  if (args.flags.write && args.flags["dry-run"]) {
+    throw new Error("Use only one of --write or --dry-run.");
+  }
+  const result = applyRefactorPlan(planPath, {
+    ...writeFlags(args),
+    overwrite: Boolean(args.flags.overwrite),
+    only: stringFlags(args, "only"),
+    skip: stringFlags(args, "skip"),
+  });
+  writeDiffOut(args, result);
+  if (quietRequested(args)) return;
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
 function commandCreate(args: ParsedArgs): void {
@@ -1522,7 +1565,8 @@ Usage:
   tedit expr unwrap <file> <selector> [--dry-run|--write]
   tedit expr toTernary <file> <selector> [--alternate <expr>] [--dry-run|--write]
   tedit expr toShortCircuit <file> <selector> [--dry-run|--write]
-  tedit extract <file> <selector> --to <new-file> --name <ComponentName> [--slot '<selector>.children[=prop]'|--depth N --auto-slot] [--typecheck] [--helpers ask|move|share|as-prop] [--helper name=move|share|leave|as-prop] [--max-props N|--accept-large-props] [--export named|default] [--overwrite] [--dry-run|--write]
+  tedit extract <file> <selector> --to <new-file> --name <ComponentName> [--slot '<selector>.children[=prop]'|--depth N --auto-slot] [--typecheck] [--helpers ask|move|share|as-prop] [--helper name=move|share|leave|as-prop] [--max-props N|--accept-large-props] [--export named|default] [--overwrite] [--plan-out <plan-json>|--dry-run|--write]
+  tedit apply-plan <plan-json> [--only <step-id>] [--skip <step-id>] [--quiet] [--diff-out <file>] [--dry-run|--write]
   tedit create <file> --source <source> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
   tedit create <file> --from-file <source-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
   tedit create <file> --from-stdin [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
@@ -1586,7 +1630,9 @@ function shortHelp(command: string): string | null {
         "Accepts unified diffs and Codex apply-patch envelopes.",
       ].join("\n");
     case "extract":
-      return "tedit extract\nUsage:\n  tedit extract <file> <selector> --to <new-file> --name <ComponentName> [--typecheck] [--helpers ask|move|share|as-prop] [--dry-run|--write]";
+      return "tedit extract\nUsage:\n  tedit extract <file> <selector> --to <new-file> --name <ComponentName> [--typecheck] [--helpers ask|move|share|as-prop] [--plan-out <plan-json>|--dry-run|--write]";
+    case "apply-plan":
+      return "tedit apply-plan\nUsage:\n  tedit apply-plan <plan-json> [--only <step-id>] [--skip <step-id>] [--quiet] [--diff-out <file>] [--dry-run|--write]\n\nValidates and applies a tedit refactor plan. Defaults to dry-run unless --write is passed.";
     case "refactor-state":
       return "tedit refactor-state\nUsage:\n  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--dry-run|--write]";
     case "actions":

@@ -75,6 +75,21 @@ Completion criteria:
 - High-risk steps are visible and selectively skippable.
 - Shared helper movement remains plan-first, not silent direct mutation.
 
+Status — 2026-05-28: complete for the current safe-refactor scope.
+
+Evidence:
+
+- `extract --plan-out <file>` writes an `extract-component-plan` without
+  changing source or target files.
+- `apply-plan` revalidates source/target hashes, re-runs the extract planner,
+  supports `--dry-run`, `--write`, `--diff-out`, `--quiet`, `--only`, and
+  `--skip`.
+- Skipping a `move-helper-*` step replans that helper as an explicit prop,
+  avoiding silent helper movement.
+- Regression tests cover plan generation, dry-run/write application, stale
+  source rejection, and helper-move skipping.
+- `npm test` passes with 122 tests.
+
 ## 3. Selector / Targeting Language
 
 Purpose: let agents describe target nodes with familiar, precise selectors.

@@ -1,5 +1,21 @@
 # Plan files and apply-plan for risky refactors
 
+Status: Implemented initial extract plan/apply support on 2026-05-28.
+
+Implemented:
+
+- `extract --plan-out <plan-json>` writes an `extract-component-plan` without mutating source files.
+- `apply-plan <plan-json> --dry-run|--write` revalidates source/target hashes and reruns the extract planner before applying.
+- `--only`, `--skip`, `--quiet`, and `--diff-out` are supported on `apply-plan`.
+- Skipping `move-helper-*` replans that helper as an explicit prop fallback.
+- Regression coverage verifies plan generation, stale source rejection, write application, and helper move skipping.
+
+Remaining follow-ups:
+
+- Generalize plan/apply beyond extract component plans.
+- Add true shared-module helper movement as its own high-risk planned step.
+- Add richer `plan inspect` summary output.
+
 ## Summary
 
 Some `tedit` refactors are mechanically possible but architecturally risky.

@@ -466,6 +466,27 @@ helper to a separate shared module first. Use `--helpers
 move|share|ask|as-prop` or repeated
 `--helper name=move|share|leave|as-prop` for overrides.
 
+For riskier refactors, generate a reviewable plan first and apply it as a
+separate step. `apply-plan` revalidates source and target hashes, re-runs the
+refactor planner, and defaults to dry-run unless `--write` is passed:
+
+```bash
+tedit extract src/Page.tsx Card \
+  --to src/components/PageCard.tsx \
+  --name PageCard \
+  --plan-out .tedit/plans/extract-card.json
+
+tedit apply-plan .tedit/plans/extract-card.json --dry-run --diff-out extract.diff
+tedit apply-plan .tedit/plans/extract-card.json --write
+```
+
+Plan steps can be filtered when reviewing high-risk helper movement. Skipping a
+`move-helper-*` step passes that helper as a prop instead of moving it:
+
+```bash
+tedit apply-plan .tedit/plans/extract-card.json --skip move-helper-formatTitle --write
+```
+
 Prop types are inferred from clear TypeScript annotations on
 destructured component props, local variables, or function signatures.
 Add `--typecheck` to ask the TypeScript checker for inferred expression
