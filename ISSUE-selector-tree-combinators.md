@@ -50,7 +50,7 @@ Implemented in the JSX rule:
 - Expression-container pseudo: `:expr`
 - Member-expression component names still work, including selectors such as `Dialog.Footer > Button`
 
-Regression coverage now exercises `ContentView ScrollArea`, `DialogFooter > Button[variant="primary"]`, `Label + Input`, `Label ~ Hint`, `h2:has(+ p)`, `main:has(:scope > h2 + p)`, `Card:has(Image)`, `Card:not(:has(Image))`, `Radio:nth-of-type(2)`, and `ContentView :expr`.
+Regression coverage now exercises `ContentView ScrollArea`, `DialogFooter > Button[variant="primary"]`, `Label + Input`, `Label ~ Hint`, `h2:has(+ p)`, `main:has(:scope > h2 + p)`, `Card:has(Image)`, `Card:not(:has(Image))`, `Radio:nth-of-type(2)`, `ContentView :expr`, quoted and unquoted attribute selectors, and actionable diagnostics for unsupported pseudo-classes and pseudo-elements.
 
 Known remaining limits:
 

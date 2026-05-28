@@ -108,6 +108,17 @@ Completion criteria:
 - Tests cover selector parity for the supported CSS-like subset.
 - Any unsupported pseudo/classes fail loudly with actionable diagnostics.
 
+Status — 2026-05-28: complete for the current selector-language scope.
+
+Evidence:
+
+- Attribute selectors now accept quoted and unquoted values.
+- Unsupported pseudo-classes and pseudo-elements fail with explicit diagnostics
+  naming the unsupported selector and listing supported pseudos.
+- README selector examples and limitations reflect the implemented parser.
+- Regression tests cover unquoted attributes and unsupported pseudo diagnostics.
+- `npm test` passes with 123 tests.
+
 ## 4. Verification Layer
 
 Purpose: stop unsafe writes before they land.

@@ -192,8 +192,8 @@ Mechanical refactor example:
 
 Structural selectors support CSS-style tag/id/class syntax, descendant,
 child, adjacent-sibling, and general-sibling constraints, JSX `className`
-matching, member-component names, scoped relative `:has(...)`, and common
-pseudos:
+matching, quoted or unquoted attribute values, member-component names, scoped
+relative `:has(...)`, and common pseudos:
 
 ```bash
 tedit find src/Page.tsx 'ContentView ScrollArea'
@@ -202,6 +202,7 @@ tedit find src/Page.tsx 'Label + Input'
 tedit find src/Page.tsx 'Label ~ Hint'
 tedit find src/Page.tsx 'main:has(:scope > h2 + p)'
 tedit find src/Page.tsx 'a[href^="https://example.com"][rel~="help"]'
+tedit find src/Page.tsx 'a[data-kind=docs-card]'
 tedit find src/Page.tsx 'div#hero.card'
 tedit find src/Page.tsx '.primary'
 tedit find src/Page.tsx 'Card.Header.title'
@@ -639,7 +640,7 @@ tedit new server-action src/actions/save.ts --param name=saveDraft --write
 
 ## Current Limitations
 
-- Selector support covers tag/component selectors, CSS-style `#id` and `.class` shorthand, attributes including `=`, `*=`, `^=`, `$=`, `~=`, and `|=`, `A B`, `A > B`, `A + B`, `A ~ B`, `:scope`, scoped `:has(...)` including `:has(> B)` and `:has(+ B)`, `:not(...)`, `:first-child`, `:last-child`, `:nth-of-type(n)`, and `:expr`.
+- Selector support covers tag/component selectors, CSS-style `#id` and `.class` shorthand, quoted or unquoted attributes including `=`, `*=`, `^=`, `$=`, `~=`, and `|=`, `A B`, `A > B`, `A + B`, `A ~ B`, `:scope`, scoped `:has(...)` including `:has(> B)` and `:has(+ B)`, `:not(...)`, `:first-child`, `:last-child`, `:nth-of-type(n)`, and `:expr`. Unsupported pseudo-classes and pseudo-elements fail with explicit diagnostics.
 - JSX mutations use surgical source patch paths for original source nodes, including `rename`, `prop.set`, `prop.remove`, `wrap`, `append`, `prepend`, `unwrap`, `remove`, and `insertComment`.
 - Mutations that target nodes created earlier in the same in-memory flow may still fall back to recast because generated nodes do not have original source spans.
 - Import edits and expression-container edits use source patches, but complex multi-line import formatting is normalized to a one-line import declaration when the declaration itself is rewritten.

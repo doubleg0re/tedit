@@ -33,6 +33,8 @@ export type ParsedSelector = {
   parts: SelectorPart[];
 };
 
+const SUPPORTED_PSEUDOS = [":scope", ":expr", ":first-child", ":last-child", ":nth-of-type(n)", ":has(...)", ":not(...)"];
+
 export function parseSelector(input: string): ParsedSelector {
   const parts = splitSelector(input.trim()).map(({ combinator, text }) => ({
     ...(combinator ? { combinator } : {}),
@@ -108,10 +110,11 @@ function parseSimpleSelector(input: string): SimpleSelector {
 
     if (rest.startsWith("[")) {
       const attr = readBalanced(rest, 0, "[", "]");
-      const match = attr.inner.match(/^([A-Za-z_$][\w:-]*)(?:(\*|\^|\$|~|\|)?=(["'])(.*?)\3)?$/);
+      const match = attr.inner.match(/^([A-Za-z_$][\w:-]*)(?:(\*|\^|\$|~|\|)?=(?:(["'])(.*?)\3|([^\s"']+)))?$/);
       if (!match) fail("UNSUPPORTED_SELECTOR", `Unsupported attribute selector: [${attr.inner}]`);
 
-      const [, rawName, rawOperator, , value] = match;
+      const [, rawName, rawOperator, , quotedValue, unquotedValue] = match;
+      const value = quotedValue ?? unquotedValue;
       attrs.push({
         name: normalizeAttrName(rawName),
         op: value === undefined ? "exists" : attrOperatorToOp(rawOperator),
@@ -172,6 +175,18 @@ function parseSimpleSelector(input: string): SimpleSelector {
       pseudos.push({ kind: "not", selector: parseSelector(arg.inner) });
       rest = rest.slice(arg.end + 1);
       continue;
+    }
+
+    if (rest.startsWith("::")) {
+      const match = rest.match(/^::([A-Za-z-]+)/);
+      const name = match?.[1] ?? rest.slice(2);
+      fail("UNSUPPORTED_SELECTOR", `Unsupported pseudo-element ::${name}. JSX selectors do not support CSS pseudo-elements.`);
+    }
+
+    if (rest.startsWith(":")) {
+      const match = rest.match(/^:([A-Za-z-]+)/);
+      const name = match?.[1] ?? rest.slice(1);
+      fail("UNSUPPORTED_SELECTOR", `Unsupported pseudo-class :${name}. Supported pseudos: ${SUPPORTED_PSEUDOS.join(", ")}.`);
     }
 
     fail("UNSUPPORTED_SELECTOR", `Unsupported selector syntax: ${input}`);

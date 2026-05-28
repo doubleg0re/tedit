@@ -380,6 +380,7 @@ test("find supports CSS id and class shorthand selectors", () => {
   const hrefSuffix = JSON.parse(run(["find", file, 'a[href$="/start"]', "--json"]));
   const relWord = JSON.parse(run(["find", file, 'a[rel~="help"]', "--json"]));
   const langDash = JSON.parse(run(["find", file, 'a[lang|="en"]', "--json"]));
+  const unquotedAttr = JSON.parse(run(["find", file, "a[data-kind=docs-card]", "--json"]));
 
   assert.equal(byIdAndClass.matches.length, 1);
   assert.equal(byIdAndClass.matches[0].name, "div");
@@ -393,6 +394,26 @@ test("find supports CSS id and class shorthand selectors", () => {
   assert.equal(hrefSuffix.matches[0].attributes["data-kind"], "docs-card");
   assert.equal(relWord.matches[0].attributes["data-kind"], "docs-card");
   assert.equal(langDash.matches[0].attributes["data-kind"], "docs-card");
+  assert.equal(unquotedAttr.matches[0].attributes["data-kind"], "docs-card");
+});
+
+test("unsupported selector pseudos fail with actionable diagnostics", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "UnsupportedSelector.tsx");
+  writeFileSync(file, `export function UnsupportedSelector() {
+  return <main><Card /></main>;
+}
+`);
+
+  const pseudo = runFail(["find", file, "Card:nth-child(1)", "--json"]);
+  const pseudoElement = runFail(["find", file, "Card::before", "--json"]);
+
+  assert.equal(pseudo.status, 1);
+  assert.equal(pseudo.body.code, "UNSUPPORTED_SELECTOR");
+  assert.match(pseudo.body.error, /Unsupported pseudo-class :nth-child/);
+  assert.match(pseudo.body.error, /Supported pseudos: .*:nth-of-type\(n\)/);
+  assert.equal(pseudoElement.body.code, "UNSUPPORTED_SELECTOR");
+  assert.match(pseudoElement.body.error, /Unsupported pseudo-element ::before/);
 });
 
 test("chain CSS-style element shorthand creates id and class attributes", () => {
