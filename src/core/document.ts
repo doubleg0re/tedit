@@ -70,6 +70,9 @@ export interface StructuredDocument {
   remove(target: string): void;
   setAttribute(target: string, name: string, value: ValueSpec): TreeNodeInfo;
   removeAttribute(target: string, name: string): TreeNodeInfo;
+  addClass(target: string, classNames: string | string[]): TreeNodeInfo;
+  removeClass(target: string, classNames: string | string[]): TreeNodeInfo;
+  replaceClass(target: string, from: string, to: string): TreeNodeInfo;
   insertComment(target: string, text: string, position?: CommentPosition): TreeNodeInfo;
   setText(target: string, value: TextValueSpec): TreeNodeInfo;
   replaceText(target: string, match: TextMatchSpec, value: TextValueSpec): TreeNodeInfo;

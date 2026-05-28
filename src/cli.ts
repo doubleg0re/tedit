@@ -114,6 +114,9 @@ async function main(): Promise<void> {
     case "prop":
       commandProp(args);
       return;
+    case "class":
+      commandClass(args);
+      return;
     case "imports":
       commandImports(args);
       return;
@@ -392,6 +395,37 @@ function commandProp(args: ParsedArgs): void {
     : doc.removeAttribute(target, name);
 
   finishMutation(args, doc, result);
+}
+
+function commandClass(args: ParsedArgs): void {
+  const [subcommand, filePath, rawTarget, ...classParts] = args.positionals;
+  if (!["add", "remove", "replace"].includes(subcommand ?? "")) {
+    throw new Error("class requires add, remove, or replace.");
+  }
+
+  const target = stringFlag(args, "id") ?? rawTarget;
+  if (!filePath || !target) throw new Error("class usage: class add|remove|replace <file> <selector> <class...>");
+
+  const doc = openDocumentForFile(filePath);
+  const result =
+    subcommand === "add" ? doc.addClass(target, classNamesFromArgs(args, classParts)) :
+    subcommand === "remove" ? doc.removeClass(target, classNamesFromArgs(args, classParts)) :
+    doc.replaceClass(target, requiredClassReplaceArg(args, "from", classParts[0]), requiredClassReplaceArg(args, "to", classParts[1]));
+
+  finishMutation(args, doc, result);
+}
+
+function classNamesFromArgs(args: ParsedArgs, positionals: string[]): string {
+  const flag = stringFlag(args, "classes");
+  const value = flag ?? positionals.join(" ");
+  if (!value.trim()) throw new Error("class add/remove requires at least one class name.");
+  return value;
+}
+
+function requiredClassReplaceArg(args: ParsedArgs, name: "from" | "to", positional: string | undefined): string {
+  const value = stringFlag(args, name) ?? positional;
+  if (!value) throw new Error(`class.replace requires --${name} or positional <${name}>.`);
+  return value;
 }
 
 function commandImports(args: ParsedArgs): void {
@@ -1679,6 +1713,9 @@ Usage:
   tedit text replace <file> <selector> --match-expr <expr> --with-expr <expr> [--dry-run|--write]
   tedit prop set <file> <selector> <name> [value] [--expr <code>] [--dry-run|--write]
   tedit prop remove <file> <selector> <name> [--dry-run|--write]
+  tedit class add <file> <selector> <class...> [--dry-run|--write]
+  tedit class remove <file> <selector> <class...> [--dry-run|--write]
+  tedit class replace <file> <selector> <from> <to> [--dry-run|--write]
   tedit imports add <file> --from <source> --named A,B [--default Name] [--dry-run|--write]
   tedit imports remove <file> --from <source> --named A,B [--dry-run|--write]
   tedit imports rename <file> --from <source> --name Old --to New [--dry-run|--write]

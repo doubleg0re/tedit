@@ -21,6 +21,9 @@ const CHAINABLE_ACTIONS = new Set([
   "remove",
   "prop.set",
   "prop.remove",
+  "class.replace",
+  "class.remove",
+  "class.add",
   "insertComment",
   "text.set",
   "text.replace",
@@ -234,6 +237,27 @@ function segmentToStep(segment: ChainSegment, index: number): FlowStep {
       if (!target || !name) fail("INVALID_CHAIN", `${loc}: prop.remove requires <target> <name>.`);
       ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "id") ? 0 : 1) + 1);
       return { action: "prop.remove", target: normalizeChainRef(target), name: normalizeChainRef(name) };
+    }
+
+    case "class.add":
+    case "class.remove": {
+      const parsed = parseStepArgs(segment, index, ["id", "classes"]);
+      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
+      const classes = getFlag(parsed, "classes") ?? parsed.positionals.slice(getFlag(parsed, "id") ? 0 : 1).join(" ");
+      if (!target || !classes) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires <target> <class...>.`);
+      ensureNoExtraArgs(segment, index, parsed.positionals, getFlag(parsed, "classes") ? (getFlag(parsed, "id") ? 0 : 1) : parsed.positionals.length);
+      return { action: segment.action, target: normalizeChainRef(target), classes: normalizeChainRef(classes) };
+    }
+
+    case "class.replace": {
+      const parsed = parseStepArgs(segment, index, ["id", "from", "to"]);
+      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
+      const offset = getFlag(parsed, "id") ? 0 : 1;
+      const from = getFlag(parsed, "from") ?? parsed.positionals[offset];
+      const to = getFlag(parsed, "to") ?? parsed.positionals[offset + (getFlag(parsed, "from") ? 0 : 1)];
+      if (!target || !from || !to) fail("INVALID_CHAIN", `${loc}: class.replace requires <target> <from> <to>.`);
+      ensureNoExtraArgs(segment, index, parsed.positionals, offset + (getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "to") ? 0 : 1));
+      return { action: "class.replace", target: normalizeChainRef(target), from: normalizeChainRef(from), to: normalizeChainRef(to) };
     }
 
     case "insertComment": {

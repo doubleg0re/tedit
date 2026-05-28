@@ -160,6 +160,53 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
     return this.resolveInfo(target);
   }
 
+  addClass(target: string, classNames: string | string[]): NodeInfo {
+    return this.updateClassList(target, (classes) => uniqueClassNames([...classes, ...normalizeClassNames(classNames)]));
+  }
+
+  removeClass(target: string, classNames: string | string[]): NodeInfo {
+    const remove = new Set(normalizeClassNames(classNames));
+    return this.updateClassList(target, (classes) => classes.filter((name) => !remove.has(name)));
+  }
+
+  replaceClass(target: string, from: string, to: string): NodeInfo {
+    const fromNames = normalizeClassNames(from);
+    const toNames = normalizeClassNames(to);
+    if (fromNames.length !== 1) fail("INVALID_CLASS", "class.replace requires exactly one source class.");
+    if (toNames.length === 0) fail("INVALID_CLASS", "class.replace requires at least one replacement class.");
+    let replaced = false;
+    const next = this.updateClassList(target, (classes) => {
+      const result: string[] = [];
+      for (const name of classes) {
+        if (name === fromNames[0]) {
+          result.push(...toNames);
+          replaced = true;
+        } else {
+          result.push(name);
+        }
+      }
+      return uniqueClassNames(result);
+    });
+    if (!replaced) fail("CLASS_NOT_FOUND", `Class "${fromNames[0]}" was not found on target.`);
+    return next;
+  }
+
+  private updateClassList(target: string, update: (classes: string[]) => string[]): NodeInfo {
+    const path = this.resolveElementPath(target);
+    const existing = findClassAttribute(path.node.openingElement);
+    const current = existing ? readStringAttributeValue(existing) : "";
+    if (current === null) {
+      fail("UNSUPPORTED_CLASS_VALUE", "class.* actions only support static string className/class attributes. Use prop.set for expression values.", {
+        prop: existing ? jsxNameToString(existing.name) : "className",
+      });
+    }
+
+    const next = update(splitClassNames(current)).join(" ");
+    if (!existing && next.length === 0) return this.resolveInfo(this.getNodeId(path.node));
+    const propName = existing ? jsxNameToString(existing.name) : "className";
+    return this.setAttribute(this.getNodeId(path.node), propName, { type: "string", value: next });
+  }
+
   insertComment(target: string, text: string, position: CommentPosition = "inside-end"): NodeInfo {
     const path = this.resolvePath(target);
     const comment = buildComment(text);
@@ -362,9 +409,15 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
   private reindex(): void {
     const paths: IndexedPath[] = [];
     traverseAst(this.ast, {
-      JSXElement: (path) => paths.push(path),
-      JSXFragment: (path) => paths.push(path),
-      JSXExpressionContainer: (path) => paths.push(path),
+      JSXElement: (path) => {
+        paths.push(path);
+      },
+      JSXFragment: (path) => {
+        paths.push(path);
+      },
+      JSXExpressionContainer: (path) => {
+        paths.push(path);
+      },
     });
     this.reindexPaths(paths);
   }
@@ -733,7 +786,7 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
       this.disableSourcePatches();
       return;
     }
-    this.patches.push({ start: insertionPoint, end: insertionPoint, text: ` ${attrText}` });
+    this.patches.push({ start: insertionPoint, end: insertionPoint, text: formatInsertedAttribute(this.source, insertionPoint, attrText) });
   }
 
   private addRemoveAttributePatch(openingElement: t.JSXOpeningElement, name: string): void {
@@ -1083,6 +1136,40 @@ function jsxNameToString(name: t.JSXIdentifier | t.JSXMemberExpression | t.JSXNa
   return `${jsxNameToString(name.object)}.${jsxNameToString(name.property)}`;
 }
 
+function normalizeClassNames(value: string | string[]): string[] {
+  const names = Array.isArray(value) ? value.flatMap(splitClassNames) : splitClassNames(value);
+  if (names.length === 0) fail("INVALID_CLASS", "class action requires at least one class name.");
+  return names;
+}
+
+function splitClassNames(value: string): string[] {
+  return value.split(/\s+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function uniqueClassNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const name of names) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    result.push(name);
+  }
+  return result;
+}
+
+function findClassAttribute(openingElement: t.JSXOpeningElement): t.JSXAttribute | undefined {
+  return findAttribute(openingElement, "className") ?? findAttribute(openingElement, "class");
+}
+
+function readStringAttributeValue(attr: t.JSXAttribute): string | null {
+  if (attr.value === null) return "";
+  if (t.isStringLiteral(attr.value)) return attr.value.value;
+  if (t.isJSXExpressionContainer(attr.value) && t.isStringLiteral(attr.value.expression)) {
+    return attr.value.expression.value;
+  }
+  return null;
+}
+
 function extractProps(attrs: Array<t.JSXAttribute | t.JSXSpreadAttribute>): Record<string, unknown> {
   const props: Record<string, unknown> = {};
 
@@ -1229,6 +1316,13 @@ function findAttributeInsertionPoint(source: string, openingElement: t.JSXOpenin
   if (source[index] !== ">") return null;
   if (source[index - 1] === "/") return index - 1;
   return index;
+}
+
+function formatInsertedAttribute(source: string, insertionPoint: number, attrText: string): string {
+  if (source[insertionPoint] === "/") {
+    return /\s/.test(source[insertionPoint - 1] ?? "") ? `${attrText} ` : ` ${attrText} `;
+  }
+  return ` ${attrText}`;
 }
 
 function findLeadingWhitespaceStart(source: string, start: number): number {

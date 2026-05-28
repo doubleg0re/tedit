@@ -339,6 +339,30 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     buildStep: (input) => ({ action: "prop.remove", file: requiredString(input.file, "prop_remove requires file."), target: targetFromInput(input, "prop_remove"), name: requiredString(input.name, "prop_remove requires name.") }),
   }),
   singleStepTool({
+    name: "class_add",
+    title: "Add JSX Class",
+    action: "class.add",
+    description: "Add one or more static className tokens to a selected JSX node.",
+    inputSchema: { file: fileSchema, selector: selectorSchema.optional(), target: targetSchema.optional(), id: targetSchema.optional(), classes: z.union([z.string(), z.array(z.string())]), ...writeFlagSchema },
+    buildStep: (input) => ({ action: "class.add", file: requiredString(input.file, "class_add requires file."), target: targetFromInput(input, "class_add"), classes: classNamesInput(input, "class_add") }),
+  }),
+  singleStepTool({
+    name: "class_remove",
+    title: "Remove JSX Class",
+    action: "class.remove",
+    description: "Remove one or more static className tokens from a selected JSX node.",
+    inputSchema: { file: fileSchema, selector: selectorSchema.optional(), target: targetSchema.optional(), id: targetSchema.optional(), classes: z.union([z.string(), z.array(z.string())]), ...writeFlagSchema },
+    buildStep: (input) => ({ action: "class.remove", file: requiredString(input.file, "class_remove requires file."), target: targetFromInput(input, "class_remove"), classes: classNamesInput(input, "class_remove") }),
+  }),
+  singleStepTool({
+    name: "class_replace",
+    title: "Replace JSX Class",
+    action: "class.replace",
+    description: "Replace a static className token on a selected JSX node.",
+    inputSchema: { file: fileSchema, selector: selectorSchema.optional(), target: targetSchema.optional(), id: targetSchema.optional(), from: z.string().min(1), to: z.string().min(1), ...writeFlagSchema },
+    buildStep: (input) => ({ action: "class.replace", file: requiredString(input.file, "class_replace requires file."), target: targetFromInput(input, "class_replace"), from: requiredString(input.from, "class_replace requires from."), to: requiredString(input.to, "class_replace requires to.") }),
+  }),
+  singleStepTool({
     name: "text_set",
     title: "Set JSX Text",
     action: "text.set",
@@ -877,6 +901,12 @@ function normalizeElementInput(value: unknown, message: string): WorkspaceFlowSt
   if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as WorkspaceFlowStep["element"];
   fail("INVALID_MCP_INPUT", "Element input must be a shorthand string or object spec.");
 }
+function classNamesInput(input: JsonRecord, label: string): string | string[] {
+  const value = input.classes;
+  if (Array.isArray(value)) return value.map((item) => String(item));
+  return requiredString(value, label + " requires classes.");
+}
+
 function propValue(input: JsonRecord): unknown {
   if (input.expr !== undefined && input.value !== undefined) fail("INVALID_MCP_INPUT", "prop_set accepts only one of value or expr.");
   if (input.expr !== undefined) return { type: "expr", code: requiredString(input.expr, "prop_set expr must be a string.") };

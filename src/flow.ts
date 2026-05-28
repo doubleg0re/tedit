@@ -21,6 +21,7 @@ export type FlowStep = {
   with?: TreeNodeSpec | TextValueSpec | string;
   name?: string;
   value?: unknown;
+  classes?: string | string[];
   text?: string;
   expr?: string;
   match?: TextMatchSpec;
@@ -53,6 +54,9 @@ const KNOWN_ACTIONS = new Set([
   "remove",
   "prop.set",
   "prop.remove",
+  "class.replace",
+  "class.remove",
+  "class.add",
   "insertComment",
   "text.set",
   "text.replace",
@@ -120,6 +124,12 @@ export function validateFlow(steps: FlowStep[]): string[] {
     }
     if (step.action === "prop.remove" && (!step.target || !step.name)) {
       errors.push(`${loc}: prop.remove requires "target" and "name"`);
+    }
+    if (["class.add", "class.remove"].includes(step.action ?? "") && (!step.target || step.classes === undefined)) {
+      errors.push(`${loc}: ${step.action} requires "target" and "classes"`);
+    }
+    if (step.action === "class.replace" && (!step.target || !step.from || !step.to)) {
+      errors.push(`${loc}: class.replace requires "target", "from", and "to"`);
     }
     if (step.action === "insertComment" && (!step.target || !step.text)) {
       errors.push(`${loc}: insertComment requires "target" and "text"`);
@@ -220,6 +230,15 @@ function runStep(doc: StructuredDocument, vars: VarStore, step: FlowStep): unkno
     case "prop.remove":
       return doc.removeAttribute(resolveTarget(vars, step.target), String(vars.resolveValue(step.name)));
 
+    case "class.add":
+      return doc.addClass(resolveTarget(vars, step.target), resolveClassNames(vars, step.classes));
+
+    case "class.remove":
+      return doc.removeClass(resolveTarget(vars, step.target), resolveClassNames(vars, step.classes));
+
+    case "class.replace":
+      return doc.replaceClass(resolveTarget(vars, step.target), String(vars.resolveValue(step.from)), String(vars.resolveValue(step.to)));
+
     case "insertComment":
       return doc.insertComment(
         resolveTarget(vars, step.target),
@@ -301,6 +320,12 @@ function resolveImportSpec(vars: VarStore, step: FlowStep): ImportEditSpec {
     ...(step.name ? { name: String(vars.resolveValue(step.name)) } : {}),
     ...(step.value !== undefined ? { value: vars.resolveValue(step.value) } : {}),
   };
+}
+
+function resolveClassNames(vars: VarStore, value: unknown): string | string[] {
+  const resolved = vars.resolveValue(value);
+  if (Array.isArray(resolved)) return resolved.map((item) => String(item));
+  return String(resolved);
 }
 
 function resolveTarget(vars: VarStore, value: unknown): string {

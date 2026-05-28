@@ -416,6 +416,63 @@ test("unsupported selector pseudos fail with actionable diagnostics", () => {
   assert.match(pseudoElement.body.error, /Unsupported pseudo-element ::before/);
 });
 
+test("class actions add remove and replace static className tokens", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  writeFileSync(file, `export function Page() {
+  return <>
+    <Button className="px-2 text-sm" />
+    <Icon />
+  </>;
+}
+`);
+
+  run(["class", "add", file, "Button", "rounded", "px-2", "--write"]);
+  run(["class", "remove", file, "Button", "text-sm", "--write"]);
+  run(["class", "replace", file, "Button", "px-2", "px-4", "--write"]);
+  run(["class", "add", file, "Icon", "inline", "--write"]);
+
+  const updated = readFileSync(file, "utf8");
+  assert.match(updated, /className="px-4 rounded"/);
+  assert.match(updated, /<Icon className="inline" \/>/);
+  assert.doesNotMatch(updated, /text-sm/);
+});
+
+test("chain can run JSX class actions", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  writeFileSync(file, `export function Page() {
+  return <Button className="px-2 text-sm" />;
+}
+`);
+
+  run([
+    "chain", file,
+    "find", "Button", "as", "button",
+    "::", "class.add", "@button", "rounded", "shadow-sm",
+    "::", "class.replace", "@button", "text-sm", "text-base",
+    "--write"
+  ]);
+
+  assert.match(readFileSync(file, "utf8"), /className="px-2 text-base rounded shadow-sm"/);
+});
+
+test("class actions reject expression className without writing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  const source = `export function Page({ className }) {
+  return <Button className={className} />;
+}
+`;
+  writeFileSync(file, source);
+
+  const failed = runFail(["class", "add", file, "Button", "rounded", "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "UNSUPPORTED_CLASS_VALUE");
+  assert.equal(readFileSync(file, "utf8"), source);
+});
+
 test("chain CSS-style element shorthand creates id and class attributes", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "Page.tsx");
@@ -1389,6 +1446,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.actions.includes("multiedit"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("create_file"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("class.add"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("verify_file"));
     assert.ok(actionsDiscovery.structuredContent.tools.some((tool) => tool.name === "multiedit"));
 
