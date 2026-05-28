@@ -4,9 +4,9 @@ import traverseModule, { type NodePath, type TraverseOptions } from "@babel/trav
 import * as t from "@babel/types";
 import * as recast from "recast";
 import babelTsParser from "recast/parsers/babel-ts.js";
+import { BaseTreeDocument } from "../../core/base-tree-document.js";
 import type { CommentPosition, ImportEditSpec, StructuredDocument, TextMatchSpec, TextValueSpec, TreeNodeInfo, TreeNodeSpec, ValueSpec } from "../../core/document.js";
 import { fail } from "../../errors.js";
-import { matchesSimpleSelector, parseSelector, selectorHasScope, type ParsedSelector, type SelectorCombinator, type SimpleSelector } from "./selector.js";
 
 const traverseAst = ((traverseModule as unknown as { default?: unknown }).default ?? traverseModule) as (
   parent: t.Node,
@@ -31,36 +31,15 @@ type SourceRange = {
   end: number;
 };
 
-export class JsxDocument implements StructuredDocument {
-  readonly ruleName = "jsx";
-  readonly filePath: string;
-  readonly source: string;
-
+export class JsxDocument extends BaseTreeDocument<IndexedPath> implements StructuredDocument {
   private ast: t.File;
-  private nodeIds = new WeakMap<object, string>();
-  private pathsById = new Map<string, IndexedPath>();
-  private infoById = new Map<string, NodeInfo>();
-  private nextId = 1;
   private patches: SourcePatch[] = [];
   private canUseSourcePatches = true;
 
   constructor(filePath: string, source: string) {
-    this.filePath = filePath;
-    this.source = source;
+    super("jsx", filePath, source);
     this.ast = recast.parse(source, { parser: babelTsParser }) as unknown as t.File;
     this.reindex();
-  }
-
-  find(selectorInput: string): NodeInfo[] {
-    const selector = parseSelector(selectorInput);
-    return [...this.pathsById.values()]
-      .filter((path) => this.matchesSelectorPath(path, selector))
-      .map((path) => this.infoById.get(this.getNodeId(path.node)))
-      .filter((info): info is NodeInfo => !!info);
-  }
-
-  inspect(target: string): NodeInfo {
-    return this.resolveInfo(target);
   }
 
   append(target: string, spec: ElementSpec): NodeInfo {
@@ -381,33 +360,20 @@ export class JsxDocument implements StructuredDocument {
   }
 
   private reindex(): void {
-    this.pathsById.clear();
-    this.infoById.clear();
-
+    const paths: IndexedPath[] = [];
     traverseAst(this.ast, {
-      JSXElement: (path) => this.indexPath(path),
-      JSXFragment: (path) => this.indexPath(path),
-      JSXExpressionContainer: (path) => this.indexPath(path),
+      JSXElement: (path) => paths.push(path),
+      JSXFragment: (path) => paths.push(path),
+      JSXExpressionContainer: (path) => paths.push(path),
     });
+    this.reindexPaths(paths);
   }
 
-  private indexPath(path: IndexedPath): void {
-    const id = this.getNodeId(path.node);
-    const info = this.buildInfo(id, path);
-    this.pathsById.set(id, path);
-    this.infoById.set(id, info);
+  protected override nodeForPath(path: IndexedPath): object {
+    return path.node;
   }
 
-  private getNodeId(node: object): string {
-    const existing = this.nodeIds.get(node);
-    if (existing) return existing;
-
-    const id = `jsx_${this.nextId++}`;
-    this.nodeIds.set(node, id);
-    return id;
-  }
-
-  private buildInfo(id: string, path: IndexedPath): NodeInfo {
+  protected override buildInfo(id: string, path: IndexedPath): NodeInfo {
     const node = path.node;
     const kind = t.isJSXElement(node) ? "element" : t.isJSXFragment(node) ? "fragment" : "expression";
     const name = t.isJSXElement(node) ? jsxNameToString(node.openingElement.name) : t.isJSXFragment(node) ? "Fragment" : "Expression";
@@ -437,26 +403,23 @@ export class JsxDocument implements StructuredDocument {
     };
   }
 
-  private resolvePath(target: string): IndexedPath {
-    const byId = this.pathsById.get(target);
-    if (byId) return byId;
+  protected override parentPath(path: IndexedPath): IndexedPath | null {
+    return findNearestIndexedAncestor(path);
+  }
 
-    const matches = this.find(target);
-    if (matches.length === 0) {
-      fail("NODE_NOT_FOUND", `No JSX node matched "${target}".`, {
-        base_candidates: findBaseLiteralCandidates(this.source, target),
-        next_step_hint: `If the intent was literal text editing, retry with: tedit edit ${this.filePath} --find ${JSON.stringify(selectorLiteralHint(target) ?? target)} --replace <text>`,
-      });
-    }
-    if (matches.length > 1) {
-      fail("AMBIGUOUS_SELECTOR", `Selector "${target}" matched ${matches.length} nodes. Use --id or a narrower selector.`, {
-        matches: matches.map(({ id, name, loc, preview }) => ({ id, name, loc, preview })),
-      });
-    }
+  protected override siblingPaths(path: IndexedPath): IndexedPath[] {
+    const siblings = findDirectJsxSiblings(path);
+    if (!siblings) return [];
+    return siblings
+      .map((node) => this.pathForNode(node))
+      .filter((sibling): sibling is IndexedPath => !!sibling);
+  }
 
-    const path = this.pathsById.get(matches[0].id);
-    if (!path) fail("NODE_NOT_FOUND", `Node ${matches[0].id} is no longer available.`);
-    return path;
+  protected override nodeNotFoundDetails(target: string): Record<string, unknown> {
+    return {
+      base_candidates: findBaseLiteralCandidates(this.source, target),
+      next_step_hint: `If the intent was literal text editing, retry with: tedit edit ${this.filePath} --find ${JSON.stringify(selectorLiteralHint(target) ?? target)} --replace <text>`,
+    };
   }
 
   private resolveElementPath(target: string): NodePath<t.JSXElement> {
@@ -482,165 +445,6 @@ export class JsxDocument implements StructuredDocument {
     const parent = findNearestExpressionContainer(path);
     if (parent) return parent;
     fail("UNSUPPORTED_NODE", `Target "${target}" is not inside a JSX expression container.`);
-  }
-
-  private resolveInfo(target: string): NodeInfo {
-    const byId = this.infoById.get(target);
-    if (byId) return byId;
-
-    const path = this.resolvePath(target);
-    const id = this.getNodeId(path.node);
-    const info = this.infoById.get(id);
-    if (!info) fail("NODE_NOT_FOUND", `Node ${target} is no longer available.`);
-    return info;
-  }
-
-  private matchesSelectorPath(path: IndexedPath, selector: ParsedSelector, partIndex = selector.parts.length - 1): boolean {
-    const part = selector.parts[partIndex];
-    if (!this.matchesSimplePath(path, part.selector)) return false;
-    if (partIndex === 0) return true;
-
-    return this.matchesPriorSelectorPart(path, selector, partIndex - 1, part.combinator ?? "descendant");
-  }
-
-  private matchesSimplePath(path: IndexedPath, selector: SimpleSelector, scope?: IndexedPath): boolean {
-    const info = this.infoById.get(this.getNodeId(path.node));
-    if (!info || !matchesSimpleSelector(info, selector)) return false;
-
-    for (const pseudo of selector.pseudos) {
-      if (pseudo.kind === "expr") continue;
-      if (pseudo.kind === "scope" && (!scope || path.node !== scope.node)) return false;
-      if (pseudo.kind === "has" && !this.hasRelativeMatch(path, pseudo.selector)) return false;
-      if (pseudo.kind === "not" && this.matchesSelectorPath(path, pseudo.selector)) return false;
-      if (pseudo.kind === "first-child" && !this.matchesChildPosition(path, "first")) return false;
-      if (pseudo.kind === "last-child" && !this.matchesChildPosition(path, "last")) return false;
-      if (pseudo.kind === "nth-of-type" && !this.matchesNthOfType(path, pseudo.index)) return false;
-    }
-
-    return true;
-  }
-
-  private matchesPriorSelectorPart(path: IndexedPath, selector: ParsedSelector, partIndex: number, combinator: SelectorCombinator): boolean {
-    if (combinator === "child") {
-      const parent = findNearestIndexedAncestor(path);
-      return !!parent && this.matchesSelectorPath(parent, selector, partIndex);
-    }
-
-    if (combinator === "adjacent") {
-      const previous = this.previousIndexedSiblingPath(path);
-      return !!previous && this.matchesSelectorPath(previous, selector, partIndex);
-    }
-
-    if (combinator === "sibling") {
-      return this.previousIndexedSiblingPaths(path).some((sibling) => this.matchesSelectorPath(sibling, selector, partIndex));
-    }
-
-    let ancestor = findNearestIndexedAncestor(path);
-    while (ancestor) {
-      if (this.matchesSelectorPath(ancestor, selector, partIndex)) return true;
-      ancestor = findNearestIndexedAncestor(ancestor);
-    }
-    return false;
-  }
-
-  private hasRelativeMatch(scope: IndexedPath, selector: ParsedSelector): boolean {
-    return [...this.pathsById.values()].some((candidate) => this.matchesRelativeSelectorPath(scope, candidate, selector));
-  }
-
-  private matchesRelativeSelectorPath(scope: IndexedPath, path: IndexedPath, selector: ParsedSelector, partIndex = selector.parts.length - 1): boolean {
-    const part = selector.parts[partIndex];
-    if (!this.matchesSimplePath(path, part.selector, scope)) return false;
-    if (partIndex === 0) return this.matchesScopedFirstPart(scope, path, part.combinator, part.selector);
-
-    return this.matchesPriorRelativeSelectorPart(scope, path, selector, partIndex - 1, part.combinator ?? "descendant");
-  }
-
-  private matchesPriorRelativeSelectorPart(scope: IndexedPath, path: IndexedPath, selector: ParsedSelector, partIndex: number, combinator: SelectorCombinator): boolean {
-    if (combinator === "child") {
-      const parent = findNearestIndexedAncestor(path);
-      return !!parent && this.matchesRelativeSelectorPath(scope, parent, selector, partIndex);
-    }
-
-    if (combinator === "adjacent") {
-      const previous = this.previousIndexedSiblingPath(path);
-      return !!previous && this.matchesRelativeSelectorPath(scope, previous, selector, partIndex);
-    }
-
-    if (combinator === "sibling") {
-      return this.previousIndexedSiblingPaths(path).some((sibling) => this.matchesRelativeSelectorPath(scope, sibling, selector, partIndex));
-    }
-
-    let ancestor = findNearestIndexedAncestor(path);
-    while (ancestor) {
-      if (this.matchesRelativeSelectorPath(scope, ancestor, selector, partIndex)) return true;
-      ancestor = findNearestIndexedAncestor(ancestor);
-    }
-    return false;
-  }
-
-  private matchesScopedFirstPart(scope: IndexedPath, path: IndexedPath, combinator: SelectorCombinator | undefined, selector: SimpleSelector): boolean {
-    if (combinator === "child") {
-      const parent = findNearestIndexedAncestor(path);
-      return !!parent && parent.node === scope.node;
-    }
-
-    if (combinator === "adjacent") {
-      const previous = this.previousIndexedSiblingPath(path);
-      return !!previous && previous.node === scope.node;
-    }
-
-    if (combinator === "sibling") {
-      return this.previousIndexedSiblingPaths(path).some((sibling) => sibling.node === scope.node);
-    }
-
-    if (selectorHasScope(selector)) return path.node === scope.node;
-    return this.isIndexedDescendantOf(path, scope);
-  }
-
-  private isIndexedDescendantOf(path: IndexedPath, scope: IndexedPath): boolean {
-    let ancestor = findNearestIndexedAncestor(path);
-    while (ancestor) {
-      if (ancestor.node === scope.node) return true;
-      ancestor = findNearestIndexedAncestor(ancestor);
-    }
-    return false;
-  }
-
-  private previousIndexedSiblingPath(path: IndexedPath): IndexedPath | null {
-    const previous = findPreviousIndexedSibling(path);
-    return previous ? this.pathForIndexedNode(previous) : null;
-  }
-
-  private previousIndexedSiblingPaths(path: IndexedPath): IndexedPath[] {
-    return findPreviousIndexedSiblings(path)
-      .map((sibling) => this.pathForIndexedNode(sibling))
-      .filter((sibling): sibling is IndexedPath => !!sibling);
-  }
-
-  private pathForIndexedNode(node: IndexedNode): IndexedPath | null {
-    return this.pathsById.get(this.getNodeId(node)) ?? null;
-  }
-
-  private matchesChildPosition(path: IndexedPath, position: "first" | "last"): boolean {
-    const siblings = findDirectJsxSiblings(path);
-    if (!siblings) return false;
-    const index = siblings.findIndex((node) => node === path.node);
-    if (index < 0) return false;
-    return position === "first" ? index === 0 : index === siblings.length - 1;
-  }
-
-  private matchesNthOfType(path: IndexedPath, index: number): boolean {
-    const info = this.infoById.get(this.getNodeId(path.node));
-    const siblings = findDirectJsxSiblings(path);
-    if (!info || !siblings) return false;
-
-    const sameType = siblings.filter((node) => {
-      if (t.isJSXElement(node)) return jsxNameToString(node.openingElement.name) === info.name;
-      if (t.isJSXFragment(node)) return info.name === "Fragment";
-      return info.name === "Expression";
-    });
-
-    return sameType[index - 1] === path.node;
   }
 
   private findImportDeclaration(source: string): t.ImportDeclaration | undefined {
