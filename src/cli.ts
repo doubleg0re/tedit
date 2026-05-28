@@ -19,7 +19,8 @@ import { formatAgentResult, parseOutputMode, type OutputMode, type OutputOptions
 import { planExtract, type HelperPolicy } from "./extract.js";
 import { parseMultieditInput, runMultiedit, runMultieditInput, type MultieditResult } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
-import { runRefactorState } from "./refactor-state.js";import { applyRefactorPlan, buildExtractComponentPlan, inspectRefactorPlan, writePlanFile, type InspectPlanResult } from "./refactor-plan.js";
+import { runRefactorState } from "./refactor-state.js";
+import { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, inspectRefactorPlan, writePlanFile, type InspectPlanResult } from "./refactor-plan.js";
 import { analyzeState, fileLengthWarnings, formatFileLengthWarnings, type FileLengthWarning } from "./quality.js";
 import { loadParams, parseFlowInput, runFlow } from "./flow.js";
 import {
@@ -287,11 +288,24 @@ function commandRefactorState(args: ParsedArgs): void {
   if (externalDeps !== "fail" && externalDeps !== "params") {
     throw new Error("refactor-state --external-deps must be fail or params.");
   }
-  const result = runRefactorState(filePath, {
+  const options = {
     cluster: stringFlag(args, "cluster"),
     to: stringFlag(args, "to"),
     name: stringFlag(args, "name"),
     externalDeps: externalDeps as "fail" | "params",
+  };
+  const planOut = stringFlag(args, "plan-out");
+  if (planOut) {
+    if (args.flags.write) throw new Error("refactor-state --plan-out only writes the plan file; apply it with tedit apply-plan.");
+    const plan = buildRefactorStatePlan(filePath, options);
+    writePlanFile(planOut, plan, Boolean(args.flags.overwrite));
+    const result = { success: true, plan: planOut, ...plan };
+    output(args, result, JSON.stringify(result, null, 2));
+    return;
+  }
+
+  const result = runRefactorState(filePath, {
+    ...options,
     ...writeFlags(args),
   });
   output(args, result, JSON.stringify(result, null, 2));
@@ -1417,10 +1431,11 @@ function truncateSummary(value: string, max: number): string {
 }
 
 function formatPlanInspect(result: InspectPlanResult): string {
+  const target = result.files.find((file) => file.role === "target");
   return [
     result.summary,
     "source: " + formatPlanFileStatus(result.files.find((file) => file.role === "source")),
-    "target: " + formatPlanFileStatus(result.files.find((file) => file.role === "target")),
+    ...(target ? ["target: " + formatPlanFileStatus(target)] : []),
     "steps:",
     ...result.steps.map((step) => "  - " + step.id + " [" + step.risk + "] " + step.kind + (step.file ? " " + step.file : "")),
   ].join("\n");
@@ -1704,7 +1719,7 @@ Usage:
   tedit patch --stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit actions [file] [--json]
   tedit analyze-state <file> [--json]
-  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--dry-run|--write]
+  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--plan-out <plan-json>|--dry-run|--write]
   tedit find <file> <selector> [--json]
   tedit inspect <file> [selector] [--id <id>] [--json]
   tedit append <file> <selector> --element <json> [--dry-run|--write]
@@ -1815,7 +1830,7 @@ function shortHelp(command: string): string | null {
     case "plan":
       return "tedit plan\nUsage:\n  tedit plan inspect <plan-json> [--json]\n\nSummarizes a saved tedit refactor plan before apply-plan.";
     case "refactor-state":
-      return "tedit refactor-state\nUsage:\n  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--dry-run|--write]";
+      return "tedit refactor-state\nUsage:\n  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--plan-out <plan-json>|--dry-run|--write]";
     case "actions":
       return "tedit actions\nUsage:\n  tedit actions [file] [--json]\n\nLists universal base actions and file-specific language actions.";
     case "analyze-state":

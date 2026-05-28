@@ -120,7 +120,7 @@ target id or selector is more useful than raw text.
 The MCP tool names are underscore-style equivalents of the CLI and flow
 actions: `edit`, `multiedit`, `patch`, `write_file`, `create_file`,
 `scaffold_file`, `new_file`, `actions`, `analyze_state`, `verify_file`,
-`refactor_state`, `extract_plan`, `apply_plan`, `chain_workspace`, `find`,
+`refactor_state`, `refactor_state_plan`, `extract_plan`, `apply_plan`, `chain_workspace`, `find`,
 `inspect`, `append`,
 `prepend`, `wrap`, `unwrap`, `remove`, `rename`, `prop_set`,
 `prop_remove`, `text_set`, `text_replace`, `insert_comment`,
@@ -510,14 +510,21 @@ move|share|ask|as-prop` or repeated
 `--helper name=move|share|leave|as-prop` for overrides.
 
 For riskier refactors, generate a reviewable plan first and apply it as a
-separate step. `apply-plan` revalidates source and target hashes, re-runs the
-refactor planner, and defaults to dry-run unless `--write` is passed:
+separate step. `extract` and `refactor-state` can both write plan files.
+`apply-plan` revalidates source and target hashes, re-runs the refactor
+planner, and defaults to dry-run unless `--write` is passed:
 
 ```bash
 tedit extract src/Page.tsx Card \
   --to src/components/PageCard.tsx \
   --name PageCard \
   --plan-out .tedit/plans/extract-card.json
+
+tedit refactor-state src/Page.tsx \
+  --cluster crewImport \
+  --to src/useCrewImport.ts \
+  --name useCrewImport \
+  --plan-out .tedit/plans/crew-import-hook.json
 
 tedit plan inspect .tedit/plans/extract-card.json
 tedit plan inspect .tedit/plans/extract-card.json --json
@@ -526,8 +533,10 @@ tedit apply-plan .tedit/plans/extract-card.json --dry-run --diff-out extract.dif
 tedit apply-plan .tedit/plans/extract-card.json --write
 ```
 
-Plan steps can be filtered when reviewing high-risk helper movement. Skipping a
-`move-helper-*` step passes that helper as a prop instead of moving it:
+Extract plan steps can be filtered when reviewing high-risk helper movement.
+Skipping a `move-helper-*` step passes that helper as a prop instead of moving
+it. `refactor-state-plan` steps are applied as a whole because the source and
+hook changes are coupled:
 
 ```bash
 tedit apply-plan .tedit/plans/extract-card.json --skip move-helper-formatTitle --write
@@ -590,6 +599,7 @@ functional setters or external handler dependencies:
 ```bash
 tedit refactor-state src/Page.tsx --cluster crewImport --write
 tedit refactor-state src/Page.tsx --cluster crewImport --to src/useCrewImport.ts --name useCrewImport --write
+tedit refactor-state src/Page.tsx --cluster crewImport --to src/useCrewImport.ts --name useCrewImport --plan-out .tedit/plans/crew-import-hook.json
 ```
 
 ## Workspace Flow

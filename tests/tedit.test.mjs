@@ -1647,6 +1647,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "edit"));
     assert.ok(tools.tools.some((tool) => tool.name === "chain_workspace"));
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "refactor_state_plan"));
     assert.ok(tools.tools.some((tool) => tool.name === "extract_plan"));
     assert.ok(tools.tools.some((tool) => tool.name === "apply_plan"));
     assert.ok(tools.tools.some((tool) => tool.name === "write_file"));
@@ -1666,6 +1667,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.actions.includes("multiedit"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("create_file"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("refactor_state_plan"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("class.add"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("verify_file"));
     assert.ok(actionsDiscovery.structuredContent.tools.some((tool) => tool.name === "multiedit"));
@@ -2794,6 +2796,50 @@ test("refactor-state groups a selected cluster into object state", () => {
   assert.match(updated, /crewImportState\.crewImportOpen/);
   assert.match(updated, /setCrewImportState\(previous => \(\{/);
   assert.match(updated, /crewImportOpen: true/);
+});
+
+test("refactor-state plan-out writes a validated custom hook plan and apply-plan applies it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  const hook = join(dir, "useCrewImport.ts");
+  const planPath = join(dir, ".tedit", "plans", "crew-import.json");
+  writeFileSync(file, refactorStateFixture());
+
+  const planResult = JSON.parse(run(["refactor-state", file, "--cluster", "crewImport", "--to", hook, "--name", "useCrewImport", "--plan-out", planPath]));
+
+  assert.equal(planResult.success, true);
+  assert.equal(planResult.kind, "refactor-state-plan");
+  assert.equal(planResult.mode, "custom-hook");
+  assert.equal(planResult.source, file);
+  assert.equal(planResult.target, hook);
+  assert.deepEqual(planResult.steps.map((step) => step.id), ["create-hook-file", "update-source-hook-call"]);
+  assert.equal(existsSync(hook), false);
+  assert.doesNotMatch(readFileSync(file, "utf8"), /useCrewImport/);
+
+  const inspect = JSON.parse(run(["plan", "inspect", planPath, "--json"]));
+  assert.equal(inspect.success, true);
+  assert.equal(inspect.kind, "refactor-state-plan");
+  assert.equal(inspect.mode, "custom-hook");
+  assert.equal(inspect.stale, false);
+  assert.equal(inspect.steps_total, 2);
+  assert.match(run(["plan", "inspect", planPath]), /refactor-state-plan \(custom-hook\): 2 steps, 0 high risk, ready/);
+
+  const dryRun = JSON.parse(run(["apply-plan", planPath, "--dry-run"]));
+  assert.equal(dryRun.success, true);
+  assert.equal(dryRun.written, false);
+  assert.match(dryRun.files.find((entry) => entry.step === "update-source-hook-call").diff, /useCrewImport/);
+  assert.match(dryRun.files.find((entry) => entry.step === "create-hook-file").diff, /export function useCrewImport/);
+  assert.equal(existsSync(hook), false);
+
+  const partial = runFail(["apply-plan", planPath, "--skip", "create-hook-file", "--write"]);
+  assert.equal(partial.status, 1);
+  assert.equal(partial.body.code, "PLAN_PARTIAL_UNSUPPORTED");
+  assert.equal(existsSync(hook), false);
+
+  const applied = JSON.parse(run(["apply-plan", planPath, "--write"]));
+  assert.equal(applied.written, true);
+  assert.ok(readFileSync(file, "utf8").includes("const crewImport = useCrewImport();"));
+  assert.ok(readFileSync(hook, "utf8").includes("export function useCrewImport()"));
 });
 
 test("refactor-state extracts a selected cluster into a custom hook", () => {

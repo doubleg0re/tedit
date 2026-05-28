@@ -32,6 +32,8 @@ Implemented after v1:
 - MCP discovery now documents the intended native Read plus `verify_file` /
   `find` / `inspect` path, adds tool metadata for agent choice, and smoke-tests
   an MCP failure-to-retry loop.
+- Plan/apply now supports `refactor-state-plan` as the second concrete planned
+  workflow alongside extract-component plans.
 
 Remaining follow-ups from Claude MCP smoke:
 

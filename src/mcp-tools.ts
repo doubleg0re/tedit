@@ -19,7 +19,7 @@ import { runMultiedit, runMultieditInput } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
 import { analyzeState } from "./quality.js";
 import { runRefactorState } from "./refactor-state.js";
-import { applyRefactorPlan, buildExtractComponentPlan, writePlanFile } from "./refactor-plan.js";
+import { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, writePlanFile } from "./refactor-plan.js";
 import type { ExtractOptions, HelperPolicy } from "./extract.js";
 import { runWorkspaceFlow, type WorkspaceFlowOptions, type WorkspaceFlowStep } from "./workspace-flow.js";
 import { fileLengthWarnings } from "./quality.js";
@@ -244,9 +244,28 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
       cluster: z.string().optional(),
       to: z.string().optional(),
       name: z.string().optional(),
+      externalDeps: z.enum(["fail", "params"]).optional(),
       ...writeFlagSchema,
     },
     handler: runRefactorStateTool,
+  },
+  {
+    name: "refactor_state_plan",
+    title: "Refactor State Plan",
+    description: "Generate a reviewable refactor-state plan file without changing source files.",
+    category: "refactor",
+    aliases: ["refactor-state --plan-out"],
+    bestFor: ["review-before-apply state refactors", "custom hook extraction planning", "step-gated React state cleanup"],
+    inputSchema: {
+      file: fileSchema,
+      planOut: z.string().min(1),
+      cluster: z.string().optional(),
+      to: z.string().optional(),
+      name: z.string().optional(),
+      externalDeps: z.enum(["fail", "params"]).optional(),
+      overwrite: z.boolean().optional(),
+    },
+    handler: runRefactorStatePlanTool,
   },
   {
     name: "extract_plan",
@@ -751,8 +770,23 @@ function runRefactorStateTool(args: unknown): unknown {
     cluster: optionalString(input.cluster),
     to: optionalString(input.to),
     name: optionalString(input.name),
+    externalDeps: externalDepsFromInput(input, "refactor_state"),
     ...writeFlagsFromInput(input),
   });
+}
+
+function runRefactorStatePlanTool(args: unknown): unknown {
+  const input = recordInput(args, "refactor_state_plan");
+  const filePath = requiredString(input.file, "refactor_state_plan requires file.");
+  const planOut = requiredString(pick(input, "planOut", "plan_out", "plan-out"), "refactor_state_plan requires planOut.");
+  const plan = buildRefactorStatePlan(filePath, {
+    cluster: optionalString(input.cluster),
+    to: optionalString(input.to),
+    name: optionalString(input.name),
+    externalDeps: externalDepsFromInput(input, "refactor_state_plan"),
+  });
+  writePlanFile(planOut, plan, booleanValue(input.overwrite));
+  return { success: true, plan: planOut, ...plan };
 }
 
 function runExtractPlanTool(args: unknown): unknown {
@@ -1093,6 +1127,12 @@ function stringArray(value: unknown, label: string): string[] {
 function optionalString(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   return requiredString(value, "Expected a string.");
+}
+
+function externalDepsFromInput(input: JsonRecord, label: string): "fail" | "params" {
+  const value = pick(input, "externalDeps", "external_deps", "external-deps") ?? "fail";
+  if (value === "fail" || value === "params") return value;
+  fail("INVALID_MCP_INPUT", label + " externalDeps must be fail or params.");
 }
 
 function optionalInteger(value: unknown, label: string): number | undefined {

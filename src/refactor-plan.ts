@@ -4,10 +4,11 @@ import { dirname } from "node:path";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { planExtract, type ExtractOptions, type ExtractPlan, type HelperPolicy } from "./extract.js";
+import { runRefactorState, type RefactorStateOptions, type RefactorStateResult } from "./refactor-state.js";
 import { fileLengthWarnings } from "./quality.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
 
-export type RefactorPlanKind = "extract-component-plan";
+export type RefactorPlanKind = "extract-component-plan" | "refactor-state-plan";
 export type RefactorPlanRisk = "low" | "medium" | "high";
 
 export type RefactorPlanStep = {
@@ -22,7 +23,7 @@ export type RefactorPlanStep = {
 };
 
 export type ExtractComponentPlanFile = {
-  kind: RefactorPlanKind;
+  kind: "extract-component-plan";
   version: 1;
   created_by: "tedit";
   source: string;
@@ -32,6 +33,21 @@ export type ExtractComponentPlanFile = {
   options: SerializableExtractOptions;
   steps: RefactorPlanStep[];
 };
+
+export type RefactorStatePlanFile = {
+  kind: "refactor-state-plan";
+  version: 1;
+  created_by: "tedit";
+  source: string;
+  source_hash: string;
+  target: string | null;
+  target_hash: string | null;
+  mode: "object-state" | "custom-hook";
+  options: SerializableRefactorStateOptions;
+  steps: RefactorPlanStep[];
+};
+
+export type TeditRefactorPlanFile = ExtractComponentPlanFile | RefactorStatePlanFile;
 
 export type SerializableExtractOptions = {
   from: string;
@@ -48,6 +64,14 @@ export type SerializableExtractOptions = {
   acceptLargeProps: boolean;
   depth?: number;
   maxProps?: number;
+};
+
+export type SerializableRefactorStateOptions = {
+  file: string;
+  externalDeps: "fail" | "params";
+  cluster?: string;
+  to?: string;
+  name?: string;
 };
 
 export type ApplyPlanOptions = {
@@ -117,7 +141,26 @@ export function buildExtractComponentPlan(options: ExtractOptions, planned: Extr
   };
 }
 
-export function writePlanFile(planPath: string, plan: ExtractComponentPlanFile, overwrite = false): void {
+export function buildRefactorStatePlan(filePath: string, options: RefactorStateOptions = {}, planned?: RefactorStateResult): RefactorStatePlanFile {
+  const preview = planned ?? runRefactorState(filePath, { ...options, write: false, dryRun: true });
+  const source = readFileSync(filePath, "utf8");
+  const target = preview.mode === "custom-hook" ? preview.hook_file ?? options.to ?? null : null;
+  const targetSource = target && existsSync(target) ? readFileSync(target, "utf8") : null;
+  return {
+    kind: "refactor-state-plan",
+    version: 1,
+    created_by: "tedit",
+    source: filePath,
+    source_hash: sha256(source),
+    target,
+    target_hash: targetSource === null ? null : sha256(targetSource),
+    mode: preview.mode ?? "object-state",
+    options: normalizeRefactorStateOptions(filePath, options),
+    steps: refactorStatePlanSteps(filePath, preview, target),
+  };
+}
+
+export function writePlanFile(planPath: string, plan: TeditRefactorPlanFile, overwrite = false): void {
   if (existsSync(planPath) && !overwrite) {
     fail("PLAN_DESTINATION_EXISTS", `Refusing to overwrite existing plan: ${planPath}. Use --overwrite to bypass.`);
   }
@@ -127,10 +170,12 @@ export function writePlanFile(planPath: string, plan: ExtractComponentPlanFile, 
 
 export function applyRefactorPlan(planPath: string, options: ApplyPlanOptions = {}): ApplyPlanResult {
   const plan = loadRefactorPlan(planPath);
-  if (plan.kind !== "extract-component-plan") {
-    fail("UNSUPPORTED_PLAN", `Unsupported refactor plan kind: ${(plan as { kind?: unknown }).kind}`);
-  }
+  if (plan.kind === "extract-component-plan") return applyExtractComponentPlan(planPath, plan, options);
+  if (plan.kind === "refactor-state-plan") return applyRefactorStatePlan(planPath, plan, options);
+  fail("UNSUPPORTED_PLAN", `Unsupported refactor plan kind: ${(plan as { kind?: unknown }).kind}`);
+}
 
+function applyExtractComponentPlan(planPath: string, plan: ExtractComponentPlanFile, options: ApplyPlanOptions = {}): ApplyPlanResult {
   const source = readFileSync(plan.source, "utf8");
   if (sha256(source) !== plan.source_hash) {
     fail("PLAN_STALE_SOURCE", `Plan source changed since it was generated: ${plan.source}.`, {
@@ -209,13 +254,60 @@ export function applyRefactorPlan(planPath: string, options: ApplyPlanOptions = 
   };
 }
 
+function applyRefactorStatePlan(planPath: string, plan: RefactorStatePlanFile, options: ApplyPlanOptions = {}): ApplyPlanResult {
+  assertPlanFileHash("source", plan.source, plan.source_hash);
+  if (plan.target) assertPlanFileHash("target", plan.target, plan.target_hash);
+
+  const selected = selectPlanSteps(plan.steps, options);
+  if (selected.size !== plan.steps.length) {
+    fail("PLAN_PARTIAL_UNSUPPORTED", "refactor-state plans must be applied as a whole because source and hook changes are coupled.", {
+      selected: [...selected],
+      required_steps: plan.steps.map((step) => step.id),
+      next: ["Apply the plan without --only/--skip, or regenerate a narrower refactor-state plan."],
+    });
+  }
+
+  const effectiveWrite = Boolean(options.write) && !options.dryRun;
+  const result = runRefactorState(plan.source, {
+    cluster: plan.options.cluster,
+    to: plan.options.to,
+    name: plan.options.name,
+    externalDeps: plan.options.externalDeps,
+    write: effectiveWrite,
+    dryRun: !effectiveWrite,
+    backup: Boolean(options.backup),
+    noBackup: Boolean(options.noBackup),
+  });
+  const sourceStep = plan.mode === "custom-hook" ? "update-source-hook-call" : "refactor-source-state";
+  const files = result.files.map((file) => ({
+    step: plan.target && file.file === plan.target ? "create-hook-file" : sourceStep,
+    file: file.file,
+    changed: file.changed,
+    written: file.written,
+    ...(file.diff ? { diff: file.diff } : {}),
+  }));
+
+  return {
+    success: true,
+    kind: plan.kind,
+    plan: planPath,
+    changed: result.files.some((file) => file.changed),
+    written: result.files.some((file) => file.written),
+    steps: plan.steps.map((step) => ({ ...step, selected: true, status: "applied" })),
+    files,
+    warnings: result.files.flatMap((file) => file.warnings),
+    write_policy: Object.fromEntries(result.files.map((file) => [file.file, file.write_policy ?? {}])),
+  };
+}
+
 export type InspectPlanResult = {
   success: true;
   kind: RefactorPlanKind;
   plan: string;
   source: string;
-  target: string;
-  component: string;
+  target?: string | null;
+  component?: string;
+  mode?: string;
   summary: string;
   stale: boolean;
   steps_total: number;
@@ -234,21 +326,21 @@ export type InspectPlanResult = {
 export function inspectRefactorPlan(planPath: string): InspectPlanResult {
   const plan = loadRefactorPlan(planPath);
   const source = inspectPlanFile("source", plan.source, plan.source_hash);
-  const target = inspectPlanFile("target", plan.target, plan.target_hash);
+  const target = plan.target ? inspectPlanFile("target", plan.target, plan.target_hash) : null;
   const risks = countRisks(plan.steps);
-  const stale = source.stale || target.stale;
+  const stale = source.stale || Boolean(target?.stale);
   return {
     success: true,
     kind: plan.kind,
     plan: planPath,
     source: plan.source,
     target: plan.target,
-    component: plan.options.name,
-    summary: plan.kind + ": " + plan.steps.length + " step" + (plan.steps.length === 1 ? "" : "s") + ", " + risks.high + " high risk, " + (stale ? "stale" : "ready"),
+    ...(plan.kind === "extract-component-plan" ? { component: plan.options.name } : { mode: plan.mode }),
+    summary: planSummary(plan, risks, stale),
     stale,
     steps_total: plan.steps.length,
     risks,
-    files: [source, target],
+    files: target ? [source, target] : [source],
     steps: plan.steps,
   };
 }
@@ -273,6 +365,53 @@ function countRisks(steps: RefactorPlanStep[]): Record<RefactorPlanRisk, number>
   }, { low: 0, medium: 0, high: 0 });
 }
 
+function normalizeRefactorStateOptions(filePath: string, options: RefactorStateOptions): SerializableRefactorStateOptions {
+  return {
+    file: filePath,
+    externalDeps: options.externalDeps ?? "fail",
+    ...(options.cluster === undefined ? {} : { cluster: options.cluster }),
+    ...(options.to === undefined ? {} : { to: options.to }),
+    ...(options.name === undefined ? {} : { name: options.name }),
+  };
+}
+
+function refactorStatePlanSteps(filePath: string, preview: RefactorStateResult, target: string | null): RefactorPlanStep[] {
+  if (preview.mode === "custom-hook") {
+    return [
+      {
+        id: "create-hook-file",
+        kind: "write-file",
+        risk: "low",
+        file: target ?? preview.hook_file,
+        symbol: preview.hook_name,
+        reason: "create the extracted custom hook module",
+      },
+      {
+        id: "update-source-hook-call",
+        kind: "edit-file",
+        risk: "medium",
+        file: filePath,
+        symbol: preview.hook_name,
+        reason: "replace the selected useState cluster with the generated hook call",
+      },
+      ...(preview.external_dependencies && preview.external_dependencies.length > 0 ? [{
+        id: "thread-external-deps",
+        kind: "edit-file" as const,
+        risk: "medium" as const,
+        file: filePath,
+        reason: "thread external dependencies into the generated hook call",
+      }] : []),
+    ];
+  }
+  return [{
+    id: "refactor-source-state",
+    kind: "edit-file",
+    risk: "medium",
+    file: filePath,
+    reason: "group the selected useState cluster into object state",
+  }];
+}
+
 function normalizeExtractOptions(options: ExtractOptions): SerializableExtractOptions {
   return {
     from: options.from,
@@ -292,15 +431,39 @@ function normalizeExtractOptions(options: ExtractOptions): SerializableExtractOp
   };
 }
 
-function loadRefactorPlan(planPath: string): ExtractComponentPlanFile {
-  const raw = JSON.parse(readFileSync(planPath, "utf8")) as Partial<ExtractComponentPlanFile>;
+function loadRefactorPlan(planPath: string): TeditRefactorPlanFile {
+  const raw = JSON.parse(readFileSync(planPath, "utf8")) as Partial<TeditRefactorPlanFile>;
   if (raw.version !== 1) fail("INVALID_PLAN", "Refactor plan version must be 1.");
   if (raw.created_by !== "tedit") fail("INVALID_PLAN", "Refactor plan must be created_by tedit.");
-  if (raw.kind !== "extract-component-plan") fail("INVALID_PLAN", "Refactor plan kind must be extract-component-plan.");
-  if (!raw.source || !raw.target || !raw.source_hash || !raw.options || !Array.isArray(raw.steps)) {
-    fail("INVALID_PLAN", "Refactor plan is missing required fields.");
+  if (raw.kind === "extract-component-plan") {
+    if (!raw.source || !raw.target || !raw.source_hash || !raw.options || !Array.isArray(raw.steps)) {
+      fail("INVALID_PLAN", "Extract component plan is missing required fields.");
+    }
+    return raw as ExtractComponentPlanFile;
   }
-  return raw as ExtractComponentPlanFile;
+  if (raw.kind === "refactor-state-plan") {
+    if (!raw.source || !raw.source_hash || !raw.options || !Array.isArray(raw.steps) || (raw.mode !== "object-state" && raw.mode !== "custom-hook") || !("target" in raw) || !("target_hash" in raw)) {
+      fail("INVALID_PLAN", "Refactor state plan is missing required fields.");
+    }
+    return raw as RefactorStatePlanFile;
+  }
+  fail("INVALID_PLAN", "Refactor plan kind must be extract-component-plan or refactor-state-plan.");
+}
+
+function assertPlanFileHash(role: "source" | "target", file: string, expectedHash: string | null): void {
+  const exists = existsSync(file);
+  const actualHash = exists ? sha256(readFileSync(file, "utf8")) : null;
+  if (actualHash !== expectedHash) {
+    fail(role === "source" ? "PLAN_STALE_SOURCE" : "PLAN_STALE_TARGET", `Plan ${role} changed since it was generated: ${file}.`, {
+      expected: expectedHash,
+      actual: actualHash,
+    });
+  }
+}
+
+function planSummary(plan: TeditRefactorPlanFile, risks: Record<RefactorPlanRisk, number>, stale: boolean): string {
+  const label = plan.kind === "refactor-state-plan" ? plan.kind + " (" + plan.mode + ")" : plan.kind;
+  return label + ": " + plan.steps.length + " step" + (plan.steps.length === 1 ? "" : "s") + ", " + risks.high + " high risk, " + (stale ? "stale" : "ready");
 }
 
 function selectPlanSteps(steps: RefactorPlanStep[], options: ApplyPlanOptions): Set<string> {

@@ -45,6 +45,8 @@ Deliverable:
 
 ### P4. Plan workflow expansion
 
+Status: Implemented for `refactor-state-plan` in the current slice.
+
 Plan/apply is intentionally extract-specific. The next generalization should wait for a second concrete risky refactor.
 
 Deliverable:
@@ -63,4 +65,4 @@ Deliverable:
 
 ## Current Implementation Unit
 
-P1, P2, and P3 are implemented. The next safe slice is P4 plan workflow expansion unless a new real-world edge case changes the priority.
+P1 through P4 are implemented. The next safe slice is P5 cross-rule parity and parser-depth hardening unless a new real-world edge case changes the priority.

@@ -34,7 +34,9 @@ export type { RefactorStateOptions, RefactorStateResult } from "./refactor-state
 export { buildScaffoldSource, loadScaffoldSpec, loadTemplateSpec } from "./scaffold.js";
 export type { ScaffoldExportSpec, ScaffoldImportSpec, ScaffoldSpec } from "./scaffold.js";
 export { parseExtractSlot, planExtract } from "./extract.js";
+export { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, inspectRefactorPlan, writePlanFile } from "./refactor-plan.js";
 export type { ExtractOptions, ExtractPlan, ExtractResult, ExtractSlotSpec } from "./extract.js";
+export type { ApplyPlanOptions, ApplyPlanResult, ExtractComponentPlanFile, InspectPlanResult, RefactorPlanKind, RefactorPlanRisk, RefactorPlanStep, RefactorStatePlanFile, SerializableExtractOptions, SerializableRefactorStateOptions, TeditRefactorPlanFile } from "./refactor-plan.js";
 export { analyzeState, fileLengthWarnings, loadQualityConfig } from "./quality.js";
 export type { FileLengthThresholds, FileLengthWarning, QualityConfig, StateAnalysis, StateAnalysisGuidance, StateCluster } from "./quality.js";
 export { TeditError } from "./errors.js";
