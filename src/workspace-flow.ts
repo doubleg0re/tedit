@@ -402,7 +402,7 @@ class WorkspaceTransaction {
       const policy = policies.get(entry.file);
       let backup: BackupResult = {};
       if (shouldWrite && changed && policy) {
-        backup = maybeWriteBackup(entry.file, entry.original, policy, changed);
+        backup = maybeWriteBackup(entry.file, entry.original, policy, changed, next);
         if (entry.deleted) {
           if (existsSync(entry.file)) unlinkSync(entry.file);
         } else {

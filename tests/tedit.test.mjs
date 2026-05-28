@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1871,7 +1871,7 @@ test("CLI version and subcommand help are concise", () => {
     "unwrap", "remove", "rename", "insertComment", "text", "prop",
     "imports", "expr", "extract", "apply-plan", "create", "write", "scaffold", "new",
     "flow", "workspace-flow", "wflow", "chain", "chain-workspace", "wchain",
-    "rules"
+    "rules", "backups"
   ];
   for (const topic of topics) {
     const topicHelp = run(["help", topic]);
@@ -2480,7 +2480,7 @@ test("git-aware default stays dry-run outside git and explains why", () => {
   assert.equal(readFileSync(file, "utf8"), "old\n");
 });
 
-test("explicit write outside git creates a backup before mutating", () => {
+test("explicit write outside git creates a manifest-backed backup before mutating", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "notes.txt");
   writeFileSync(file, "old\n");
@@ -2488,9 +2488,36 @@ test("explicit write outside git creates a backup before mutating", () => {
   const result = JSON.parse(run(["edit", file, "--find", "old", "--replace", "new", "--write", "--json"]));
 
   assert.equal(result.written, true);
-  assert.equal(result.write_policy.backup, `${file}.tedit.bak`);
-  assert.equal(readFileSync(`${file}.tedit.bak`, "utf8"), "old\n");
+  assert.match(result.write_policy.backup, /\.tedit-cache\/backups\//);
+  assert.ok(result.write_policy.backup_id);
+  assert.equal(existsSync(file + ".tedit.bak"), false);
+  assert.equal(readFileSync(result.write_policy.backup, "utf8"), "old\n");
   assert.equal(readFileSync(file, "utf8"), "new\n");
+
+  const list = JSON.parse(runInCwd(["backups", "list"], dir));
+  assert.equal(list.backups.length, 1);
+  assert.equal(list.backups[0].id, result.write_policy.backup_id);
+  assert.equal(list.backups[0].original, realpathSync(file));
+  assert.ok(list.backups[0].replacement_hash);
+
+  writeFileSync(file, "changed again\n");
+  const dryRestore = JSON.parse(runInCwd(["backups", "restore", result.write_policy.backup_id], dir));
+  assert.equal(dryRestore.restored, false);
+  assert.equal(readFileSync(file, "utf8"), "changed again\n");
+
+  const restore = JSON.parse(runInCwd(["backups", "restore", result.write_policy.backup_id, "--write"], dir));
+  assert.equal(restore.restored, true);
+  assert.equal(readFileSync(file, "utf8"), "old\n");
+
+  const cleanDryRun = JSON.parse(runInCwd(["backups", "clean", "--older-than", "0ms"], dir));
+  assert.equal(cleanDryRun.deleted, 0);
+  assert.equal(cleanDryRun.cleaned.length, 1);
+  assert.equal(existsSync(result.write_policy.backup), true);
+
+  const clean = JSON.parse(runInCwd(["backups", "clean", "--older-than", "0ms", "--write"], dir));
+  assert.equal(clean.deleted, 1);
+  assert.equal(existsSync(result.write_policy.backup), false);
+  assert.equal(JSON.parse(runInCwd(["backups", "list"], dir)).backups.length, 0);
 });
 
 test("git tracked files default to write without an explicit --write", () => {

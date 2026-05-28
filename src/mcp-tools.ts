@@ -524,7 +524,7 @@ function runWholeFileTool(input: JsonRecord, label: string, kind: string, source
   let backup: BackupResult = {};
 
   if (shouldWrite && changed) {
-    backup = maybeWriteBackup(filePath, previous, policy, changed);
+    backup = maybeWriteBackup(filePath, previous, policy, changed, source);
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, source);
   }
@@ -564,7 +564,7 @@ function runEditTool(args: unknown): unknown {
   let backup: BackupResult = {};
 
   if (shouldWrite && plan.changed) {
-    backup = maybeWriteBackup(filePath, source, policy, plan.changed);
+    backup = maybeWriteBackup(filePath, source, policy, plan.changed, plan.nextSource);
     writeFileSync(filePath, plan.nextSource);
   }
 

@@ -26,7 +26,7 @@ import {
 } from "./scaffold.js";
 import { runWorkspaceFlow, type WorkspaceFlowStep } from "./workspace-flow.js";
 import { packageVersion } from "./version.js";
-import { formatWritePolicyNotes, maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult, type WritePolicy } from "./write-policy.js";
+import { cleanBackups, formatWritePolicyNotes, listBackups, maybeWriteBackup, resolveWritePolicy, restoreBackup, writePolicyReport, type BackupResult, type WritePolicy } from "./write-policy.js";
 
 type ParsedArgs = {
   command?: string;
@@ -155,6 +155,9 @@ async function main(): Promise<void> {
     case "rules":
       commandRules(args);
       return;
+    case "backups":
+      commandBackups(args);
+      return;
     default:
       throw new Error(`Unknown command: ${args.command}`);
   }
@@ -186,7 +189,7 @@ function commandEdit(args: ParsedArgs): void {
   let backup: BackupResult = {};
 
   if (shouldWrite && plan.changed) {
-    backup = maybeWriteBackup(filePath, source, policy, plan.changed);
+    backup = maybeWriteBackup(filePath, source, policy, plan.changed, plan.nextSource);
     writeFileSync(filePath, plan.nextSource);
   }
 
@@ -504,8 +507,8 @@ function commandExtract(args: ParsedArgs): void {
   let targetBackup: BackupResult = {};
 
   if (shouldWrite) {
-    sourceBackup = maybeWriteBackup(filePath, plan.source, sourcePolicy, plan.source !== plan.nextSource);
-    targetBackup = maybeWriteBackup(plan.result.to, previousNewSource, targetPolicy, previousNewSource !== plan.newSource);
+    sourceBackup = maybeWriteBackup(filePath, plan.source, sourcePolicy, plan.source !== plan.nextSource, plan.nextSource);
+    targetBackup = maybeWriteBackup(plan.result.to, previousNewSource, targetPolicy, previousNewSource !== plan.newSource, plan.newSource);
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, plan.nextSource);
     mkdirSync(dirname(plan.result.to), { recursive: true });
@@ -731,6 +734,30 @@ function commandWorkspaceChain(args: ParsedArgs): void {
   output(args, result, JSON.stringify(result, null, 2));
 }
 
+function commandBackups(args: ParsedArgs): void {
+  const [action, id] = args.positionals;
+  const root = stringFlag(args, "root") ?? process.cwd();
+  if (!action || action === "list") {
+    printJson(listBackups(root));
+    return;
+  }
+  if (action === "restore") {
+    if (!id) throw new Error("backups restore requires a backup id.");
+    printJson(restoreBackup(id, { root, write: Boolean(args.flags.write), dryRun: Boolean(args.flags["dry-run"]) }));
+    return;
+  }
+  if (action === "clean") {
+    printJson(cleanBackups({
+      root,
+      olderThan: requiredStringFlag(args, "older-than", "backups clean requires --older-than <duration>."),
+      write: Boolean(args.flags.write),
+      dryRun: Boolean(args.flags["dry-run"]),
+    }));
+    return;
+  }
+  throw new Error("Unknown backups action: " + action);
+}
+
 function commandRules(args: ParsedArgs): void {
   const rules = listRules();
   output(args, { success: true, rules }, rules.map((rule) => {
@@ -752,7 +779,7 @@ function finishMutation(args: ParsedArgs, doc: { filePath: string; source: strin
   let backup: BackupResult = {};
 
   if (shouldWrite && changed) {
-    backup = maybeWriteBackup(doc.filePath, doc.source, policy, changed);
+    backup = maybeWriteBackup(doc.filePath, doc.source, policy, changed, next);
     writeFileSync(doc.filePath, next);
   }
 
@@ -792,7 +819,7 @@ function finishCreation(args: ParsedArgs, filePath: string, source: string, resu
   let backup: BackupResult = {};
 
   if (shouldWrite && changed) {
-    backup = maybeWriteBackup(filePath, previous, policy, changed);
+    backup = maybeWriteBackup(filePath, previous, policy, changed, source);
     mkdirSync(dirname(filePath), { recursive: true });
     writeFileSync(filePath, source);
   }
@@ -1347,6 +1374,10 @@ function formatErrorResult(result: ErrorResult): unknown {
   }
 }
 
+function printJson(result: unknown): void {
+  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+}
+
 function output(args: ParsedArgs, json: unknown, text: string): void {
   writeDiffOut(args, json);
   if (quietRequested(args)) return;
@@ -1651,6 +1682,9 @@ Usage:
   tedit chain-workspace --from-file <workspace-chain-file> [--dry-run|--write]
   tedit chain-workspace --from-stdin [--dry-run|--write]
   tedit rules [--json]
+  tedit backups list [--root <dir>]
+  tedit backups restore <id> [--root <dir>] [--dry-run|--write]
+  tedit backups clean --older-than <duration> [--root <dir>] [--dry-run|--write]
 
 Mutation commands use git-aware default write mode. Pass --dry-run or --write to be explicit.
 Use tedit help <command> for short command-specific help.
@@ -1751,6 +1785,8 @@ function shortHelp(command: string): string | null {
       return "tedit workspace-flow\nUsage:\n  tedit workspace-flow <flow-json> [--params <json-or-file>] [--dry-run|--write]";
     case "rules":
       return "tedit rules\nUsage:\n  tedit rules [--json]\n\nLists registered language rules.";
+    case "backups":
+      return "tedit backups\nUsage:\n  tedit backups list [--root <dir>]\n  tedit backups restore <id> [--root <dir>] [--dry-run|--write]\n  tedit backups clean --older-than <duration> [--root <dir>] [--dry-run|--write]";
     case "chain":
       return "tedit chain\nUsage:\n  tedit chain <file> <step> :: <step> [--write]\n  tedit chain <file> --from-file <chain-file> [--dry-run|--write]";
     case "chain-workspace":

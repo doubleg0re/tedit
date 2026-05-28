@@ -3,6 +3,7 @@ dist/
 .omx/
 .claude/
 .tedit/
+.tedit-cache/
 
 .DS_Store
 *.log

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, realpathSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, relative } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fail } from "./errors.js";
 import { loadQualityConfig } from "./quality.js";
 
@@ -42,6 +43,34 @@ export type WritePolicy = {
 
 export type BackupResult = {
   path?: string;
+  id?: string;
+  manifest?: string;
+  style?: "cache" | "sidecar";
+};
+
+export type BackupManifestEntry = {
+  id: string;
+  created_at: string;
+  original: string;
+  backup: string;
+  reason: string;
+  original_hash: string;
+  replacement_hash?: string;
+  command?: string;
+  write_policy: Record<string, unknown>;
+  restored_at?: string;
+};
+
+type BackupManifest = {
+  version: 1;
+  backups: BackupManifestEntry[];
+};
+
+export type BackupCommandOptions = {
+  root?: string;
+  write?: boolean;
+  dryRun?: boolean;
+  olderThan?: string;
 };
 
 export function resolveWritePolicy(filePath: string, flags: WritePolicyFlags = {}): WritePolicy {
@@ -73,12 +102,12 @@ export function resolveWritePolicy(filePath: string, flags: WritePolicyFlags = {
 
   if (!git.insideWorkTree) {
     return buildPolicy(file, false, "auto-dry-run", false, git, [
-      `tedit: no git repository found above ${file}. Defaulting to --dry-run because rollback is not guaranteed. Pass --write to override.`,
+      "tedit: no git repository found above " + file + ". Defaulting to --dry-run because rollback is not guaranteed. Pass --write to override.",
     ], backupRequested, noBackup);
   }
   if (git.ignored) {
     return buildPolicy(file, false, "auto-dry-run", false, git, [
-      `tedit: ${file} is ignored by git. Defaulting to --dry-run because rollback is not guaranteed. Pass --write to override.`,
+      "tedit: " + file + " is ignored by git. Defaulting to --dry-run because rollback is not guaranteed. Pass --write to override.",
     ], backupRequested, noBackup);
   }
 
@@ -88,8 +117,9 @@ export function resolveWritePolicy(filePath: string, flags: WritePolicyFlags = {
   return buildPolicy(file, true, "auto-write", false, git, notes, backupRequested, noBackup);
 }
 
-export function maybeWriteBackup(filePath: string, previous: string, policy: WritePolicy, changed: boolean): BackupResult {
-  if (!policy.write || !changed || !existsSync(filePath) || policy.noBackup) return {};
+export function maybeWriteBackup(filePath: string, previous: string, policy: WritePolicy, changed: boolean, replacement?: string): BackupResult {
+  const file = policy.file || canonicalPath(filePath);
+  if (!policy.write || !changed || !existsSync(file) || policy.noBackup) return {};
 
   const env = process.env.TEDIT_BACKUP ?? "auto";
   if (!["auto", "always", "never", ""].includes(env)) {
@@ -98,15 +128,14 @@ export function maybeWriteBackup(filePath: string, previous: string, policy: Wri
   const shouldBackup = policy.backupRequested || env === "always" || ((env === "auto" || env === "") && !policy.gitCanRestore);
   if (!shouldBackup || env === "never") return {};
 
-  const path = `${filePath}.tedit.bak`;
-  try {
-    writeFileSync(path, previous);
-  } catch (error) {
-    fail("BACKUP_WRITE_FAILED", `Failed to write backup at ${path}.`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+  const reason = policy.backupRequested ? "requested" : env === "always" ? "always" : "no-git-restore";
+  const style = process.env.TEDIT_BACKUP_STYLE ?? "cache";
+  if (style === "sidecar") return writeSidecarBackup(file, previous);
+  if (style !== "cache" && style !== "") {
+    fail("INVALID_WRITE_POLICY", "TEDIT_BACKUP_STYLE must be cache or sidecar.");
   }
-  return { path };
+
+  return writeCachedBackup(file, previous, policy, reason, replacement);
 }
 
 export function writePolicyReport(policy: WritePolicy, backup?: BackupResult): Record<string, unknown> {
@@ -116,13 +145,182 @@ export function writePolicyReport(policy: WritePolicy, backup?: BackupResult): R
     git: policy.git,
     notes: policy.notes,
     ...(backup?.path ? { backup: backup.path } : {}),
+    ...(backup?.id ? { backup_id: backup.id } : {}),
+    ...(backup?.manifest ? { backup_manifest: backup.manifest } : {}),
   };
 }
 
 export function formatWritePolicyNotes(policy: WritePolicy, backup?: BackupResult): string {
   const lines = [...policy.notes];
-  if (backup?.path) lines.push(`tedit: backup written -> ${backup.path}`);
+  if (backup?.path) lines.push("tedit: backup written -> " + backup.path);
   return lines.join("\n");
+}
+
+export function listBackups(root = process.cwd()): { success: true; root: string; manifest: string; backups: BackupManifestEntry[] } {
+  const resolvedRoot = resolve(root);
+  return {
+    success: true,
+    root: resolvedRoot,
+    manifest: manifestPath(resolvedRoot),
+    backups: readManifest(resolvedRoot).backups,
+  };
+}
+
+export function restoreBackup(id: string, options: BackupCommandOptions = {}): Record<string, unknown> {
+  if (options.write && options.dryRun) throw new Error("Use only one of --write or --dry-run.");
+  const root = resolve(options.root ?? process.cwd());
+  const manifest = readManifest(root);
+  const entry = manifest.backups.find((candidate) => candidate.id === id);
+  if (!entry) fail("BACKUP_NOT_FOUND", "Backup not found: " + id + ".", { root, manifest: manifestPath(root) });
+  if (!existsSync(entry.backup)) fail("BACKUP_FILE_NOT_FOUND", "Backup file not found: " + entry.backup + ".", { id });
+
+  const backupSource = readFileSync(entry.backup, "utf8");
+  const current = existsSync(entry.original) ? readFileSync(entry.original, "utf8") : "";
+  const changed = current !== backupSource;
+  const shouldWrite = Boolean(options.write);
+  if (shouldWrite && changed) {
+    mkdirSync(dirname(entry.original), { recursive: true });
+    writeFileSync(entry.original, backupSource);
+    entry.restored_at = new Date().toISOString();
+    writeManifest(root, manifest);
+  }
+
+  return {
+    success: true,
+    id,
+    file: entry.original,
+    backup: entry.backup,
+    changed,
+    restored: shouldWrite && changed,
+    written: shouldWrite && changed,
+    ...(shouldWrite ? {} : { next: ["rerun with --write to restore"] }),
+  };
+}
+
+export function cleanBackups(options: BackupCommandOptions = {}): Record<string, unknown> {
+  if (options.write && options.dryRun) throw new Error("Use only one of --write or --dry-run.");
+  const root = resolve(options.root ?? process.cwd());
+  const manifest = readManifest(root);
+  const olderThan = options.olderThan ?? "0s";
+  const olderThanMs = parseDuration(olderThan);
+  const cutoff = Date.now() - olderThanMs;
+  const selected = manifest.backups.filter((entry) => Date.parse(entry.created_at) <= cutoff);
+  const shouldWrite = Boolean(options.write);
+
+  if (shouldWrite) {
+    for (const entry of selected) {
+      rmSync(join(backupRoot(root), entry.id), { recursive: true, force: true });
+    }
+    const selectedIds = new Set(selected.map((entry) => entry.id));
+    manifest.backups = manifest.backups.filter((entry) => !selectedIds.has(entry.id));
+    writeManifest(root, manifest);
+  }
+
+  return {
+    success: true,
+    root,
+    older_than: olderThan,
+    write: shouldWrite,
+    cleaned: selected,
+    deleted: shouldWrite ? selected.length : 0,
+    ...(shouldWrite ? {} : { next: ["rerun with --write to delete listed backups"] }),
+  };
+}
+
+function writeCachedBackup(file: string, previous: string, policy: WritePolicy, reason: string, replacement?: string): BackupResult {
+  const root = backupWorkspaceRoot(file, policy);
+  const id = backupId();
+  const backupPath = join(backupRoot(root), id, safeRelative(root, file) + ".bak");
+  const manifest = readManifest(root);
+  try {
+    mkdirSync(dirname(backupPath), { recursive: true });
+    writeFileSync(backupPath, previous);
+    manifest.backups.push({
+      id,
+      created_at: new Date().toISOString(),
+      original: file,
+      backup: backupPath,
+      reason,
+      original_hash: sha256(previous),
+      ...(replacement === undefined ? {} : { replacement_hash: sha256(replacement) }),
+      command: process.argv.slice(1).join(" "),
+      write_policy: {
+        mode: policy.mode,
+        git_can_restore: policy.gitCanRestore,
+        git: policy.git,
+      },
+    });
+    writeManifest(root, manifest);
+  } catch (error) {
+    fail("BACKUP_WRITE_FAILED", "Failed to write backup at " + backupPath + ".", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return { path: backupPath, id, manifest: manifestPath(root), style: "cache" };
+}
+
+function writeSidecarBackup(file: string, previous: string): BackupResult {
+  const path = file + ".tedit.bak";
+  try {
+    writeFileSync(path, previous);
+  } catch (error) {
+    fail("BACKUP_WRITE_FAILED", "Failed to write backup at " + path + ".", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return { path, style: "sidecar" };
+}
+
+function readManifest(root: string): BackupManifest {
+  const path = manifestPath(root);
+  if (!existsSync(path)) return { version: 1, backups: [] };
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<BackupManifest>;
+  return { version: 1, backups: Array.isArray(parsed.backups) ? parsed.backups : [] };
+}
+
+function writeManifest(root: string, manifest: BackupManifest): void {
+  const path = manifestPath(root);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify({ version: 1, backups: manifest.backups }, null, 2) + "\n");
+}
+
+function backupWorkspaceRoot(file: string, policy: WritePolicy): string {
+  if (policy.git.root) return policy.git.root;
+  const cwd = process.cwd();
+  const rel = relative(cwd, file);
+  if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return cwd;
+  return dirname(file);
+}
+
+function backupRoot(root: string): string {
+  return join(root, ".tedit-cache", "backups");
+}
+
+function manifestPath(root: string): string {
+  return join(backupRoot(root), "manifest.json");
+}
+
+function safeRelative(root: string, file: string): string {
+  const rel = relative(root, file);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return basename(file);
+  return rel;
+}
+
+function backupId(): string {
+  return new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 17) + "-" + randomUUID().slice(0, 8);
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function parseDuration(value: string): number {
+  const match = /^(\d+)(ms|s|m|h|d)?$/.exec(value);
+  if (!match) fail("INVALID_DURATION", "Duration must look like 30s, 10m, 2h, or 7d.", { value });
+  const amount = Number(match[1]);
+  const unit = match[2] ?? "ms";
+  const scale = unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60_000 : unit === "h" ? 3_600_000 : 86_400_000;
+  return amount * scale;
 }
 
 function buildPolicy(

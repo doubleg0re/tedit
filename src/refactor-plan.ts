@@ -171,11 +171,11 @@ export function applyRefactorPlan(planPath: string, options: ApplyPlanOptions = 
   let targetBackup: BackupResult = {};
 
   if (sourcePolicy.write && sourceChanged) {
-    sourceBackup = maybeWriteBackup(plan.source, planned.source, sourcePolicy, true);
+    sourceBackup = maybeWriteBackup(plan.source, planned.source, sourcePolicy, true, planned.nextSource);
     writeFileSync(plan.source, planned.nextSource);
   }
   if (targetPolicy.write && targetChanged) {
-    targetBackup = maybeWriteBackup(plan.target, targetSource, targetPolicy, true);
+    targetBackup = maybeWriteBackup(plan.target, targetSource, targetPolicy, true, planned.newSource);
     mkdirSync(dirname(plan.target), { recursive: true });
     writeFileSync(plan.target, planned.newSource);
   }
