@@ -4,7 +4,7 @@ import traverseModule, { type NodePath, type TraverseOptions } from "@babel/trav
 import * as t from "@babel/types";
 import * as recast from "recast";
 import babelTsParser from "recast/parsers/babel-ts.js";
-import { verifyParseForFile } from "./base-edit.js";
+import { parseVerificationFields, verifyParseForFile } from "./base-edit.js";
 import { fail } from "./errors.js";
 import { analyzeState, type StateCluster } from "./quality.js";
 import { commitWorkspaceUpdates, type WorkspaceFileChange, type WorkspaceFlowOptions } from "./workspace-flow.js";
@@ -36,6 +36,8 @@ export type RefactorStateResult = {
   external_dependencies?: string[];
   parse_verified: boolean;
   parser?: string;
+  parse_skipped?: boolean;
+  parse_skip_reason?: string;
   hook_parse_verified?: boolean;
   hook_parser?: string;
   files: WorkspaceFileChange[];
@@ -97,8 +99,7 @@ function runRefactorStateInComponent(filePath: string, options: RefactorStateOpt
     state_object: stateObject,
     setter,
     mode: "object-state",
-    parse_verified: verification.verified,
-    ...(verification.parser ? { parser: verification.parser } : {}),
+    ...parseVerificationFields(verification),
     files,
   };
 }
@@ -163,8 +164,7 @@ function runRefactorStateToHook(filePath: string, options: RefactorStateOptions)
     hook_object: hookObject,
     handlers: handlerNames,
     ...(externalDependencies.length > 0 ? { external_dependencies: externalDependencies } : {}),
-    parse_verified: sourceVerification.verified,
-    ...(sourceVerification.parser ? { parser: sourceVerification.parser } : {}),
+    ...parseVerificationFields(sourceVerification),
     hook_parse_verified: hookVerification.verified,
     ...(hookVerification.parser ? { hook_parser: hookVerification.parser } : {}),
     files,

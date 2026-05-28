@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { parseLineRange, planBaseEdit, type BaseEditMutation, type BaseFindStrategy } from "./base-edit.js";
+import { parseLineRange, parseVerificationFields, planBaseEdit, type BaseEditMutation, type BaseFindStrategy } from "./base-edit.js";
 import { parseDocumentForFile } from "./core/registry.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
@@ -186,8 +186,7 @@ function runBaseEditStep(tx: WorkspaceTransaction, vars: WorkspaceVarStore, step
     action: plan.action,
     strategy: plan.strategy,
     changed: plan.changed,
-    parse_verified: plan.parseVerified,
-    ...(plan.parseVerification.parser ? { parser: plan.parseVerification.parser } : {}),
+    ...parseVerificationFields(plan.parseVerification),
     matches: plan.matches,
     ...(plan.diff ? { diff: plan.diff } : {}),
   };

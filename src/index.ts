@@ -3,8 +3,8 @@ export { BaseRuleDocument } from "./core/base-rule-document.js";
 export { matchesSimpleSelector, parseSelector, selectorHasScope } from "./core/tree-selector.js";
 export type { AttrSelector, ParsedSelector, PseudoSelector, SelectorCombinator, SelectorPart, SimpleSelector } from "./core/tree-selector.js";
 export { openDocumentForFile, parseDocumentForFile, getAdapterForFile, getOptionalAdapterForFile, hasAdapterForFile, listRules } from "./core/registry.js";
-export { BASE_ACTIONS, parseLineRange, planBaseEdit, verifyParseForFile } from "./base-edit.js";
-export type { BaseEditMutation, BaseEditOptions, BaseEditPlan, BaseFindStrategy, BaseMatch, BaseParseVerification } from "./base-edit.js";
+export { BASE_ACTIONS, parseLineRange, parseVerificationFields, planBaseEdit, verifyParseForFile } from "./base-edit.js";
+export type { BaseEditMutation, BaseEditOptions, BaseEditPlan, BaseFindStrategy, BaseMatch, BaseParseVerification, ParseSkipReason, ParseVerificationFields } from "./base-edit.js";
 export type {
   CommentPosition,
   DocumentAdapter,

@@ -17,6 +17,8 @@ type AgentFileSummary = {
   deleted?: boolean;
   parse_verified?: boolean;
   parser?: string;
+  parse_skipped?: boolean;
+  parse_skip_reason?: string;
   diffAvailable?: boolean;
   hunks?: number;
   bytesDelta?: number;
@@ -82,6 +84,8 @@ export function compactAgentResult(record: JsonRecord, options: OutputOptions = 
     compact.path = files[0].path;
     if (files[0].parse_verified !== undefined) compact.parse_verified = files[0].parse_verified;
     if (files[0].parser) compact.parser = files[0].parser;
+    if (files[0].parse_skipped !== undefined) compact.parse_skipped = files[0].parse_skipped;
+    if (files[0].parse_skip_reason) compact.parse_skip_reason = files[0].parse_skip_reason;
   }
   if (typeof record.plan === "string") compact.plan = record.plan;
   if (!success) {
@@ -163,6 +167,8 @@ function compactFileFrom(value: unknown, parseByFile: Map<string, Partial<AgentF
     ...(deleted ? { deleted: true } : {}),
     ...(typeof record.parse_verified === "boolean" ? { parse_verified: record.parse_verified } : {}),
     ...(typeof record.parser === "string" ? { parser: record.parser } : {}),
+    ...(typeof record.parse_skipped === "boolean" ? { parse_skipped: record.parse_skipped } : {}),
+    ...(typeof record.parse_skip_reason === "string" ? { parse_skip_reason: record.parse_skip_reason } : {}),
     ...parse,
     ...(diff && diff.length > 0 ? { diffAvailable: true } : {}),
     ...stats,
@@ -178,10 +184,12 @@ function parseByFileMap(record: JsonRecord): Map<string, Partial<AgentFileSummar
       if (file) map.set(file.file, parseFields(file));
     }
   }
-  if (typeof record.file === "string" && (typeof record.parse_verified === "boolean" || typeof record.parser === "string")) {
+  if (typeof record.file === "string" && (typeof record.parse_verified === "boolean" || typeof record.parser === "string" || typeof record.parse_skipped === "boolean")) {
     map.set(record.file, {
       ...(typeof record.parse_verified === "boolean" ? { parse_verified: record.parse_verified } : {}),
       ...(typeof record.parser === "string" ? { parser: record.parser } : {}),
+      ...(typeof record.parse_skipped === "boolean" ? { parse_skipped: record.parse_skipped } : {}),
+      ...(typeof record.parse_skip_reason === "string" ? { parse_skip_reason: record.parse_skip_reason } : {}),
     });
   }
   return map;
@@ -191,6 +199,8 @@ function parseFields(file: AgentFileSummary): Partial<AgentFileSummary> {
   return {
     ...(file.parse_verified === undefined ? {} : { parse_verified: file.parse_verified }),
     ...(file.parser ? { parser: file.parser } : {}),
+    ...(file.parse_skipped === undefined ? {} : { parse_skipped: file.parse_skipped }),
+    ...(file.parse_skip_reason ? { parse_skip_reason: file.parse_skip_reason } : {}),
   };
 }
 
@@ -228,10 +238,17 @@ function agentSummary(record: JsonRecord, files: AgentFileSummary[]): string {
 
 function parseSummarySuffix(files: AgentFileSummary[]): string {
   const verified = files.filter((file) => file.parse_verified);
-  if (verified.length === 0) return "";
-  const parsers = [...new Set(verified.map((file) => file.parser).filter((parser): parser is string => Boolean(parser)))];
-  if (parsers.length === 1) return "; parse verified with " + parsers[0];
-  return "; parse verified";
+  const skipped = files.filter((file) => file.parse_skipped);
+  if (verified.length > 0 && skipped.length > 0) return "; parse verified/skipped";
+  if (verified.length > 0) {
+    const parsers = [...new Set(verified.map((file) => file.parser).filter((parser): parser is string => Boolean(parser)))];
+    if (parsers.length === 1) return "; parse verified with " + parsers[0];
+    return "; parse verified";
+  }
+
+  if (skipped.length === 0 || skipped.length !== files.length) return "";
+  const reasons = [...new Set(skipped.map((file) => file.parse_skip_reason).filter((reason): reason is string => Boolean(reason)))];
+  return reasons.length === 1 ? "; parse skipped (" + reasons[0] + ")" : "; parse skipped";
 }
 
 function agentNextSteps(record: JsonRecord, files: AgentFileSummary[]): string[] {

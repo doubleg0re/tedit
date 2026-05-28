@@ -1672,6 +1672,9 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(result.structuredContent.ok, true);
     assert.match(result.structuredContent.summary, /1 file written/);
     assert.equal(result.structuredContent.files[0].path, file);
+    assert.equal(result.structuredContent.parse_skipped, true);
+    assert.equal(result.structuredContent.parse_skip_reason, "unsupported_extension");
+    assert.equal(result.structuredContent.files[0].parse_skipped, true);
     assert.equal(result.structuredContent.files[0].diffAvailable, true);
     assert.equal(result.structuredContent.diff, undefined);
     assert.equal(result.structuredContent.write_policy, undefined);
@@ -1751,6 +1754,15 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(verifyResult.structuredContent.parse_verified, true);
     assert.equal(verifyResult.structuredContent.parser, "json");
 
+    const textVerifyResult = await client.callTool({
+      name: "verify_file",
+      arguments: { file },
+    });
+    assert.equal(textVerifyResult.isError, undefined);
+    assert.equal(textVerifyResult.structuredContent.parse_verified, false);
+    assert.equal(textVerifyResult.structuredContent.parse_skipped, true);
+    assert.equal(textVerifyResult.structuredContent.parse_skip_reason, "unsupported_extension");
+
     const planResult = await client.callTool({
       name: "extract_plan",
       arguments: { from: extractFile, selector: "Card", to: extractOut, name: "PageCard", planOut: extractPlan },
@@ -1785,6 +1797,8 @@ test("base edit exact replace dry-runs and writes unsupported files", () => {
   assert.equal(result.changed, true);
   assert.equal(result.written, true);
   assert.equal(result.parse_verified, false);
+  assert.equal(result.parse_skipped, true);
+  assert.equal(result.parse_skip_reason, "unsupported_extension");
   assert.equal(readFileSync(file, "utf8"), "# Title\nnew value\n");
 });
 
@@ -1987,6 +2001,8 @@ test("verify-file reports current parser coverage", () => {
   assert.equal(mdx.parse_verified, true);
   assert.equal(mdx.parser, "markdown-lite");
   assert.equal(text.parse_verified, false);
+  assert.equal(text.parse_skipped, true);
+  assert.equal(text.parse_skip_reason, "unsupported_extension");
   assert.equal(text.parser, undefined);
 });
 
@@ -2075,6 +2091,8 @@ test("multiedit applies same-file edits sequentially and atomically", () => {
   assert.equal(result.results.length, 2);
   assert.equal(result.files.length, 1);
   assert.equal(result.parse[0].parse_verified, false);
+  assert.equal(result.parse[0].parse_skipped, true);
+  assert.equal(result.parse[0].parse_skip_reason, "unsupported_extension");
   assert.equal(readFileSync(file, "utf8"), "status: approved\nnext: draft\n");
 });
 
@@ -2093,9 +2111,28 @@ test("multiedit applies multiple files and reports final parse verification", ()
 
   const result = JSON.parse(runWithInput(["multiedit", "--from-stdin", "--write"], input));
   const jsonParse = result.parse.find((item) => item.file === jsonFile);
+  const textParse = result.parse.find((item) => item.file === textFile);
   assert.equal(result.files.length, 2);
   assert.equal(jsonParse.parse_verified, true);
   assert.equal(jsonParse.parser, "json");
+  assert.equal(textParse.parse_verified, false);
+  assert.equal(textParse.parse_skipped, true);
+
+  const compactTextFile = join(dir, "compact.txt");
+  const compactJsonFile = join(dir, "compact.json");
+  writeFileSync(compactTextFile, "mode: old\n");
+  writeFileSync(compactJsonFile, "{\n  \"mode\": \"old\"\n}\n");
+  const compactInput = JSON.stringify({
+    edits: [
+      { file: compactTextFile, find: "old", replace: "new" },
+      { file: compactJsonFile, find: "old", replace: "new" }
+    ]
+  });
+  const compact = JSON.parse(runRaw(["multiedit", "--from-stdin", "--write"], compactInput));
+  assert.match(compact.summary, /2 files written; parse verified\/skipped/);
+  assert.equal(compact.files.find((item) => item.file === compactTextFile).parse_skipped, true);
+  assert.equal(compact.files.find((item) => item.file === compactJsonFile).parser, "json");
+
   assert.equal(readFileSync(textFile, "utf8"), "Status: reviewed\n");
   assert.deepEqual(JSON.parse(readFileSync(jsonFile, "utf8")), { timeout: 5000 });
 });
@@ -2205,7 +2242,9 @@ test("cli non-tty defaults to compact output and detailed override keeps legacy 
   assert.equal(compact.ok, true);
   assert.equal(compact.changed, true);
   assert.equal(compact.written, false);
-  assert.match(compact.summary, /1 file would change/);
+  assert.match(compact.summary, /1 file would change; parse skipped \(unsupported_extension\)/);
+  assert.equal(compact.parse_skipped, true);
+  assert.equal(compact.parse_skip_reason, "unsupported_extension");
   assert.equal(compact.files[0].path, file);
   assert.equal(compact.files[0].diffAvailable, true);
   assert.equal(compact.diff, undefined);

@@ -1,12 +1,20 @@
 import { existsSync, readFileSync } from "node:fs";
-import { parseLineRange, planBaseEdit, verifyParseForFile, type BaseEditMutation, type BaseFindStrategy } from "./base-edit.js";
+import {
+  parseLineRange,
+  parseVerificationFields,
+  planBaseEdit,
+  verifyParseForFile,
+  type BaseEditMutation,
+  type BaseFindStrategy,
+  type ParseVerificationFields,
+} from "./base-edit.js";
 import { fail, TeditError } from "./errors.js";
 import { commitWorkspaceUpdates, type WorkspaceFileChange, type WorkspaceFlowOptions } from "./workspace-flow.js";
 
 export type MultieditResult = {
   success: true;
   results: MultieditStepResult[];
-  parse: Array<{ file: string; parse_verified: boolean; parser?: string }>;
+  parse: Array<{ file: string } & ParseVerificationFields>;
   files: WorkspaceFileChange[];
 };
 
@@ -84,8 +92,7 @@ export function runMultiedit(edits: unknown[], options: WorkspaceFlowOptions = {
       const verification = verifyParseForFile(state.file, state.next);
       return {
         file: state.file,
-        parse_verified: verification.verified,
-        ...(verification.parser ? { parser: verification.parser } : {}),
+        ...parseVerificationFields(verification),
       };
     } catch (error) {
       rethrowWithEditContext(error, undefined, state.file);

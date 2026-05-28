@@ -1,7 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod/v4";
-import { BASE_ACTIONS, parseLineRange, planBaseEdit, verifyParseForFile, type BaseEditMutation, type BaseFindStrategy } from "./base-edit.js";
+import {
+  BASE_ACTIONS,
+  parseLineRange,
+  parseVerificationFields,
+  planBaseEdit,
+  verifyParseForFile,
+  type BaseEditMutation,
+  type BaseFindStrategy,
+} from "./base-edit.js";
 import { parseElementShorthand } from "./chain.js";
 import { getOptionalAdapterForFile, listRules } from "./core/registry.js";
 import { unifiedDiff } from "./diff.js";
@@ -10,7 +18,8 @@ import { formatAgentResult, outputOptionsFromRecord } from "./output.js";
 import { runMultiedit, runMultieditInput } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
 import { analyzeState } from "./quality.js";
-import { runRefactorState } from "./refactor-state.js";import { applyRefactorPlan, buildExtractComponentPlan, writePlanFile } from "./refactor-plan.js";
+import { runRefactorState } from "./refactor-state.js";
+import { applyRefactorPlan, buildExtractComponentPlan, writePlanFile } from "./refactor-plan.js";
 import type { ExtractOptions, HelperPolicy } from "./extract.js";
 import { runWorkspaceFlow, type WorkspaceFlowOptions, type WorkspaceFlowStep } from "./workspace-flow.js";
 import { fileLengthWarnings } from "./quality.js";
@@ -559,8 +568,7 @@ function runWholeFileTool(input: JsonRecord, label: string, kind: string, source
     existed,
     changed,
     written: shouldWrite && changed,
-    parse_verified: parseVerification.verified,
-    ...(parseVerification.parser ? { parser: parseVerification.parser } : {}),
+    ...parseVerificationFields(parseVerification),
     result: { kind, ...extraResult },
     warnings,
     write_policy: writePolicyReport(policy, backup),
@@ -599,8 +607,7 @@ function runEditTool(args: unknown): unknown {
     strategy: plan.strategy,
     changed: plan.changed,
     written: shouldWrite && plan.changed,
-    parse_verified: plan.parseVerified,
-    ...(plan.parseVerification.parser ? { parser: plan.parseVerification.parser } : {}),
+    ...parseVerificationFields(plan.parseVerification),
     matches: plan.matches,
     warnings,
     write_policy: writePolicyReport(policy, backup),
@@ -664,8 +671,7 @@ function runVerifyFileTool(args: unknown): unknown {
   return {
     success: true,
     file: filePath,
-    parse_verified: verification.verified,
-    ...(verification.parser ? { parser: verification.parser } : {}),
+    ...parseVerificationFields(verification),
   };
 }
 

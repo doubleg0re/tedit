@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
-import { verifyParseForFile } from "./base-edit.js";
+import { parseVerificationFields, verifyParseForFile, type ParseVerificationFields } from "./base-edit.js";
 import { fail, TeditError } from "./errors.js";
 import { commitWorkspaceUpdates, type WorkspaceFileChange, type WorkspaceFlowOptions } from "./workspace-flow.js";
 
 export type PatchResult = {
   success: true;
   patches: Array<{ file: string; hunks: number; added: boolean; deleted: boolean; renamed: boolean; old_file?: string }>;
-  parse: Array<{ file: string; parse_verified: boolean; parser?: string }>;
+  parse: Array<{ file: string } & ParseVerificationFields>;
   files: WorkspaceFileChange[];
 };
 
@@ -68,8 +68,7 @@ export function runPatchInput(input: string, options: WorkspaceFlowOptions = {})
       const verification = verifyParseForFile(update.file, update.source);
       return [{
         file: update.file,
-        parse_verified: verification.verified,
-        ...(verification.parser ? { parser: verification.parser } : {}),
+        ...parseVerificationFields(verification),
       }];
     } catch (error) {
       rethrowWithPatchContext(error, update.file);

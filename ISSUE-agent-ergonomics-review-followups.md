@@ -28,8 +28,9 @@ Remaining follow-ups from Claude MCP smoke:
   verification path for non-JSX files.
 - Decide whether regex replacements should support `$&`/`$1` backreferences
   or explicitly document literal replacement semantics.
-- Consider representing parser skips as `parse_verified: null` or a separate
-  `parse_skipped` flag for plain text.
+- Parser skips now stay backward-compatible as `parse_verified: false` and add
+  `parse_skipped: true` plus `parse_skip_reason` for unsupported or disabled
+  parser paths.
 - Clean up minor action naming differences between top-level MCP tools and
   action aliases if they hurt discoverability.
 - Continue improving exact-match and selector recovery hints where deterministic

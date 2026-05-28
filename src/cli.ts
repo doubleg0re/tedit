@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { BASE_ACTIONS, parseLineRange, planBaseEdit, verifyParseForFile, type BaseEditMutation, type BaseFindStrategy } from "./base-edit.js";
+import {
+  BASE_ACTIONS,
+  parseLineRange,
+  parseVerificationFields,
+  planBaseEdit,
+  verifyParseForFile,
+  type BaseEditMutation,
+  type BaseFindStrategy,
+} from "./base-edit.js";
 import { chainToFlow, fileChainToWorkspaceFlow, parseChainSegments, parseChainText, workspaceChainToFlow } from "./chain.js";
 import type { ImportEditSpec, TextMatchSpec, TextValueSpec, TreeNodeSpec, ValueSpec } from "./core/document.js";
 import { getOptionalAdapterForFile, listRules, openDocumentForFile } from "./core/registry.js";
@@ -206,8 +214,7 @@ function commandEdit(args: ParsedArgs): void {
     strategy: plan.strategy,
     changed: plan.changed,
     written: shouldWrite && plan.changed,
-    parse_verified: plan.parseVerified,
-    ...(plan.parseVerification.parser ? { parser: plan.parseVerification.parser } : {}),
+    ...parseVerificationFields(plan.parseVerification),
     matches: plan.matches,
     warnings,
     write_policy: writePolicyReport(policy, backup),
@@ -707,8 +714,7 @@ function commandVerifyFile(args: ParsedArgs): void {
   const result = {
     success: true,
     file: filePath,
-    parse_verified: verification.verified,
-    ...(verification.parser ? { parser: verification.parser } : {}),
+    ...parseVerificationFields(verification),
   };
   output(args, result, verification.verified
     ? `${filePath}: parse verified (${verification.parser})`
@@ -876,8 +882,7 @@ function finishCreation(args: ParsedArgs, filePath: string, source: string, resu
       existed,
       changed,
       written: shouldWrite && changed,
-      parse_verified: parseVerification.verified,
-      ...(parseVerification.parser ? { parser: parseVerification.parser } : {}),
+      ...parseVerificationFields(parseVerification),
       result,
       warnings,
       write_policy: writePolicyReport(policy, backup),
@@ -1257,6 +1262,8 @@ type EditSummaryResult = {
   written: boolean;
   matches: unknown[];
   parse_verified: boolean;
+  parse_skipped?: boolean;
+  parse_skip_reason?: string;
 };
 
 function summaryRequested(args: ParsedArgs): boolean {

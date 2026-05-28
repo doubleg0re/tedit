@@ -121,9 +121,9 @@ actions: `edit`, `multiedit`, `patch`, `write_file`, `create_file`,
 `expr_to_short_circuit`, and `extract`.
 
 Mutating MCP tools default to compact machine-readable results for agent loops:
-`success`, `ok`, `summary`, `changed`, `written`, `files`, and a
-`next` array only when there is a deterministic follow-up such as applying a
-dry-run. Pass `output: "detailed"`, `includeDiffs: true`, or
+`success`, `ok`, `summary`, `changed`, `written`, `files`, parser
+verification fields, and a `next` array only when there is a deterministic
+follow-up such as applying a dry-run. Pass `output: "detailed"`, `includeDiffs: true`, or
 `includeDetails: true` to retrieve full diffs, matches, and write-policy
 diagnostics. Failures use the same structured tedit fields where possible,
 including `ok: false`, `code`, `error`, `details`, and actionable `next`
@@ -274,8 +274,10 @@ registered language rules such as JSX/TSX, JSON files, and Markdown
 files, the edited result is parsed or lightly verified before writing;
 parse failures return `PARSE_BROKEN_AFTER_EDIT` and leave the file
 untouched. Unknown extensions remain bytes-only and report
-`parse_verified: false`. Use `verify-file` to run the same parser coverage
-against the current file without planning an edit.
+`parse_verified: false`, `parse_skipped: true`, and
+`parse_skip_reason: "unsupported_extension"` so agents can distinguish a
+parser skip from a parse failure. Use `verify-file` to run the same parser
+coverage against the current file without planning an edit.
 
 ```bash
 tedit verify-file src/config.json --json

@@ -60,10 +60,30 @@ export type BaseEditPlan = {
   parseVerification: BaseParseVerification;
 };
 
+export type ParseSkipReason = "disabled" | "unsupported_extension";
+
 export type BaseParseVerification = {
   verified: boolean;
   parser?: string;
+  skipped?: boolean;
+  skipReason?: ParseSkipReason;
 };
+
+export type ParseVerificationFields = {
+  parse_verified: boolean;
+  parser?: string;
+  parse_skipped?: boolean;
+  parse_skip_reason?: ParseSkipReason;
+};
+
+export function parseVerificationFields(verification: BaseParseVerification): ParseVerificationFields {
+  return {
+    parse_verified: verification.verified,
+    ...(verification.parser ? { parser: verification.parser } : {}),
+    ...(verification.skipped ? { parse_skipped: true } : {}),
+    ...(verification.skipReason ? { parse_skip_reason: verification.skipReason } : {}),
+  };
+}
 
 type RawMatch = {
   start: number;
@@ -304,12 +324,12 @@ function applyMutation(source: string, matches: RawMatch[], mutation: BaseEditMu
 }
 
 export function verifyParseForFile(filePath: string, source: string, enabled = true): BaseParseVerification {
-  if (!enabled) return { verified: false };
+  if (!enabled) return { verified: false, skipped: true, skipReason: "disabled" };
   const adapter = getOptionalAdapterForFile(filePath);
   const extension = extname(filePath).toLowerCase();
   const adapterVerifier = adapter?.verify;
   const parser = adapterVerifier ? adapter.rule.name : parserForExtension(extension);
-  if (!parser) return { verified: false };
+  if (!parser) return { verified: false, skipped: true, skipReason: "unsupported_extension" };
 
   try {
     if (adapterVerifier) adapterVerifier(filePath, source);
