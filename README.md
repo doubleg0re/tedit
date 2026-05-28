@@ -105,9 +105,10 @@ The package bin also exposes `tedit-mcp`, so installed packages can use. The tes
 ```
 
 The MCP tool names are underscore-style equivalents of the CLI and flow
-actions: `edit`, `multiedit`, `patch`, `actions`, `analyze_state`,
-`verify_file`, `refactor_state`, `extract_plan`, `apply_plan`,
-`chain_workspace`, `find`, `inspect`, `append`,
+actions: `edit`, `multiedit`, `patch`, `write_file`, `create_file`,
+`scaffold_file`, `new_file`, `actions`, `analyze_state`, `verify_file`,
+`refactor_state`, `extract_plan`, `apply_plan`, `chain_workspace`, `find`,
+`inspect`, `append`,
 `prepend`, `wrap`, `unwrap`, `remove`, `rename`, `prop_set`,
 `prop_remove`, `text_set`, `text_replace`, `insert_comment`,
 `imports_add`, `imports_remove`, `imports_rename`, `imports_move`,

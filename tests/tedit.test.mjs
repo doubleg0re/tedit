@@ -1339,6 +1339,10 @@ test("mcp server lists tools and runs universal edit", async () => {
   const extractFile = join(dir, "Extract.tsx");
   const extractOut = join(dir, "components", "PageCard.tsx");
   const extractPlan = join(dir, ".tedit", "plans", "extract-card.json");
+  const mcpWriteFile = join(dir, "written.json");
+  const mcpCreateFile = join(dir, "created.md");
+  const mcpScaffoldFile = join(dir, "Scaffolded.tsx");
+  const mcpNewFile = join(dir, "ClientCard.tsx");
   writeFileSync(file, "# Title\nold value\n");
   writeFileSync(jsxFile, chainFixture());
   writeFileSync(jsonFile, "{\"enabled\":true}\n");
@@ -1359,6 +1363,10 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "extract_plan"));
     assert.ok(tools.tools.some((tool) => tool.name === "apply_plan"));
+    assert.ok(tools.tools.some((tool) => tool.name === "write_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "create_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "scaffold_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "new_file"));
 
     const result = await client.callTool({
       name: "edit",
@@ -1368,7 +1376,55 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(result.isError, undefined);
     assert.equal(result.structuredContent.success, true);
     assert.equal(result.structuredContent.written, true);
+    assert.match(result.structuredContent.summary, /1 file written/);
+    assert.equal(result.structuredContent.files[0].diffAvailable, true);
+    assert.deepEqual(result.structuredContent.next, ["review git diff or run tests for affected files"]);
     assert.equal(readFileSync(file, "utf8"), "# Title\nnew value\n");
+
+    const failedEdit = await client.callTool({
+      name: "edit",
+      arguments: { file, find: "missing value", replace: "ignored" },
+    });
+    assert.equal(failedEdit.isError, true);
+    assert.ok(Array.isArray(failedEdit.structuredContent.next));
+    assert.ok(failedEdit.structuredContent.next.length > 0);
+
+    const writeFileResult = await client.callTool({
+      name: "write_file",
+      arguments: { file: mcpWriteFile, source: "{\"ok\":true}\n", write: true },
+    });
+    assert.equal(writeFileResult.isError, undefined);
+    assert.equal(writeFileResult.structuredContent.parser, "json");
+    assert.match(writeFileResult.structuredContent.summary, /1 file written; parse verified with json/);
+    assert.equal(readFileSync(mcpWriteFile, "utf8"), "{\"ok\":true}\n");
+
+    const createFileResult = await client.callTool({
+      name: "create_file",
+      arguments: { file: mcpCreateFile, source: "# Created\n", write: true },
+    });
+    assert.equal(createFileResult.isError, undefined);
+    assert.equal(createFileResult.structuredContent.parser, "markdown-lite");
+    assert.equal(readFileSync(mcpCreateFile, "utf8"), "# Created\n");
+
+    const scaffoldResult = await client.callTool({
+      name: "scaffold_file",
+      arguments: {
+        file: mcpScaffoldFile,
+        spec: { exports: [{ kind: "function", name: "Scaffolded", body: { tag: "section" } }] },
+        write: true,
+      },
+    });
+    assert.equal(scaffoldResult.isError, undefined);
+    assert.equal(scaffoldResult.structuredContent.parser, "jsx");
+    assert.match(readFileSync(mcpScaffoldFile, "utf8"), /export function Scaffolded/);
+
+    const newFileResult = await client.callTool({
+      name: "new_file",
+      arguments: { file: mcpNewFile, template: "react-client-component", params: { name: "ClientCard" }, write: true },
+    });
+    assert.equal(newFileResult.isError, undefined);
+    assert.equal(newFileResult.structuredContent.parser, "jsx");
+    assert.match(readFileSync(mcpNewFile, "utf8"), /export function ClientCard/);
 
     const wrapResult = await client.callTool({
       name: "wrap",

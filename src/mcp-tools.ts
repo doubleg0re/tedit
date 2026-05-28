@@ -1,8 +1,10 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { z } from "zod/v4";
 import { BASE_ACTIONS, parseLineRange, planBaseEdit, verifyParseForFile, type BaseEditMutation, type BaseFindStrategy } from "./base-edit.js";
 import { parseElementShorthand } from "./chain.js";
 import { getOptionalAdapterForFile, listRules } from "./core/registry.js";
+import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { runMultiedit, runMultieditInput } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
@@ -11,6 +13,7 @@ import { runRefactorState } from "./refactor-state.js";import { applyRefactorPla
 import type { ExtractOptions, HelperPolicy } from "./extract.js";
 import { runWorkspaceFlow, type WorkspaceFlowOptions, type WorkspaceFlowStep } from "./workspace-flow.js";
 import { fileLengthWarnings } from "./quality.js";
+import { buildScaffoldSource, loadTemplateSpec, parseParams, type ScaffoldSpec } from "./scaffold.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
 
 export type TeditMcpTool = {
@@ -98,6 +101,57 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
       ...writeFlagSchema,
     },
     handler: runPatchTool,
+  },
+  {
+    name: "write_file",
+    title: "Write File",
+    description: "Create or overwrite a complete file through tedit write policy and parse verification.",
+    inputSchema: {
+      file: fileSchema,
+      source: z.string(),
+      overwrite: z.boolean().optional(),
+      ...writeFlagSchema,
+    },
+    handler: runWriteFileTool,
+  },
+  {
+    name: "create_file",
+    title: "Create File",
+    description: "Create a complete file through tedit write policy and parse verification.",
+    inputSchema: {
+      file: fileSchema,
+      source: z.string(),
+      overwrite: z.boolean().optional(),
+      ...writeFlagSchema,
+    },
+    handler: runCreateFileTool,
+  },
+  {
+    name: "scaffold_file",
+    title: "Scaffold File",
+    description: "Build and write a file from a tedit scaffold spec.",
+    inputSchema: {
+      file: fileSchema,
+      spec: z.record(z.string(), z.unknown()).optional(),
+      source: z.string().optional(),
+      overwrite: z.boolean().optional(),
+      ...writeFlagSchema,
+    },
+    handler: runScaffoldFileTool,
+  },
+  {
+    name: "new_file",
+    title: "New File From Template",
+    description: "Build and write a file from a built-in or local tedit template.",
+    inputSchema: {
+      file: fileSchema,
+      template: z.string().min(1),
+      params: z.union([z.record(z.string(), z.unknown()), z.array(z.string())]).optional(),
+      cwd: z.string().optional(),
+      overwrite: z.boolean().optional(),
+      ...writeFlagSchema,
+    },
+    handler: runNewFileTool,
   },
   {
     name: "actions",
@@ -426,6 +480,64 @@ export function runMcpTool(name: string, args: unknown): unknown {
   return tool.handler(args);
 }
 
+function runCreateFileTool(args: unknown): unknown {
+  const input = recordInput(args, "create_file");
+  return runWholeFileTool(input, "create_file", "create", requiredString(input.source, "create_file requires source."));
+}
+
+function runWriteFileTool(args: unknown): unknown {
+  const input = recordInput(args, "write_file");
+  return runWholeFileTool(input, "write_file", "write", requiredString(input.source, "write_file requires source."));
+}
+
+function runScaffoldFileTool(args: unknown): unknown {
+  const input = recordInput(args, "scaffold_file");
+  const spec = scaffoldSpecFromInput(input);
+  return runWholeFileTool(input, "scaffold_file", "scaffold", buildScaffoldSource(spec), { spec });
+}
+
+function runNewFileTool(args: unknown): unknown {
+  const input = recordInput(args, "new_file");
+  const template = requiredString(input.template, "new_file requires template.");
+  const spec = loadTemplateSpec(template, templateParamsFromInput(input.params), optionalString(input.cwd) ?? process.cwd());
+  return runWholeFileTool(input, "new_file", "new", buildScaffoldSource(spec), { template, spec });
+}
+
+function runWholeFileTool(input: JsonRecord, label: string, kind: string, source: string, extraResult: Record<string, unknown> = {}): unknown {
+  const filePath = requiredString(input.file, label + " requires file.");
+  if (existsSync(filePath) && !booleanValue(input.overwrite)) {
+    fail("FILE_EXISTS", "Refusing to overwrite existing file: " + filePath + ". Pass overwrite=true to bypass.");
+  }
+
+  const parseVerification = verifyParseForFile(filePath, source);
+  const previous = existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
+  const changed = previous !== source;
+  const diff = unifiedDiff(previous, source, filePath);
+  const warnings = fileLengthWarnings(filePath, previous, source);
+  const policy = resolveWritePolicy(filePath, writeFlagsFromInput(input));
+  const shouldWrite = policy.write;
+  let backup: BackupResult = {};
+
+  if (shouldWrite && changed) {
+    backup = maybeWriteBackup(filePath, previous, policy, changed);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, source);
+  }
+
+  return withAgentFields({
+    success: true,
+    file: filePath,
+    changed,
+    written: shouldWrite && changed,
+    parse_verified: parseVerification.verified,
+    ...(parseVerification.parser ? { parser: parseVerification.parser } : {}),
+    result: { kind, ...extraResult },
+    warnings,
+    write_policy: writePolicyReport(policy, backup),
+    ...(diff ? { diff } : {}),
+  });
+}
+
 function runEditTool(args: unknown): unknown {
   const input = recordInput(args, "edit");
   const filePath = requiredString(input.file, "edit requires file.");
@@ -450,7 +562,7 @@ function runEditTool(args: unknown): unknown {
     writeFileSync(filePath, plan.nextSource);
   }
 
-  return {
+  return withAgentFields({
     success: true,
     file: filePath,
     action: plan.action,
@@ -463,7 +575,7 @@ function runEditTool(args: unknown): unknown {
     warnings,
     write_policy: writePolicyReport(policy, backup),
     ...(plan.diff ? { diff: plan.diff } : {}),
-  };
+  });
 }
 
 function runMultieditTool(args: unknown): unknown {
@@ -471,15 +583,15 @@ function runMultieditTool(args: unknown): unknown {
   if (input.input !== undefined && input.edits !== undefined) {
     fail("INVALID_MCP_INPUT", "multiedit accepts only one of input or edits.");
   }
-  if (input.input !== undefined) return runMultieditInput(requiredString(input.input, "multiedit input must be a string."), writeFlagsFromInput(input));
+  if (input.input !== undefined) return withAgentFields(runMultieditInput(requiredString(input.input, "multiedit input must be a string."), writeFlagsFromInput(input)));
   const edits = input.edits;
   if (!Array.isArray(edits)) fail("INVALID_MCP_INPUT", "multiedit requires edits array or input string.");
-  return runMultiedit(edits, writeFlagsFromInput(input));
+  return withAgentFields(runMultiedit(edits, writeFlagsFromInput(input)));
 }
 
 function runPatchTool(args: unknown): unknown {
   const input = recordInput(args, "patch");
-  return runPatchInput(requiredString(input.patch, "patch requires patch."), writeFlagsFromInput(input));
+  return withAgentFields(runPatchInput(requiredString(input.patch, "patch requires patch."), writeFlagsFromInput(input)));
 }
 
 function runActionsTool(args: unknown): unknown {
@@ -541,22 +653,22 @@ function runExtractPlanTool(args: unknown): unknown {
 function runApplyPlanTool(args: unknown): unknown {
   const input = recordInput(args, "apply_plan");
   const planPath = requiredString(pick(input, "plan", "file", "path"), "apply_plan requires plan, file, or path.");
-  return applyRefactorPlan(planPath, {
+  return withAgentFields(applyRefactorPlan(planPath, {
     ...writeFlagsFromInput(input),
     overwrite: booleanValue(input.overwrite),
     only: stringArray(input.only, "only"),
     skip: stringArray(input.skip, "skip"),
-  });
+  }));
 }
 
 function runWorkspaceTool(args: unknown): unknown {
   const input = recordInput(args, "chain_workspace");
   const steps = input.steps ?? input.flow;
   if (!Array.isArray(steps)) fail("INVALID_MCP_INPUT", "chain_workspace requires steps or flow array.");
-  return runWorkspaceFlow(steps as WorkspaceFlowStep[], {
+  return withAgentFields(runWorkspaceFlow(steps as WorkspaceFlowStep[], {
     params: recordOrUndefined(input.params, "chain_workspace params"),
     ...writeFlagsFromInput(input),
-  });
+  }));
 }
 
 function extractOptionsFromInput(input: JsonRecord): ExtractOptions {
@@ -607,7 +719,7 @@ function runExtractTool(args: unknown): unknown {
     ...(input.maxProps === undefined ? {} : { maxProps: input.maxProps }),
     ...(input.acceptLargeProps === undefined ? {} : { acceptLargeProps: input.acceptLargeProps }),
   };
-  return runWorkspaceFlow([step], writeFlagsFromInput(input));
+  return withAgentFields(runWorkspaceFlow([step], writeFlagsFromInput(input)));
 }
 
 function singleStepTool(config: SingleStepConfig): TeditMcpTool {
@@ -619,9 +731,142 @@ function singleStepTool(config: SingleStepConfig): TeditMcpTool {
     annotations: config.readOnly ? { readOnlyHint: true, destructiveHint: false, idempotentHint: true } : undefined,
     handler: (args) => {
       const input = recordInput(args, config.name);
-      return runWorkspaceFlow([config.buildStep(input)], writeFlagsFromInput(input));
+      const result = runWorkspaceFlow([config.buildStep(input)], writeFlagsFromInput(input));
+      return config.readOnly ? result : withAgentFields(result);
     },
   };
+}
+
+function scaffoldSpecFromInput(input: JsonRecord): ScaffoldSpec {
+  if (input.spec !== undefined) {
+    const spec = recordOrUndefined(input.spec, "scaffold_file spec");
+    if (!spec) fail("INVALID_MCP_INPUT", "scaffold_file spec must be an object.");
+    return spec as ScaffoldSpec;
+  }
+  if (input.source !== undefined) return { source: requiredString(input.source, "scaffold_file source must be a string.") };
+  fail("INVALID_MCP_INPUT", "scaffold_file requires spec or source.");
+}
+
+function templateParamsFromInput(value: unknown): Record<string, string> {
+  if (value === undefined) return {};
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) return parseParams(value);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, String(child)]));
+  }
+  fail("INVALID_MCP_INPUT", "new_file params must be an object or key=value string array.");
+}
+
+type AgentFileSummary = {
+  file: string;
+  changed?: boolean;
+  written?: boolean;
+  deleted?: boolean;
+  parse_verified?: boolean;
+  parser?: string;
+  diffAvailable?: boolean;
+};
+
+function withAgentFields<T>(result: T): T {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const record = result as Record<string, unknown>;
+  const files = agentFilesFromRecord(record);
+  const next = agentNextSteps(files);
+  const nextRecord: Record<string, unknown> = {
+    ...record,
+    summary: agentSummary(files),
+    ...(next.length > 0 ? { next } : {}),
+  };
+  if (Array.isArray(record.files)) nextRecord.files = enrichAgentFiles(record.files, record);
+  else if (files.length > 0) nextRecord.files = files;
+  return nextRecord as T;
+}
+
+function agentFilesFromRecord(record: Record<string, unknown>): AgentFileSummary[] {
+  const parseByFile = parseByFileMap(record);
+  const files: AgentFileSummary[] = [];
+  if (Array.isArray(record.files)) {
+    for (const value of record.files) {
+      const file = compactFileFrom(value, parseByFile);
+      if (file) files.push(file);
+    }
+  }
+  if (files.length === 0) {
+    const file = compactFileFrom(record, parseByFile);
+    if (file) files.push(file);
+  }
+  return files;
+}
+
+function enrichAgentFiles(values: unknown[], record: Record<string, unknown>): unknown[] {
+  const parseByFile = parseByFileMap(record);
+  return values.map((value) => {
+    const file = compactFileFrom(value, parseByFile);
+    if (!file || !value || typeof value !== "object" || Array.isArray(value)) return value;
+    return { ...(value as Record<string, unknown>), ...file };
+  });
+}
+
+function compactFileFrom(value: unknown, parseByFile: Map<string, AgentFileSummary>): AgentFileSummary | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.file !== "string") return null;
+  const parse = parseByFile.get(record.file) ?? {};
+  return {
+    file: record.file,
+    ...(typeof record.changed === "boolean" ? { changed: record.changed } : {}),
+    ...(typeof record.written === "boolean" ? { written: record.written } : {}),
+    ...(record.deleted === true ? { deleted: true } : {}),
+    ...(typeof record.parse_verified === "boolean" ? { parse_verified: record.parse_verified } : {}),
+    ...(typeof record.parser === "string" ? { parser: record.parser } : {}),
+    ...parse,
+    ...(typeof record.diff === "string" && record.diff.length > 0 ? { diffAvailable: true } : {}),
+  };
+}
+
+function parseByFileMap(record: Record<string, unknown>): Map<string, AgentFileSummary> {
+  const map = new Map<string, AgentFileSummary>();
+  if (Array.isArray(record.parse)) {
+    for (const value of record.parse) {
+      const file = compactFileFrom(value, new Map());
+      if (file) map.set(file.file, file);
+    }
+  }
+  if (typeof record.file === "string" && (typeof record.parse_verified === "boolean" || typeof record.parser === "string")) {
+    map.set(record.file, {
+      file: record.file,
+      ...(typeof record.parse_verified === "boolean" ? { parse_verified: record.parse_verified } : {}),
+      ...(typeof record.parser === "string" ? { parser: record.parser } : {}),
+    });
+  }
+  return map;
+}
+
+function agentSummary(files: AgentFileSummary[]): string {
+  if (files.length === 0) return "operation succeeded";
+  const changed = files.filter((file) => file.changed).length;
+  const written = files.filter((file) => file.written).length;
+  const suffix = parseSummarySuffix(files);
+  if (written > 0) return String(written) + " " + plural("file", written) + " written" + suffix;
+  if (changed > 0) return String(changed) + " " + plural("file", changed) + " would change" + suffix;
+  return "no file changes" + suffix;
+}
+
+function parseSummarySuffix(files: AgentFileSummary[]): string {
+  const verified = files.filter((file) => file.parse_verified);
+  if (verified.length === 0) return "";
+  const parsers = [...new Set(verified.map((file) => file.parser).filter((parser): parser is string => Boolean(parser)))];
+  if (parsers.length === 1) return "; parse verified with " + parsers[0];
+  return "; parse verified";
+}
+
+function agentNextSteps(files: AgentFileSummary[]): string[] {
+  if (files.some((file) => file.changed && !file.written)) return ["rerun with write=true to apply"];
+  if (files.some((file) => file.written)) return ["review git diff or run tests for affected files"];
+  return [];
+}
+
+function plural(word: string, count: number): string {
+  return count === 1 ? word : word + "s";
 }
 
 function resolveEditStrategy(input: JsonRecord): BaseFindStrategy {
