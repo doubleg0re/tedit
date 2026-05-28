@@ -736,6 +736,8 @@ test("rules command exposes registered rules", () => {
   assert.deepEqual(result.rules[0].extensions, [".js", ".jsx", ".ts", ".tsx"]);
   assert.equal(result.rules[1].name, "json");
   assert.deepEqual(result.rules[1].extensions, [".json", ".jsonl", ".ndjson"]);
+  assert.equal(result.rules[2].name, "yaml");
+  assert.deepEqual(result.rules[2].extensions, [".yaml", ".yml"]);
 });
 
 test("json rule can inspect and edit object properties and scalar values", () => {
@@ -771,6 +773,26 @@ test("jsonl rule edits line records as root array items", () => {
   const lines = readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line));
   assert.equal(lines[0].ok, true);
   assert.equal(lines[1].ok, false);
+});
+
+test("yaml rule edits mapping keys and sequence items", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "config.yaml");
+  writeFileSync(file, "name: demo\nserver:\n  host: localhost\n  port: 3000\nfeatures:\n  - old\n  - keep\n");
+
+  const found = JSON.parse(run(["find", file, "server", "--json"]));
+  assert.equal(found.matches[0].attributes.path, "$.server");
+
+  run(["prop", "set", file, "server", "mode", "dev", "--write"]);
+  run(["text", "set", file, '[path="$.server.port"]', "--value", "4000", "--write"]);
+  run(["remove", file, '[path="$.features[0]"]', "--write"]);
+  run(["prop", "remove", file, "server", "host", "--write"]);
+
+  const updated = readFileSync(file, "utf8");
+  assert.match(updated, /server:\n  port: 4000\n  mode: dev/);
+  assert.match(updated, /features:\n  - keep/);
+  assert.doesNotMatch(updated, /host:/);
+  assert.doesNotMatch(updated, /old/);
 });
 
 test("rename does not reprint unrelated conditional JSX attribute consequents", () => {

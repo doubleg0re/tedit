@@ -18,6 +18,7 @@ export type {
 } from "./core/document.js";
 export { JsxDocument, openJsxDocument } from "./rules/jsx/document.js";
 export { JsonDocument, openJsonDocument, parseJsonDocument } from "./rules/json/document.js";
+export { YamlDocument, openYamlDocument, parseYamlDocument } from "./rules/yaml/document.js";
 export { runFlow, validateFlow } from "./flow.js";
 export type { FlowStep, FlowRoot } from "./flow.js";
 export { commitWorkspaceUpdates, runWorkspaceFlow } from "./workspace-flow.js";
