@@ -22,19 +22,22 @@ Implemented in v1:
 - `npm run pack:check` now smoke-checks the packed CLI and MCP bins and blocks
   backup/postinstall artifacts.
 
+Implemented after v1:
+
+- Parser skips stay backward-compatible as `parse_verified: false` and add
+  `parse_skipped: true` plus `parse_skip_reason` for unsupported or disabled
+  parser paths.
+- Exact-match, count-mismatch, and selector ambiguity failures surface
+  deterministic `retry_hints` plus top-level `next` suggestions where safe.
+
 Remaining follow-ups from Claude MCP smoke:
 
 - Add a first-class plain-text `read_file` MCP tool or document the intended
   verification path for non-JSX files.
 - Decide whether regex replacements should support `$&`/`$1` backreferences
   or explicitly document literal replacement semantics.
-- Parser skips now stay backward-compatible as `parse_verified: false` and add
-  `parse_skipped: true` plus `parse_skip_reason` for unsupported or disabled
-  parser paths.
 - Clean up minor action naming differences between top-level MCP tools and
   action aliases if they hurt discoverability.
-- Continue improving exact-match and selector recovery hints where deterministic
-  suggestions are available.
 
 ## Priority
 

@@ -90,6 +90,17 @@ type RawMatch = {
   end: number;
 };
 
+type RecoveryHint = {
+  kind: "find-fuzzy" | "find-lines" | "replace-all";
+  description: string;
+  findFuzzy?: string;
+  findLines?: string;
+  replaceAll?: boolean;
+  expectCount?: number;
+  mutation?: Record<string, unknown>;
+  preview?: string;
+};
+
 export function planBaseEdit(options: BaseEditOptions): BaseEditPlan {
   validateOptions(options);
 
@@ -99,21 +110,27 @@ export function planBaseEdit(options: BaseEditOptions): BaseEditPlan {
   }
 
   if (options.expectCount !== undefined && matches.length !== options.expectCount) {
+    const retryHints = countMismatchRetryHints(options, matches);
     fail("MATCH_COUNT_MISMATCH", `Expected ${options.expectCount} match(es), found ${matches.length}.`, {
       tried_strategy: describeStrategy(options.strategy),
       expected_count: options.expectCount,
       actual_count: matches.length,
       matches: summarizeMatches(options.source, matches),
+      retry_hints: retryHints,
       suggestions: countSuggestions(matches.length),
+      next: recoveryNext(retryHints),
       next_step_hint: "Adjust --expect-count, narrow the match, or use --replace-all intentionally.",
     });
   }
 
   if (matches.length > 1 && !options.replaceAll) {
+    const retryHints = ambiguousMatchRetryHints(options, matches);
     fail("MATCH_NOT_UNIQUE", `Match is not unique; found ${matches.length} candidates.`, {
       tried_strategy: describeStrategy(options.strategy),
       matches: summarizeMatches(options.source, matches),
+      retry_hints: retryHints,
       suggestions: notUniqueSuggestions(matches.length),
+      next: recoveryNext(retryHints),
       next_step_hint: "Re-run with a narrower strategy or pass --replace-all if every match is intended.",
     });
   }
@@ -161,25 +178,31 @@ function failNoMatch(options: BaseEditOptions): never {
   if (options.strategy.kind === "exact" && options.strategy.autoFuzzy !== false) {
     const fuzzyMatches = findRawMatches(options.source, { kind: "fuzzy", pattern: options.strategy.pattern });
     if (fuzzyMatches.length === 1) {
+      const retryHints = fuzzyOnlyRetryHints(options, fuzzyMatches);
       fail("MATCH_FUZZY_ONLY", "Exact match failed, but one whitespace-insensitive match is available.", {
         tried_strategy: describeStrategy(options.strategy),
         fuzzy_strategy: { kind: "fuzzy", ignoreWhitespace: true },
         matches: summarizeMatches(options.source, fuzzyMatches),
         fuzzy_candidates: fuzzyCandidateHints(options.source, options.strategy.pattern, fuzzyMatches),
+        retry_hints: retryHints,
         suggestions: [
           "Re-run with --find-fuzzy to accept a whitespace-insensitive match.",
           "Use --find-lines N:M if the exact source range is already known.",
         ],
+        next: recoveryNext(retryHints),
         next_step_hint: "tedit refused to guess. Choose the fuzzy match explicitly or provide more context.",
       });
     }
     if (fuzzyMatches.length > 1) {
+      const retryHints = ambiguousMatchRetryHints(options, fuzzyMatches);
       fail("MATCH_NOT_UNIQUE", `Exact match failed, and fuzzy fallback found ${fuzzyMatches.length} candidates.`, {
         tried_strategy: describeStrategy(options.strategy),
         fuzzy_strategy: { kind: "fuzzy", ignoreWhitespace: true },
         matches: summarizeMatches(options.source, fuzzyMatches),
         fuzzy_candidates: fuzzyCandidateHints(options.source, options.strategy.pattern, fuzzyMatches),
+        retry_hints: retryHints,
         suggestions: notUniqueSuggestions(fuzzyMatches.length),
+        next: recoveryNext(retryHints),
         next_step_hint: "Use an anchor, a line range, or a more specific literal.",
       });
     }
@@ -196,6 +219,86 @@ function failNoMatch(options: BaseEditOptions): never {
     ],
     next_step_hint: "Re-run with a strategy that can identify exactly one target span.",
   });
+}
+
+function fuzzyOnlyRetryHints(options: BaseEditOptions, matches: RawMatch[]): RecoveryHint[] {
+  const hints: RecoveryHint[] = [];
+  if (options.strategy.kind === "exact") {
+    hints.push({
+      kind: "find-fuzzy",
+      description: "Retry with --find-fuzzy " + jsonHint(options.strategy.pattern) + " using the same mutation.",
+      findFuzzy: options.strategy.pattern,
+      mutation: mutationHint(options.mutation),
+      preview: previewForSpan(options.source, matches[0].start, matches[0].end),
+    });
+  }
+  hints.push(...lineRangeRetryHints(options, matches, 2));
+  return hints.slice(0, 3);
+}
+
+function ambiguousMatchRetryHints(options: BaseEditOptions, matches: RawMatch[]): RecoveryHint[] {
+  const hints = lineRangeRetryHints(options, matches, 3);
+  if (hints.length < 3) {
+    hints.push({
+      kind: "replace-all",
+      description: "If all " + matches.length + " candidates are intended, retry with --replace-all --expect-count " + matches.length + ".",
+      replaceAll: true,
+      expectCount: matches.length,
+      mutation: mutationHint(options.mutation),
+    });
+  }
+  return hints.slice(0, 3);
+}
+
+function countMismatchRetryHints(options: BaseEditOptions, matches: RawMatch[]): RecoveryHint[] {
+  if (matches.length === 0) return [];
+  return [{
+    kind: "replace-all",
+    description: "If the observed " + matches.length + " match(es) are intended, retry with --expect-count " + matches.length + ".",
+    replaceAll: Boolean(options.replaceAll),
+    expectCount: matches.length,
+    mutation: mutationHint(options.mutation),
+  }];
+}
+
+function lineRangeRetryHints(options: BaseEditOptions, matches: RawMatch[], limit: number): RecoveryHint[] {
+  return matches.slice(0, limit).map((match, index) => {
+    const range = lineRangeForMatch(options.source, match);
+    return {
+      kind: "find-lines",
+      description: "Retry candidate " + (index + 1) + " with --find-lines " + range + ".",
+      findLines: range,
+      mutation: mutationHint(options.mutation),
+      preview: previewForSpan(options.source, match.start, match.end),
+    };
+  });
+}
+
+function recoveryNext(hints: RecoveryHint[]): string[] {
+  return hints.map((hint) => hint.description).slice(0, 3);
+}
+
+function mutationHint(mutation: BaseEditMutation): Record<string, unknown> {
+  switch (mutation.kind) {
+    case "replace":
+      return { replace: mutation.text };
+    case "insert-before":
+      return { insertBefore: mutation.text };
+    case "insert-after":
+      return { insertAfter: mutation.text };
+    case "delete":
+      return { delete: true };
+  }
+}
+
+function lineRangeForMatch(source: string, match: RawMatch): string {
+  const start = offsetToLineColumn(source, match.start);
+  const end = offsetToLineColumn(source, Math.max(match.start, match.end - 1));
+  return start.line === end.line ? String(start.line) : `${start.line}:${end.line}`;
+}
+
+function jsonHint(value: string): string {
+  return JSON.stringify(value.length <= 120 ? value : value.slice(0, 117) + "...");
 }
 
 function findRawMatches(source: string, strategy: BaseFindStrategy): RawMatch[] {

@@ -210,8 +210,9 @@ test("ambiguous selector fails with a stable error code", () => {
   writeFileSync(file, `export function Page() {
   return (
     <main>
-      <section />
-      <section />
+      <section id="intro" />
+      <section className="summary-card" />
+      <section data-testid="details" />
     </main>
   );
 }
@@ -220,7 +221,9 @@ test("ambiguous selector fails with a stable error code", () => {
   const failed = runFail(["wrap", file, "section", "--with", "Card", "--write"]);
   assert.equal(failed.status, 1);
   assert.equal(failed.body.code, "AMBIGUOUS_SELECTOR");
-  assert.match(failed.body.error, /matched 2 nodes/);
+  assert.match(failed.body.error, /matched 3 nodes/);
+  assert.deepEqual(failed.body.details.selector_candidates.map((candidate) => candidate.selector), ["#intro", "section.summary-card", 'section[data-testid="details"]']);
+  assert.deepEqual(failed.body.next, ["Retry with selector #intro.", "Retry with selector section.summary-card.", 'Retry with selector section[data-testid="details"].']);
 });
 
 test("selector failures include base literal candidates", () => {
@@ -1812,6 +1815,8 @@ test("base edit reports ambiguous exact matches with candidates", () => {
   assert.equal(failed.status, 1);
   assert.equal(failed.body.code, "MATCH_NOT_UNIQUE");
   assert.equal(failed.body.details.matches.length, 2);
+  assert.deepEqual(failed.body.details.retry_hints.filter((hint) => hint.kind === "find-lines").map((hint) => hint.findLines), ["1", "3"]);
+  assert.deepEqual(failed.body.next.slice(0, 2), ["Retry candidate 1 with --find-lines 1.", "Retry candidate 2 with --find-lines 3."]);
   assert.match(readFileSync(file, "utf8"), /Button\nSpacer\nButton/);
 });
 
@@ -1828,6 +1833,13 @@ test("base edit exact failure surfaces a fuzzy-only diagnostic without writing",
   assert.equal(failed.body.details.matches.length, 1);
   assert.equal(failed.body.details.matches[0].lineRange, "1:3");
   assert.equal(failed.body.details.fuzzy_candidates[0].find_lines, "1:3");
+  assert.equal(failed.body.details.retry_hints[0].kind, "find-fuzzy");
+  assert.equal(failed.body.details.retry_hints[0].findFuzzy, "function save( value )");
+  assert.equal(failed.body.details.retry_hints[1].findLines, "1:3");
+  assert.deepEqual(failed.body.next, [
+    'Retry with --find-fuzzy "function save( value )" using the same mutation.',
+    "Retry candidate 1 with --find-lines 1:3."
+  ]);
   assert.deepEqual(failed.body.details.fuzzy_candidates[0].whitespace_drift.requested_runs, [1, 1, 1]);
   assert.equal(readFileSync(file, "utf8"), original);
 });
@@ -2395,6 +2407,7 @@ test("multiedit expectCount and final TSX parse failures prevent writes", () => 
   }));
   assert.equal(countFailed.status, 1);
   assert.equal(countFailed.body.code, "MATCH_COUNT_MISMATCH");
+  assert.equal(countFailed.body.next[0], "If the observed 2 match(es) are intended, retry with --expect-count 2.");
   assert.equal(readFileSync(textFile, "utf8"), "red red\n");
 
   const parseFailed = runFail(["multiedit", "--from-stdin", "--write"], JSON.stringify({

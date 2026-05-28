@@ -8,6 +8,8 @@ Continue moving tedit from a capable structural editor into a low-friction agent
 
 ### P1. Parser skip semantics
 
+Status: Implemented in `76dac53`.
+
 Plain text and unsupported extensions currently return `parse_verified: false`, which is accurate but ambiguous for agents. It can read like a parse failure even when verification was intentionally skipped because no parser exists.
 
 Deliverable:
@@ -18,6 +20,8 @@ Deliverable:
 - Add tests for plain text verify/edit/multiedit output.
 
 ### P2. Deterministic recovery hints
+
+Status: Implemented for base-edit failures and selector ambiguity in the current slice.
 
 Some failures have enough structured data to suggest one safe next command, but the hint is still generic.
 
@@ -57,4 +61,4 @@ Deliverable:
 
 ## Current Implementation Unit
 
-Start with P1 because it is small, safe, and directly improves whether agents can trust compact output without over-reading details.
+P1 and P2 are implemented. The next safe slice is P3 MCP discoverability polish unless a new real-world edge case changes the priority.

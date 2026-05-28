@@ -71,8 +71,14 @@ export abstract class BaseTreeDocument<TPath> {
       fail("NODE_NOT_FOUND", `No ${this.ruleName} node matched "${target}".`, this.nodeNotFoundDetails(target));
     }
     if (matches.length > 1) {
+      const selectorCandidates = this.selectorCandidateHints(matches);
       fail("AMBIGUOUS_SELECTOR", `Selector "${target}" matched ${matches.length} nodes. Use --id or a narrower selector.`, {
+        rule: this.ruleName,
+        selector: target,
         matches: matches.map(({ id, name, loc, preview }) => ({ id, name, loc, preview })),
+        selector_candidates: selectorCandidates,
+        ...(selectorCandidates.length > 0 ? { next: selectorCandidates.map((candidate) => "Retry with selector " + candidate.selector + ".") } : {}),
+        next_step_hint: "Retry with a selector candidate or inspect matches by id before mutating.",
       });
     }
 
@@ -90,6 +96,28 @@ export abstract class BaseTreeDocument<TPath> {
     const info = this.infoById.get(id);
     if (!info) fail("NODE_NOT_FOUND", `Node ${target} is no longer available.`);
     return info;
+  }
+
+  private selectorCandidateHints(matches: TreeNodeInfo[]): Array<Record<string, unknown>> {
+    const hints: Array<Record<string, unknown>> = [];
+    const seen = new Set<string>();
+    for (const info of matches) {
+      for (const selector of stableSelectorsForInfo(info)) {
+        if (seen.has(selector)) continue;
+        let unique = false;
+        try {
+          unique = this.find(selector).length === 1;
+        } catch {
+          unique = false;
+        }
+        if (!unique) continue;
+        seen.add(selector);
+        hints.push({ id: info.id, name: info.name, selector, ...(info.loc ? { loc: info.loc } : {}), preview: info.preview });
+        break;
+      }
+      if (hints.length >= 3) break;
+    }
+    return hints;
   }
 
   protected nodeNotFoundDetails(target: string): Record<string, unknown> | undefined {
@@ -239,4 +267,35 @@ export abstract class BaseTreeDocument<TPath> {
     });
     return sameType[index - 1] !== undefined && this.nodeForPath(sameType[index - 1]) === this.nodeForPath(path);
   }
+}
+
+function stableSelectorsForInfo(info: TreeNodeInfo): string[] {
+  const attrs = info.attributes ?? {};
+  const selectors: string[] = [];
+  const id = comparableAttr(attrs.id);
+  if (id) selectors.push(simpleCssIdent(id) ? "#" + id : info.name + "[id=" + JSON.stringify(id) + "]");
+
+  const classValue = comparableAttr(attrs.className) ?? comparableAttr(attrs.class);
+  if (classValue) {
+    for (const className of classValue.split(/\\s+/).filter(Boolean)) {
+      if (simpleCssIdent(className)) selectors.push(info.name + "." + className);
+    }
+  }
+
+  for (const attr of ["data-testid", "data-test", "aria-label", "name", "role"]) {
+    const value = comparableAttr(attrs[attr]);
+    if (value) selectors.push(info.name + "[" + attr + "=" + JSON.stringify(value) + "]");
+  }
+
+  return selectors;
+}
+
+function comparableAttr(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return undefined;
+}
+
+function simpleCssIdent(value: string): boolean {
+  return /^-?[A-Za-z_][A-Za-z0-9_-]*$/.test(value);
 }

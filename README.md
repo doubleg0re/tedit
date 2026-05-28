@@ -305,13 +305,19 @@ tedit edit styles.css --find-regex '\bred\b' --replace blue --replace-all --expe
 
 When exact matching fails, `tedit` tries a whitespace-insensitive fuzzy
 fallback only for diagnostics. A single fuzzy candidate returns
-`MATCH_FUZZY_ONLY` instead of guessing; opt in with `--find-fuzzy`:
+`MATCH_FUZZY_ONLY` instead of guessing; the JSON error includes structured
+`retry_hints` and top-level `next` entries such as `--find-fuzzy` or
+`--find-lines` so agents can retry deterministically. Opt in with
+`--find-fuzzy`:
 
 ```bash
 tedit edit src/file.ts --find-fuzzy 'const answer = 42;' --replace 'const answer = 43;' --write
 ```
 
-Use anchors or line ranges when text is not globally unique:
+Use anchors or line ranges when text is not globally unique. Ambiguous
+base edits include candidate line ranges, and ambiguous structural selectors
+include stable selector candidates such as `#id`, `.class`, or
+`[data-testid=...]` when those selectors uniquely identify a candidate:
 
 ```bash
 tedit edit src/config.ts --find-anchor-after "const config =" --find "timeout: 3000" --replace "timeout: 5000" --write
