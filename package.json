@@ -1,0 +1,37 @@
+{
+  "name": "tedit",
+  "version": "0.1.0",
+  "description": "Tree-aware structural editor for JSX/TSX, with JSON flows for AI agents.",
+  "type": "module",
+  "bin": {
+    "tedit": "./dist/cli.js",
+    "tedit-mcp": "./dist/mcp.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "npm run typecheck",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "pack:check": "npm run build && npm pack --dry-run --json"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.26.10",
+    "@babel/traverse": "^7.26.10",
+    "@babel/types": "^7.26.10",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "recast": "^0.23.11",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/babel__traverse": "^7.20.6",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

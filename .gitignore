@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.omx/
+.claude/
+
+.DS_Store
+*.log
+*.tmp
+*.bak
+*.tedit.bak
+
+coverage/
+.nyc_output/
+
+.env
+.env.*
+!.env.example

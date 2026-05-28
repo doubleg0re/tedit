@@ -1,0 +1,29 @@
+{
+  "name": "jsx",
+  "extensions": [".js", ".jsx", ".ts", ".tsx"],
+  "actions": [
+    "find",
+    "inspect",
+    "append",
+    "prepend",
+    "wrap",
+    "unwrap",
+    "rename",
+    "remove",
+    "prop.set",
+    "prop.remove",
+    "insertComment",
+    "text.set",
+    "text.replace",
+    "imports.add",
+    "imports.remove",
+    "imports.rename",
+    "imports.move",
+    "expr.replace",
+    "expr.wrap",
+    "expr.unwrap",
+    "expr.toTernary",
+    "expr.toShortCircuit",
+    "extract"
+  ]
+}
