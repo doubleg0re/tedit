@@ -109,6 +109,14 @@ startup:
 }
 ```
 
+Start with the MCP `actions` tool when an agent needs to choose an edit
+strategy. It returns available tools, file-specific rules, normalized
+`action` names for flow-style aliases, and an agent-oriented `guidance`
+section. `tedit` intentionally does not expose a plain `read_file` MCP tool
+yet: host/native Read remains better for full file contents. Use `verify_file`
+for parser coverage and validity, and use `find`/`inspect` when a structural
+target id or selector is more useful than raw text.
+
 The MCP tool names are underscore-style equivalents of the CLI and flow
 actions: `edit`, `multiedit`, `patch`, `write_file`, `create_file`,
 `scaffold_file`, `new_file`, `actions`, `analyze_state`, `verify_file`,
@@ -119,6 +127,10 @@ actions: `edit`, `multiedit`, `patch`, `write_file`, `create_file`,
 `imports_add`, `imports_remove`, `imports_rename`, `imports_move`,
 `expr_replace`, `expr_wrap`, `expr_unwrap`, `expr_to_ternary`,
 `expr_to_short_circuit`, and `extract`.
+
+Mutating MCP tools are described as safer replacements for routine Edit, Write,
+MultiEdit, and Patch calls when parser guardrails, dry-runs, git-aware write
+policy, or deterministic retry hints are useful.
 
 Mutating MCP tools default to compact machine-readable results for agent loops:
 `success`, `ok`, `summary`, `changed`, `written`, `files`, parser

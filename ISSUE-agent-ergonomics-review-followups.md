@@ -29,15 +29,14 @@ Implemented after v1:
   parser paths.
 - Exact-match, count-mismatch, and selector ambiguity failures surface
   deterministic `retry_hints` plus top-level `next` suggestions where safe.
+- MCP discovery now documents the intended native Read plus `verify_file` /
+  `find` / `inspect` path, adds tool metadata for agent choice, and smoke-tests
+  an MCP failure-to-retry loop.
 
 Remaining follow-ups from Claude MCP smoke:
 
-- Add a first-class plain-text `read_file` MCP tool or document the intended
-  verification path for non-JSX files.
 - Decide whether regex replacements should support `$&`/`$1` backreferences
   or explicitly document literal replacement semantics.
-- Clean up minor action naming differences between top-level MCP tools and
-  action aliases if they hurt discoverability.
 
 ## Priority
 

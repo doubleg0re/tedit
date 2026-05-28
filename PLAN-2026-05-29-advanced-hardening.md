@@ -33,6 +33,8 @@ Deliverable:
 
 ### P3. MCP discoverability polish
 
+Status: Implemented in the current slice.
+
 MCP tool names are usable but not fully optimized for agents that are deciding between native edit/read/write and tedit.
 
 Deliverable:
@@ -61,4 +63,4 @@ Deliverable:
 
 ## Current Implementation Unit
 
-P1 and P2 are implemented. The next safe slice is P3 MCP discoverability polish unless a new real-world edge case changes the priority.
+P1, P2, and P3 are implemented. The next safe slice is P4 plan workflow expansion unless a new real-world edge case changes the priority.

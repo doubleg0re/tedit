@@ -31,6 +31,10 @@ export type TeditMcpTool = {
   title: string;
   description: string;
   inputSchema: z.ZodRawShape;
+  category?: "edit" | "generate" | "discover" | "jsx" | "refactor" | "workflow";
+  action?: string;
+  aliases?: readonly string[];
+  bestFor?: readonly string[];
   annotations?: {
     readOnlyHint?: boolean;
     destructiveHint?: boolean;
@@ -49,6 +53,9 @@ type SingleStepConfig = {
   description: string;
   inputSchema: z.ZodRawShape;
   readOnly?: boolean;
+  category?: TeditMcpTool["category"];
+  aliases?: readonly string[];
+  bestFor?: readonly string[];
   buildStep: (input: JsonRecord) => WorkspaceFlowStep;
 };
 
@@ -72,7 +79,10 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "edit",
     title: "Universal Edit",
-    description: "Run tedit's universal base edit with exact, fuzzy, anchor, regex, or line-range matching.",
+    description: "Safer replacement for routine Edit calls: exact, fuzzy, anchor, regex, or line-range edits with dry-run, git-aware write policy, parse verification, and retry hints.",
+    category: "edit",
+    aliases: ["safe_edit", "base_edit", "edit.replace"],
+    bestFor: ["single localized text/code edit", "retryable exact/fuzzy match", "line-range or regex replacement"],
     inputSchema: {
       file: fileSchema,
       find: z.string().optional(),
@@ -97,7 +107,10 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "multiedit",
     title: "Atomic Multiedit",
-    description: "Apply many universal base edits atomically.",
+    description: "Safer replacement for multiple Edit calls: apply many universal base edits atomically across one or more files with parse verification.",
+    category: "edit",
+    aliases: ["multi_edit", "bulk_edit"],
+    bestFor: ["coordinated repeated edits", "same-file sequential edits", "cross-file atomic text changes"],
     inputSchema: {
       edits: z.array(z.record(z.string(), z.unknown())).optional(),
       input: z.string().optional().describe("Raw multiedit JSON string; use when forwarding existing CLI input."),
@@ -108,7 +121,10 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "patch",
     title: "Patch",
-    description: "Apply unified diff or Codex apply-patch input atomically.",
+    description: "Safer replacement for patch/apply_patch when the change is already a diff: apply unified diff or Codex apply-patch input atomically with verification.",
+    category: "edit",
+    aliases: ["apply_patch", "unified_diff"],
+    bestFor: ["large generated diffs", "file additions/deletions/renames", "Codex apply-patch envelopes"],
     inputSchema: {
       patch: z.string().min(1).describe("Unified diff or apply-patch envelope."),
       ...writeFlagSchema,
@@ -118,7 +134,10 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "write_file",
     title: "Write File",
-    description: "Create or overwrite a complete file through tedit write policy and parse verification.",
+    description: "Safer replacement for Write on complete file contents: create or overwrite through tedit write policy and parse verification.",
+    category: "generate",
+    aliases: ["write", "overwrite_file"],
+    bestFor: ["full-file generation", "overwrite with parser guardrails", "agent-authored source strings"],
     inputSchema: {
       file: fileSchema,
       source: z.string(),
@@ -130,7 +149,10 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "create_file",
     title: "Create File",
-    description: "Create a complete file through tedit write policy and parse verification.",
+    description: "Safer replacement for creating a new file from complete contents through tedit write policy and parse verification.",
+    category: "generate",
+    aliases: ["create", "new_source_file"],
+    bestFor: ["new files", "parse-verified generated content", "no-overwrite creation"],
     inputSchema: {
       file: fileSchema,
       source: z.string(),
@@ -142,7 +164,10 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "scaffold_file",
     title: "Scaffold File",
-    description: "Build and write a file from a tedit scaffold spec.",
+    description: "Generate a file from a tedit scaffold spec, then apply write policy and parse verification.",
+    category: "generate",
+    aliases: ["scaffold"],
+    bestFor: ["structured TSX/JSX generation", "spec-driven boilerplate", "repeatable component skeletons"],
     inputSchema: {
       file: fileSchema,
       spec: z.record(z.string(), z.unknown()).optional(),
@@ -155,7 +180,10 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "new_file",
     title: "New File From Template",
-    description: "Build and write a file from a built-in or local tedit template.",
+    description: "Generate a file from a built-in or local tedit template, then apply write policy and parse verification.",
+    category: "generate",
+    aliases: ["new", "template_file"],
+    bestFor: ["known templates", "repeatable project-local file generation", "component/action starters"],
     inputSchema: {
       file: fileSchema,
       template: z.string().min(1),
@@ -169,7 +197,10 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "actions",
     title: "Actions",
-    description: "List tedit actions available globally or for a target file.",
+    description: "List tedit tools/actions plus agent guidance for choosing between native read/edit/write/patch and tedit.",
+    category: "discover",
+    aliases: ["capabilities", "tool_guide"],
+    bestFor: ["tool discovery", "choosing an edit strategy", "checking file-specific rule support"],
     inputSchema: {
       file: z.string().optional(),
     },
@@ -179,7 +210,9 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "analyze_state",
     title: "Analyze State",
-    description: "Analyze React useState clusters and refactor recommendations.",
+    description: "Analyze React useState clusters and refactor recommendations without modifying files.",
+    category: "refactor",
+    bestFor: ["React state cleanup", "finding custom hook candidates", "pre-refactor inspection"],
     inputSchema: {
       file: fileSchema,
     },
@@ -189,7 +222,10 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "verify_file",
     title: "Verify File",
-    description: "Run tedit parse verification for the current file without planning an edit.",
+    description: "Verify the current file after native Read or before/after edits; this is parser coverage, not a full-content read replacement.",
+    category: "discover",
+    aliases: ["parse_check", "verify"],
+    bestFor: ["checking parser support", "post-edit validation", "distinguishing parse skips from parse failures"],
     inputSchema: {
       file: fileSchema,
     },
@@ -200,7 +236,9 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "refactor_state",
     title: "Refactor State",
-    description: "Apply tedit's React state refactor helper, including custom hook extraction.",
+    description: "Apply tedit's React state refactor helper, including custom hook extraction, with dry-run and write policy.",
+    category: "refactor",
+    bestFor: ["object-state grouping", "custom hook extraction", "React state refactors"],
     inputSchema: {
       file: fileSchema,
       cluster: z.string().optional(),
@@ -214,6 +252,8 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     name: "extract_plan",
     title: "Extract Plan",
     description: "Generate a reviewable extract-component plan file without changing source files.",
+    category: "refactor",
+    bestFor: ["review-before-apply extract workflows", "large JSX component extraction", "step-gated refactors"],
     inputSchema: {
       from: fileSchema,
       selector: selectorSchema,
@@ -240,7 +280,9 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "apply_plan",
     title: "Apply Plan",
-    description: "Validate and apply a tedit refactor plan.",
+    description: "Validate and apply a tedit refactor plan with optional step filtering, dry-run, and write policy.",
+    category: "refactor",
+    bestFor: ["accepted plan application", "partial refactor apply", "extract plan execution"],
     inputSchema: {
       plan: z.string().min(1).optional(),
       file: z.string().min(1).optional(),
@@ -256,7 +298,10 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "chain_workspace",
     title: "Workspace Chain",
-    description: "Run structured workspace-flow steps directly from MCP JSON.",
+    description: "Run structured workspace-flow steps directly from MCP JSON for multi-step structural edit loops.",
+    category: "workflow",
+    aliases: ["workspace_flow", "chain"],
+    bestFor: ["multi-step structural edits", "find-then-mutate flows", "cross-file JSX workflows"],
     inputSchema: {
       steps: z.array(z.record(z.string(), z.unknown())).optional(),
       flow: z.array(z.record(z.string(), z.unknown())).optional(),
@@ -269,7 +314,7 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     name: "find",
     title: "Find JSX Node",
     action: "find",
-    description: "Find JSX/TSX nodes by selector.",
+    description: "Find structural nodes by selector and return ids for later tedit mutations.",
     readOnly: true,
     inputSchema: { file: fileSchema, selector: selectorSchema, all: z.boolean().optional() },
     buildStep: (input) => ({ action: "find", file: requiredString(input.file, "find requires file."), selector: requiredString(input.selector, "find requires selector."), all: booleanValue(input.all) }),
@@ -278,7 +323,7 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     name: "inspect",
     title: "Inspect JSX Node",
     action: "inspect",
-    description: "Inspect a JSX/TSX node by selector or id.",
+    description: "Inspect a structural node by selector or id after native Read or find.",
     readOnly: true,
     inputSchema: { file: fileSchema, selector: selectorSchema.optional(), target: targetSchema.optional(), id: targetSchema.optional() },
     buildStep: (input) => ({ action: "inspect", file: requiredString(input.file, "inspect requires file."), target: targetFromInput(input, "inspect") }),
@@ -641,6 +686,10 @@ function runActionsTool(args: unknown): unknown {
     title: tool.title,
     description: tool.description,
     readOnly: tool.annotations?.readOnlyHint === true,
+    ...(tool.category ? { category: tool.category } : {}),
+    ...(tool.action ? { action: tool.action } : {}),
+    ...(tool.aliases && tool.aliases.length > 0 ? { aliases: tool.aliases } : {}),
+    ...(tool.bestFor && tool.bestFor.length > 0 ? { best_for: tool.bestFor } : {}),
   }));
   const actions = [...new Set([
     ...tools.map((tool) => tool.name),
@@ -656,6 +705,27 @@ function runActionsTool(args: unknown): unknown {
       ...languageRules,
     ],
     actions,
+    guidance: mcpDiscoveryGuidance(filePath, languageRules.map((rule) => rule.name)),
+  };
+}
+
+function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[]): JsonRecord {
+  return {
+    default_profile: "agent",
+    read_path: [
+      "Use the host/native Read tool for full file contents; tedit does not duplicate plain file reading yet.",
+      "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
+      "Use find/inspect for structural target discovery, then pass returned ids/selectors to mutating tools.",
+    ],
+    no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
+    edit_loop: [
+      { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },
+      { intent: "several coordinated text edits", tool: "multiedit", reason: "atomic application across files and same-file sequential edits" },
+      { intent: "already generated diff", tool: "patch", reason: "atomic unified diff/apply-patch input with verification" },
+      { intent: "whole-file generation", tool: "write_file", reason: "write policy plus parser guardrails for generated content" },
+      { intent: "structural JSX/markup mutation", tool: "find or inspect, then prop_set/wrap/text_replace/etc.", reason: "selector/id based edits avoid brittle text spans" },
+    ],
+    ...(filePath ? { file: filePath, file_rules: ruleNames } : {}),
   };
 }
 
@@ -772,6 +842,10 @@ function singleStepTool(config: SingleStepConfig): TeditMcpTool {
     title: config.title,
     description: config.description,
     inputSchema: config.inputSchema,
+    category: config.category ?? "jsx",
+    action: config.action,
+    aliases: config.aliases ?? (config.action === config.name ? [] : [config.action]),
+    bestFor: config.bestFor,
     annotations: config.readOnly ? { readOnlyHint: true, destructiveHint: false, idempotentHint: true } : undefined,
     handler: (args) => {
       const input = recordInput(args, config.name);

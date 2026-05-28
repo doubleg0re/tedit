@@ -1627,10 +1627,12 @@ test("mcp server lists tools and runs universal edit", async () => {
   const mcpCreateFile = join(dir, "created.md");
   const mcpScaffoldFile = join(dir, "Scaffolded.tsx");
   const mcpNewFile = join(dir, "ClientCard.tsx");
+  const mcpLoopFile = join(dir, "loop.ts");
   writeFileSync(file, "# Title\nold value\n");
   writeFileSync(jsxFile, chainFixture());
   writeFileSync(jsonFile, "{\"enabled\":true}\n");
   writeFileSync(extractFile, extractFixture());
+  writeFileSync(mcpLoopFile, "function save(\n  value\n) {\n  return value;\n}\n");
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -1651,6 +1653,10 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "create_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "scaffold_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "new_file"));
+    const listedEdit = tools.tools.find((tool) => tool.name === "edit");
+    const listedActions = tools.tools.find((tool) => tool.name === "actions");
+    assert.match(listedEdit.description, /Safer replacement for routine Edit/);
+    assert.ok(listedActions.description.includes("choosing between native read/edit/write/patch and tedit"));
 
     const actionsDiscovery = await client.callTool({
       name: "actions",
@@ -1663,6 +1669,21 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.actions.includes("class.add"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("verify_file"));
     assert.ok(actionsDiscovery.structuredContent.tools.some((tool) => tool.name === "multiedit"));
+    const editToolMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "edit");
+    const propSetMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "prop_set");
+    assert.equal(editToolMeta.category, "edit");
+    assert.ok(editToolMeta.best_for.includes("single localized text/code edit"));
+    assert.equal(propSetMeta.action, "prop.set");
+    assert.ok(propSetMeta.aliases.includes("prop.set"));
+    assert.match(actionsDiscovery.structuredContent.guidance.read_path[0], /native Read/);
+    assert.match(actionsDiscovery.structuredContent.guidance.no_read_file_tool, /less useful than native Read/);
+
+    const jsxActionsDiscovery = await client.callTool({
+      name: "actions",
+      arguments: { file: jsxFile },
+    });
+    assert.equal(jsxActionsDiscovery.isError, undefined);
+    assert.deepEqual(jsxActionsDiscovery.structuredContent.guidance.file_rules, ["jsx"]);
 
     const result = await client.callTool({
       name: "edit",
@@ -1700,6 +1721,22 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(failedEdit.isError, true);
     assert.ok(Array.isArray(failedEdit.structuredContent.next));
     assert.ok(failedEdit.structuredContent.next.length > 0);
+
+    const fuzzyMiss = await client.callTool({
+      name: "edit",
+      arguments: { file: mcpLoopFile, find: "function save( value )", replace: "function save(value)" },
+    });
+    assert.equal(fuzzyMiss.isError, true);
+    assert.equal(fuzzyMiss.structuredContent.code, "MATCH_FUZZY_ONLY");
+    assert.match(fuzzyMiss.structuredContent.next[0], /--find-fuzzy/);
+
+    const fuzzyRetry = await client.callTool({
+      name: "edit",
+      arguments: { file: mcpLoopFile, findFuzzy: "function save( value )", replace: "function save(value)", write: true },
+    });
+    assert.equal(fuzzyRetry.isError, undefined);
+    assert.equal(fuzzyRetry.structuredContent.written, true);
+    assert.ok(readFileSync(mcpLoopFile, "utf8").includes("function save(value)"));
 
     const writeFileResult = await client.callTool({
       name: "write_file",
