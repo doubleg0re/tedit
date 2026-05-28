@@ -1326,9 +1326,14 @@ test("npm pack includes CLI and MCP distribution files", () => {
   assert.ok(files.includes("dist/cli.js"));
   assert.ok(files.includes("dist/mcp.js"));
   assert.ok(files.includes("dist/mcp-tools.js"));
+  assert.ok(files.includes("dist/output.js"));
   assert.ok(files.includes("README.md"));
   assert.ok(files.includes("package.json"));
   assert.ok(files.every((file) => !file.endsWith(".bak") && !file.endsWith(".tedit.bak")));
+  assert.ok(pack.size < 2_000_000);
+  assert.equal(pkg.scripts.postinstall, undefined);
+  assert.notEqual(pack.files.find((file) => file.path === "dist/cli.js").mode & 0o111, 0);
+  assert.notEqual(pack.files.find((file) => file.path === "dist/mcp.js").mode & 0o111, 0);
 });
 
 test("mcp server lists tools and runs universal edit", async () => {

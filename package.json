@@ -16,7 +16,7 @@
     "!**/*.tedit.bak"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/prepare-bin.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "npm run typecheck",
     "test": "npm run build && node --test tests/*.test.mjs",
