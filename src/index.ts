@@ -7,6 +7,7 @@ export { BASE_ACTIONS, parseLineRange, parseVerificationFields, planBaseEdit, ve
 export type { BaseEditMutation, BaseEditOptions, BaseEditPlan, BaseFindStrategy, BaseMatch, BaseParseVerification, ParseSkipReason, ParseVerificationFields } from "./base-edit.js";
 export { runAstEdit, runAstSelect, runScanStrings } from "./ast-tools.js";
 export type { AstNodeMatch, AstStringCandidate } from "./ast-tools.js";
+export { inspectRange, searchText } from "./search-tools.js";
 export type {
   CommentPosition,
   DocumentAdapter,

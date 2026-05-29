@@ -14,6 +14,7 @@ import { chainToFlow, fileChainToWorkspaceFlow, parseChainSegments, parseChainTe
 import type { ImportEditSpec, TextMatchSpec, TextValueSpec, TreeNodeSpec, ValueSpec } from "./core/document.js";
 import { getOptionalAdapterForFile, listRules, openDocumentForFile } from "./core/registry.js";
 import { runAstEdit, runAstSelect, runScanStrings } from "./ast-tools.js";
+import { inspectRange, searchText } from "./search-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { toErrorResult } from "./errors.js";
 import { formatAgentResult, outputOptionsFromConfig, parseDiffMode, parseOutputMode, type OutputMode, type OutputOptions } from "./output.js";
@@ -92,6 +93,14 @@ async function main(): Promise<void> {
       return;
     case "actions":
       commandActions(args);
+      return;
+    case "inspect-range":
+    case "inspect_range":
+      commandInspectRange(args);
+      return;
+    case "search-text":
+    case "search_text":
+      commandSearchText(args);
       return;
     case "scan-strings":
     case "scan_strings":
@@ -269,6 +278,8 @@ function commandActions(args: ParsedArgs): void {
   const languageRules = adapter ? [adapter.rule] : filePath ? [] : listRules();
   const actions = [
     ...BASE_ACTIONS,
+    "inspect-range",
+    "search-text",
     "scan-strings",
     "ast-select",
     "ast-edit",
@@ -285,6 +296,33 @@ function commandActions(args: ParsedArgs): void {
   };
 
   output(args, result, actions.join("\n"));
+}
+
+function commandInspectRange(args: ParsedArgs): void {
+  const [filePath] = requirePositionals(args, 1, "inspect-range <file> --lines N:M [--context N] [--json]");
+  const result = inspectRange(filePath, {
+    lines: requiredStringFlag(args, "lines", "inspect-range requires --lines N:M."),
+    context: nonnegativeIntegerFlag(args, "context") ?? 0,
+  });
+  output(args, result, formatInspectedLines(result.lines as unknown[]));
+}
+
+function commandSearchText(args: ParsedArgs): void {
+  const query = stringFlag(args, "query") ?? args.positionals[0];
+  if (!query) throw new Error("Usage: tedit search-text <query> [path...] [--regex] [--glob <glob>] [--json]");
+  const paths = stringFlags(args, "path");
+  const positionalPaths = args.positionals.slice(args.positionals[0] === query ? 1 : 0);
+  const result = searchText({
+    query,
+    paths: paths.length > 0 ? paths : positionalPaths,
+    regex: booleanFlag(args, "regex"),
+    glob: stringFlag(args, "glob"),
+    maxResults: positiveIntegerFlag(args, "max-results") ?? positiveIntegerFlag(args, "maxResults"),
+    context: nonnegativeIntegerFlag(args, "context"),
+    caseSensitive: booleanFlag(args, "case-sensitive") || booleanFlag(args, "caseSensitive"),
+    includeHidden: booleanFlag(args, "include-hidden") || booleanFlag(args, "includeHidden"),
+  });
+  output(args, result, formatSearchResults(result.results as unknown[]));
 }
 
 function commandScanStrings(args: ParsedArgs): void {
@@ -1308,6 +1346,12 @@ function optionalIntegerFlag(args: ParsedArgs, name: string): number | undefined
   return value;
 }
 
+function nonnegativeIntegerFlag(args: ParsedArgs, name: string): number | undefined {
+  const value = optionalIntegerFlag(args, name);
+  if (value !== undefined && value < 0) throw new Error(`--${name} must be a nonnegative integer.`);
+  return value;
+}
+
 function parseJsonFlag<T>(args: ParsedArgs, name: string): T {
   const raw = stringFlag(args, name);
   if (!raw) throw new Error(`Missing --${name}.`);
@@ -1639,6 +1683,30 @@ function formatMatches(matches: unknown[]): string {
   }).join("\n");
 }
 
+function formatInspectedLines(lines: unknown[]): string {
+  return lines.map((value) => {
+    const item = value as { number: number; text: string };
+    return `${String(item.number).padStart(4, " ")}: ${item.text}`;
+  }).join("\n");
+}
+
+function formatSearchResults(results: unknown[]): string {
+  if (results.length === 0) return "No matches";
+  return results.map((value) => {
+    const item = value as {
+      id: string;
+      path: string;
+      match: string;
+      range: { line: number; column: number };
+      preview: string;
+      context?: { lines?: Array<{ number: number; text: string }> };
+    };
+    const header = `${item.id} ${item.path}:${item.range.line}:${item.range.column} ${JSON.stringify(item.match)} ${item.preview}`;
+    if (!item.context?.lines?.length) return header;
+    return [header, ...item.context.lines.map((line) => `  ${String(line.number).padStart(4, " ")}: ${line.text}`)].join("\n");
+  }).join("\n");
+}
+
 function formatAstStrings(strings: unknown[]): string {
   if (strings.length === 0) return "No strings";
   return strings.map((value) => {
@@ -1836,6 +1904,8 @@ Usage:
   tedit patch --from-stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit patch --stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit actions [file] [--json]
+  tedit inspect-range <file> --lines N:M [--context N] [--json]
+  tedit search-text <query> [path...] [--regex] [--glob <glob>] [--context N] [--max-results N] [--json]
   tedit scan-strings <file> [--contains <text>] [--include-excluded] [--json]
   tedit ast-select <file> <selector> [--json]
   tedit ast-edit <file> <selector> --replace <text> [--dry-run|--write]
@@ -1955,6 +2025,12 @@ function shortHelp(command: string): string | null {
       return "tedit refactor-state\nUsage:\n  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--plan-out <plan-json>|--dry-run|--write]";
     case "actions":
       return "tedit actions\nUsage:\n  tedit actions [file] [--json]\n\nLists universal base actions and file-specific language actions.";
+    case "inspect-range":
+    case "inspect_range":
+      return "tedit inspect-range\nUsage:\n  tedit inspect-range <file> --lines N:M [--context N] [--json]\n\nShows line context, byte range, parser status, and edit-ready suggestions.";
+    case "search-text":
+    case "search_text":
+      return "tedit search-text\nUsage:\n  tedit search-text <query> [path...] [--regex] [--glob <glob>] [--context N] [--max-results N] [--json]\n\nSearches text and returns edit-ready candidates with optional context and inspect/edit follow-ups.";
     case "scan-strings":
     case "scan_strings":
       return "tedit scan-strings\nUsage:\n  tedit scan-strings <file> [--contains <text>] [--include-excluded] [--json]\n\nScans JS/TS/JSX AST string candidates for hardcoded user-facing text.";

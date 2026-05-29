@@ -190,6 +190,15 @@ function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
     compact.matches = record.matches;
     return compact;
   }
+  if (kind === "inspect-range") {
+    copyKeys(record, compact, ["file", "requested", "expanded", "byteRange", "lines", "parse_verified", "parser", "parse_skipped", "parse_skip_reason", "suggested", "next"]);
+    if (typeof record.file === "string") compact.path = record.file;
+    return compact;
+  }
+  if (kind === "search-text") {
+    copyKeys(record, compact, ["query", "regex", "paths", "glob", "context", "results", "count", "truncated"]);
+    return compact;
+  }
   if (kind === "inspect" && record.node !== undefined) {
     compact.node = record.node;
     return compact;
@@ -391,6 +400,8 @@ function isMutationResult(record: JsonRecord, files: AgentFileSummary[]): boolea
 function payloadSummary(record: JsonRecord, kind: string): string {
   if (typeof record.summary === "string") return record.summary;
   if (kind === "find" && Array.isArray(record.matches)) return String(record.matches.length) + " " + plural("match", record.matches.length);
+  if (kind === "inspect-range" && Array.isArray(record.lines)) return String(record.lines.length) + " " + plural("line", record.lines.length);
+  if (kind === "search-text" && Array.isArray(record.results)) return String(record.results.length) + " text " + plural("match", record.results.length);
   if (kind === "scan-strings" && Array.isArray(record.strings)) return String(record.strings.length) + " string " + plural("candidate", record.strings.length);
   if (kind === "ast-select" && Array.isArray(record.matches)) return String(record.matches.length) + " AST " + plural("match", record.matches.length);
   if (kind === "inspect") return "node inspected";

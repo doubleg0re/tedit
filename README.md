@@ -38,6 +38,8 @@ tedit multiedit ./edits.json --write
 tedit verify ./edits.json --diff-out ./edits.diff
 tedit patch ./change.patch --dry-run --quiet --diff-out ./patch.diff
 tedit actions src/Page.tsx --json
+tedit search-text "삭제" src --glob "**/*.tsx" --context 2 --json
+tedit inspect-range src/Page.tsx --lines 42:42 --context 3 --json
 tedit scan-strings src/Page.tsx --contains "삭제" --json
 tedit ast-select src/Page.tsx 'ObjectProperty[key.name="label"] > StringLiteral' --json
 tedit ast-edit src/Page.tsx 'StringLiteral[value="삭제"]' --replace "Delete" --dry-run
@@ -132,11 +134,13 @@ and intent-oriented:
 
 `edit`, `multiedit`, `patch`, `file_write`, `create_file`, `actions`,
 `analyze_state`, `verify_file`, `refactor_state`, `apply_plan`,
-`chain_workspace`, `scan_strings`, `ast_select`, `ast_edit`, `jsx_select`,
-`jsx_node`, `jsx_attr`, `jsx_content`, `imports`, and `extract_component`.
+`chain_workspace`, `inspect_range`, `search_text`, `scan_strings`,
+`ast_select`, `ast_edit`, `jsx_select`, `jsx_node`, `jsx_attr`,
+`jsx_content`, `imports`, and `extract_component`.
 
-The AST-oriented tools cover code text that is not represented as a JSX
-structural node.
+`inspect_range` and `search_text` bridge `sed`/`rg` style workflows into
+tedit's edit-ready structured results. The AST-oriented tools cover code text
+that is not represented as a JSX structural node.
 
 Use `file_write` with a required `mode` for whole-file writes:
 `mode: "write"` for complete source replacement, `mode: "scaffold"` for
@@ -186,6 +190,31 @@ Use `tedit` when the edit is structural or repetitive enough that line-based edi
 - Multi-step AI-agent edits where selectors, actions, and diffs are easier to validate than raw generated code.
 
 For one-off local edits, a normal editor or patch is usually faster.
+
+## Search And Inspect
+
+`search-text` and `inspect-range` cover the common `rg`/`sed` workflow while
+returning structured follow-ups for tedit edits:
+
+```bash
+tedit search-text "삭제" src --glob "**/*.tsx" --context 2 --json
+tedit search-text --query 'alert\\(".*"\\)' src --regex --json
+tedit inspect-range src/Page.tsx --lines 42:42 --context 3 --json
+printf '  const label = "Delete";\n' | tedit edit src/Page.tsx --find-lines 42 --replace-stdin --write
+```
+
+`search-text` is intentionally a small built-in search bridge, not a full `rg`
+replacement. It searches text files under the given paths, skips common noisy
+directories such as `.git`, `node_modules`, `dist`, and `.tedit-cache`, accepts
+a simple `--glob` filter, can include nearby lines with `--context`, and returns
+candidates with `file`, `line`, `column`, `preview`, `context`, `suggested`, and
+`next` fields. Use `rg` for broad exploratory search, and use `search-text` when
+the next step is likely a tedit edit.
+
+`inspect-range` shows line context, byte range, parser status, and a suggested
+`edit --find-lines` follow-up for the requested range. Because `find-lines`
+replaces whole lines, include the trailing newline when replacing a non-final
+line; piping through `--replace-stdin` is the least ambiguous CLI form.
 
 ## AST String Scan
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -114,6 +114,58 @@ test("ast string scan selects and edits hardcoded strings", () => {
   assert.equal(edit.written, true);
   assert.equal(edit.parse_verified, true);
   assert.match(readFileSync(file, "utf8"), /label: "Delete"/);
+});
+
+test("search-text and inspect-range bridge grep and sed workflows", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const src = join(dir, "src");
+  const file = join(src, "Page.tsx");
+  const ignored = join(src, "style.css");
+  mkdirSync(src, { recursive: true });
+  writeFileSync(file, [
+    "export function Page() {",
+    "  const label = \"삭제\";",
+    "  return <button>{label}</button>;",
+    "}",
+    "",
+  ].join("\n"));
+  writeFileSync(ignored, ".delete { content: \"삭제\"; }\n");
+
+  const search = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.tsx", "--context", "1", "--json"]));
+  assert.equal(search.kind, "search-text");
+  assert.equal(search.count, 1);
+  assert.equal(search.context, 1);
+  assert.equal(search.results[0].id, "text_1");
+  assert.equal(search.results[0].match, "삭제");
+  assert.equal(search.results[0].range.line, 2);
+  assert.deepEqual(search.results[0].context.expanded, { start: 1, end: 3 });
+  assert.equal(search.results[0].context.lines.length, 3);
+  assert.equal(search.results[0].context.lines[2].text, "  return <button>{label}</button>;");
+  assert.equal(search.results[0].suggested.tool, "edit");
+  assert.equal(search.results[0].suggested.findLines, "2");
+  assert.match(search.results[0].suggested.replaceHint, /trailing newline/);
+  assert.equal(search.results[0].next[0].tool, "inspect_range");
+
+  const regex = JSON.parse(run(["search-text", "--query", 'const\\s+label', src, "--regex", "--json"]));
+  assert.equal(regex.regex, true);
+  assert.equal(regex.count, 1);
+  assert.equal(regex.results[0].match, "const label");
+
+  const inspect = JSON.parse(run(["inspect-range", file, "--lines", "2:2", "--context", "1", "--json"]));
+  assert.equal(inspect.kind, "inspect-range");
+  assert.deepEqual(inspect.requested, { start: 2, end: 2 });
+  assert.deepEqual(inspect.expanded, { start: 1, end: 3 });
+  assert.equal(inspect.lines.length, 3);
+  assert.equal(inspect.lines[1].text, "  const label = \"삭제\";");
+  assert.equal(inspect.parse_verified, true);
+  assert.equal(inspect.suggested.tool, "edit");
+  assert.equal(inspect.suggested.findLines, "2:2");
+  assert.match(inspect.suggested.replaceHint, /trailing newline/);
+
+  const edit = JSON.parse(run(["edit", file, "--find-lines", "2", "--replace", "  const label = \"Delete\";\n", "--write", "--json"]));
+  assert.equal(edit.written, true);
+  assert.match(readFileSync(file, "utf8"), /"Delete"/);
+  assert.match(readFileSync(file, "utf8"), /"Delete";\n  return/);
 });
 
 test("append dry-run prints a diff and does not write", () => {
@@ -1725,6 +1777,8 @@ test("mcp server lists tools and runs universal edit", async () => {
   const mcpLoopFile = join(dir, "loop.ts");
   const mcpWarnFile = join(dir, "Warn.tsx");
   const mcpAstFile = join(dir, "Ast.tsx");
+  const mcpSearchDir = join(dir, "search");
+  const mcpSearchFile = join(mcpSearchDir, "Search.tsx");
   writeFileSync(file, "# Title\nold value\n");
   writeFileSync(jsxFile, chainFixture());
   writeFileSync(jsonFile, "{\"enabled\":true}\n");
@@ -1732,6 +1786,8 @@ test("mcp server lists tools and runs universal edit", async () => {
   writeFileSync(mcpLoopFile, "function save(\n  value\n) {\n  return value;\n}\n");
   writeFileSync(mcpWarnFile, "export function Warn() {\n  return <div className=\"w-full w-9\" />;\n}\n");
   writeFileSync(mcpAstFile, "const item = { label: \"삭제\" };\nalert(\"오류\");\nexport function Ast() { return <input placeholder=\"검색\" />; }\n");
+  mkdirSync(mcpSearchDir, { recursive: true });
+  writeFileSync(mcpSearchFile, "export function Search() {\n  const label = \"삭제\";\n  return <span>{label}</span>;\n}\n");
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -1750,6 +1806,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "apply_plan"));
     assert.ok(tools.tools.some((tool) => tool.name === "create_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "inspect_range"));
+    assert.ok(tools.tools.some((tool) => tool.name === "search_text"));
     assert.ok(tools.tools.some((tool) => tool.name === "scan_strings"));
     assert.ok(tools.tools.some((tool) => tool.name === "ast_select"));
     assert.ok(tools.tools.some((tool) => tool.name === "ast_edit"));
@@ -1780,6 +1838,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("file_write"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("create_file"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("inspect_range"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("search_text"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("scan_strings"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("ast_select"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("ast_edit"));
@@ -1789,12 +1849,15 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.tools.some((tool) => tool.name === "multiedit"));
     const editToolMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "edit");
     const jsxAttrMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "jsx_attr");
+    const searchTextMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "search_text");
     const scanStringsMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "scan_strings");
     const propSetMeta = actionsDiscovery.structuredContent.advanced_tools.find((tool) => tool.name === "prop_set");
     assert.equal(editToolMeta.category, "edit");
     assert.ok(editToolMeta.best_for.includes("single localized text/code edit"));
     assert.equal(jsxAttrMeta.exposure, "default");
     assert.equal(jsxAttrMeta.registered, true);
+    assert.equal(searchTextMeta.category, "discover");
+    assert.equal(searchTextMeta.readOnly, true);
     assert.equal(scanStringsMeta.category, "ast");
     assert.equal(scanStringsMeta.readOnly, true);
     assert.equal(propSetMeta.action, "prop.set");
@@ -1917,6 +1980,28 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(fuzzyRetry.structuredContent.files[0].change, "modified");
     assert.equal(fuzzyRetry.structuredContent.files[0].persisted, true);
     assert.ok(readFileSync(mcpLoopFile, "utf8").includes("function save(value)"));
+
+    const searchTextResult = await client.callTool({
+      name: "search_text",
+      arguments: { query: "삭제", paths: [mcpSearchDir], glob: "**/*.tsx", context: 1 },
+    });
+    assert.equal(searchTextResult.isError, undefined);
+    assert.equal(searchTextResult.structuredContent.kind, "search-text");
+    assert.equal(searchTextResult.structuredContent.context, 1);
+    assert.equal(searchTextResult.structuredContent.results.length, 1);
+    assert.equal(searchTextResult.structuredContent.results[0].context.lines.length, 3);
+    assert.equal(searchTextResult.structuredContent.results[0].suggested.findLines, "2");
+    assert.match(searchTextResult.structuredContent.results[0].suggested.replaceHint, /trailing newline/);
+
+    const inspectRangeResult = await client.callTool({
+      name: "inspect_range",
+      arguments: { file: mcpSearchFile, lines: "2:2", context: 1 },
+    });
+    assert.equal(inspectRangeResult.isError, undefined);
+    assert.equal(inspectRangeResult.structuredContent.kind, "inspect-range");
+    assert.equal(inspectRangeResult.structuredContent.lines.length, 3);
+    assert.equal(inspectRangeResult.structuredContent.suggested.findLines, "2:2");
+    assert.match(inspectRangeResult.structuredContent.suggested.replaceHint, /trailing newline/);
 
     const scanStringsResult = await client.callTool({
       name: "scan_strings",
@@ -2639,7 +2724,7 @@ test("CLI version and subcommand help are concise", () => {
   assert.doesNotMatch(help, /tedit scaffold/);
 
   const topics = [
-    "edit", "multiedit", "verify", "verify-file", "patch", "actions", "scan-strings", "ast-select", "ast-edit", "analyze-state",
+    "edit", "multiedit", "verify", "verify-file", "patch", "actions", "inspect-range", "search-text", "scan-strings", "ast-select", "ast-edit", "analyze-state",
     "refactor-state", "find", "inspect", "append", "prepend", "wrap",
     "unwrap", "remove", "rename", "insertComment", "text", "prop",
     "imports", "expr", "extract", "apply-plan", "plan", "create", "write", "scaffold", "new",

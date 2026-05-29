@@ -13,6 +13,7 @@ import {
 import { parseElementShorthand } from "./chain.js";
 import { getOptionalAdapterForFile, listRules } from "./core/registry.js";
 import { runAstEdit as runAstEditEngine, runAstSelect, runScanStrings } from "./ast-tools.js";
+import { inspectRange, searchText } from "./search-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { formatAgentResult, outputOptionsFromRecord } from "./output.js";
@@ -236,6 +237,42 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runActionsTool,
+  },
+  {
+    name: "inspect_range",
+    title: "Inspect Range",
+    description: "Read-only line/context inspection for sed-style workflows. Returns line objects, byte range, parse status, and edit-ready suggestions.",
+    category: "discover",
+    aliases: ["inspect-range", "range_context", "sed_range"],
+    bestFor: ["viewing line context", "turning a line range into edit findLines", "checking parser status around a target"],
+    inputSchema: {
+      file: fileSchema,
+      lines: z.string().min(1).describe("Line range such as 42 or 40:50."),
+      context: z.number().int().nonnegative().optional().describe("Additional lines before and after the requested range."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runInspectRangeTool,
+  },
+  {
+    name: "search_text",
+    title: "Search Text",
+    description: "Read-only text search bridge for rg/grep workflows. Returns structured candidates with line/byte ranges and inspect/edit follow-ups.",
+    category: "discover",
+    aliases: ["search-text", "grep_text", "text_search"],
+    bestFor: ["raw text discovery", "grep then edit workflows", "finding literal or regex matches across files"],
+    inputSchema: {
+      query: z.string().min(1).describe("Literal search text or regex pattern when regex=true."),
+      paths: z.array(z.string().min(1)).optional().describe("Files or directories to search. Defaults to cwd."),
+      path: z.string().min(1).optional().describe("Single file or directory alias for paths."),
+      regex: z.boolean().optional().describe("Treat query as a JavaScript regular expression."),
+      glob: z.string().optional().describe("Simple glob filter, e.g. **/*.tsx."),
+      context: z.number().int().nonnegative().optional().describe("Additional context lines before and after each result."),
+      maxResults: z.number().int().positive().optional().describe("Maximum result count. Defaults to 100."),
+      caseSensitive: z.boolean().optional().describe("Use case-sensitive matching. Literal and regex searches default to case-insensitive."),
+      includeHidden: z.boolean().optional().describe("Include hidden files and directories except built-in excluded directories."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runSearchTextTool,
   },
   {
     name: "scan_strings",
@@ -994,6 +1031,32 @@ function runActionsTool(args: unknown): unknown {
   };
 }
 
+function runInspectRangeTool(args: unknown): unknown {
+  const input = recordInput(args, "inspect_range");
+  return inspectRange(requiredString(input.file, "inspect_range requires file."), {
+    lines: requiredString(input.lines, "inspect_range requires lines."),
+    context: input.context === undefined ? 0 : optionalNonnegativeInteger(input.context, "context"),
+  });
+}
+
+function runSearchTextTool(args: unknown): unknown {
+  const input = recordInput(args, "search_text");
+  const paths = input.paths === undefined
+    ? (input.path === undefined ? undefined : [requiredString(input.path, "search_text path must be a string.")])
+    : stringArray(input.paths, "paths");
+  const maxResults = pick(input, "maxResults", "max_results", "max-results");
+  return searchText({
+    query: requiredString(input.query, "search_text requires query."),
+    paths,
+    regex: booleanValue(input.regex),
+    glob: optionalString(input.glob),
+    context: optionalNonnegativeInteger(input.context, "context"),
+    ...(maxResults === undefined ? {} : { maxResults: optionalInteger(maxResults, "maxResults") }),
+    caseSensitive: booleanValue(pick(input, "caseSensitive", "case_sensitive", "case-sensitive")),
+    includeHidden: booleanValue(pick(input, "includeHidden", "include_hidden", "include-hidden")),
+  });
+}
+
 function runScanStringsTool(args: unknown): unknown {
   const input = recordInput(args, "scan_strings");
   const minLength = pick(input, "minLength", "min_length", "min-length");
@@ -1023,6 +1086,8 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     default_profile: "agent",
     read_path: [
       "Use the host/native Read tool for full file contents; tedit does not duplicate plain file reading yet.",
+      "Use inspect_range for sed-style line context plus parse status and edit-ready findLines suggestions.",
+      "Use search_text for rg/grep-style raw text discovery when the next step is likely a tedit edit.",
       "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
       "Use jsx_select for structural target discovery, then pass returned ids/selectors to mutating tools.",
       "Use scan_strings for hardcoded user-facing text inventory across JSX text/attrs and JS/TS string literals.",
@@ -1037,6 +1102,8 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },
       { intent: "several coordinated text edits", tool: "multiedit", reason: "atomic application across files and same-file sequential edits" },
       { intent: "already generated diff", tool: "patch", reason: "atomic unified diff/apply-patch input with verification" },
+      { intent: "line range context before editing", tool: "inspect_range", reason: "sed-style context plus parser status and edit findLines suggestion" },
+      { intent: "raw text search before editing", tool: "search_text", reason: "grep-style candidates with inspect/edit follow-ups" },
       { intent: "must-be-new full file", tool: "create_file", reason: "no-overwrite creation is a safety boundary" },
       { intent: "whole-file generation or scaffold/template", tool: "file_write", required: ["mode"], reason: "write/scaffold/template facade with parser guardrails" },
       { intent: "structural JSX/markup mutation", tool: "jsx_select, then jsx_node/jsx_attr/jsx_content/imports", reason: "selector/id based edits avoid brittle text spans" },
@@ -1055,6 +1122,8 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       extract_component_plan: { mode: "plan", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", planOut: ".tedit/plans/extract-card.json" },
       apply_plan: { plan: ".tedit/plans/extract-card.json", write: true },
       jsx_attr: { action: "prop_set", file: "src/Page.tsx", selector: "Card", name: "data-extracted", value: true, write: true },
+      inspect_range: { file: "src/Page.tsx", lines: "120:140", context: 3 },
+      search_text: { query: "삭제", paths: ["src"], glob: "**/*.tsx", context: 2 },
       scan_strings: { file: "src/Page.tsx", contains: "삭제" },
       ast_select: { file: "src/Page.tsx", selector: "ObjectProperty[key.name=\"label\"] > StringLiteral" },
       ast_edit: { file: "src/Page.tsx", selector: "StringLiteral[value=\"삭제\"]", replace: "Delete", write: true },
@@ -1556,6 +1625,12 @@ function optionalInteger(value: unknown, label: string): number | undefined {
   if (value === undefined) return undefined;
   const numberValue = Number(value);
   if (!Number.isInteger(numberValue)) fail("INVALID_MCP_INPUT", `${label} must be an integer.`);
+  return numberValue;
+}
+
+function optionalNonnegativeInteger(value: unknown, label: string): number | undefined {
+  const numberValue = optionalInteger(value, label);
+  if (numberValue !== undefined && numberValue < 0) fail("INVALID_MCP_INPUT", `${label} must be a nonnegative integer.`);
   return numberValue;
 }
 
