@@ -371,7 +371,7 @@ tedit chain-workspace in src/config.ts edit --find "timeout: 3000" --replace "ti
 
 `write`, `multiedit`, and `patch` expose ordinary agent editing
 operations through the same write policy, backup behavior, JSON output,
-file-length warnings, and final parse verification used by the rest of
+quality warnings, and final parse verification used by the rest of
 `tedit`.
 
 `write` is the whole-file primitive. It accepts the same source inputs as
@@ -577,9 +577,14 @@ tedit extract src/Page.tsx DailyPlanBody \
 
 ## Quality Guardrails
 
-Every mutation result can include file-length warnings. Warnings are
-passive: they do not block writes, and they fire only when an edit
-crosses a configured threshold.
+Every mutation result can include quality warnings. Warnings are passive:
+they do not block writes. File-length warnings fire only when an edit crosses
+a configured threshold. JSX/TSX className conflict warnings also surface from
+`verify-file`, edit/mutation results, and compact MCP output when static
+Tailwind-like utilities in the same element target the same configured class
+group, such as `w-full w-9`. Deliberate overrides can use Tailwind's `!`
+prefix, for example `w-full !w-9`, or project config can add or disable
+groups.
 
 Project config lives at `.tedit/config.json` and is discovered by
 walking upward from the target/spec path, falling back to the current
@@ -596,12 +601,24 @@ the built-in TTY/non-TTY behavior.
     "urgent": 2000
   },
   "max_extract_props": 12,
+  "classNameConflicts": {
+    "enabled": true,
+    "groups": {
+      "area": ["area-"]
+    }
+  },
   "defaultWrite": "auto",
   "output": {
     "defaultMode": "compact"
   }
 }
 ```
+
+Class group entries are merged with the built-in JSX groups. A pattern ending
+in `-`, `[`, or `*` is treated as a prefix; other patterns are exact utility
+matches. Set `"classNameConflicts": false` or
+`"classNameConflicts": { "enabled": false }` to turn the guardrail off for a
+project.
 
 `analyze-state` inspects React `useState` bindings, the handlers that
 read/write them, and connected clusters that may deserve a custom hook
@@ -707,9 +724,10 @@ tedit scaffold src/Button.tsx \
   --write
 ```
 
-`new` resolves templates from `./.tedit/templates`, `~/.tedit/templates`, then built-in starters. Templates are scaffold specs with `{{param}}` substitution.
+`new` resolves templates from `./.tedit/templates`, `~/.tedit/templates`, then built-in starters. Templates are scaffold specs with `{{param}}` substitution. It is most useful for boilerplate-heavy shells where the skeleton is most of the file: create the convention-correct shell, fill the body with a normal edit/write step, then add imports with `imports add` or `imports_add`.
 
 ```bash
+tedit new react-component src/Card.tsx --param name=Card --write
 tedit new react-client-component src/Card.tsx --param name=Card --write
 tedit new server-action src/actions/save.ts --param name=saveDraft --write
 ```
@@ -723,7 +741,7 @@ tedit new server-action src/actions/save.ts --param name=saveDraft --write
 - `expr.toShortCircuit` and `expr.unwrap` only convert ternaries whose alternate is `null`, `false`, or `undefined`.
 - `extract` supports full extract plus explicit `.children` slots. `--depth` without explicit slots deliberately fails with suggested slots; `--auto-slot` opts into the generated slots.
 - Extracted prop type inference is conservative. It handles clear TypeScript annotations by default, simple literals/arrays/objects/template literals and explicit `useState<T>` generics, handles local checker inference with `--typecheck`, then falls back to `unknown` with `// TODO(tedit): infer type` markers when the source does not carry a reliable type.
-- Quality guardrails currently cover file-length threshold warnings, `analyze-state` over-cluster guidance with suggested subclusters, extract prop overflow, and conservative `refactor-state` application for simple clusters. Custom hook extraction keeps failing by default on external handler dependencies, but `--external-deps params` can explicitly thread those values into the generated hook.
+- Quality guardrails currently cover file-length threshold warnings, JSX/TSX className conflict warnings, `analyze-state` over-cluster guidance with suggested subclusters, extract prop overflow, and conservative `refactor-state` application for simple clusters. Custom hook extraction keeps failing by default on external handler dependencies, but `--external-deps params` can explicitly thread those values into the generated hook.
 - File creation is available through `create`, `write`, `scaffold`, and `new`; single-file `chain` can also start with `create --source ...` before structural or base edits.
 - Base `edit` is available as a standalone command, inside `workspace-flow` / `chain-workspace`, and mixed into single-file `chain` with JSX actions.
 - `patch` supports unified diff and Codex apply-patch file updates, additions, deletes, and renames.

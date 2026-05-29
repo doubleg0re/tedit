@@ -771,7 +771,8 @@ test("new creates files from built-in and local templates", () => {
   run(["new", "react-client-component", builtIn, "--param", "name=Card", "--write"]);
   const cardSource = readFileSync(builtIn, "utf8");
   assert.match(cardSource, /"use client";/);
-  assert.match(cardSource, /function Card\(props\)/);
+  assert.match(cardSource, /export type CardProps =/);
+  assert.match(cardSource, /function Card\(props: CardProps\)/);
   assert.equal(JSON.parse(run(["find", builtIn, "div", "--json"])).matches.length, 1);
 
   const templateDir = join(dir, ".tedit", "templates");
@@ -1677,11 +1678,13 @@ test("mcp server lists tools and runs universal edit", async () => {
   const mcpScaffoldFile = join(dir, "Scaffolded.tsx");
   const mcpNewFile = join(dir, "ClientCard.tsx");
   const mcpLoopFile = join(dir, "loop.ts");
+  const mcpWarnFile = join(dir, "Warn.tsx");
   writeFileSync(file, "# Title\nold value\n");
   writeFileSync(jsxFile, chainFixture());
   writeFileSync(jsonFile, "{\"enabled\":true}\n");
   writeFileSync(extractFile, extractFixture());
   writeFileSync(mcpLoopFile, "function save(\n  value\n) {\n  return value;\n}\n");
+  writeFileSync(mcpWarnFile, "export function Warn() {\n  return <div className=\"w-full w-9\" />;\n}\n");
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -1895,6 +1898,14 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(verifyResult.isError, undefined);
     assert.equal(verifyResult.structuredContent.parse_verified, true);
     assert.equal(verifyResult.structuredContent.parser, "json");
+
+    const warningVerifyResult = await client.callTool({
+      name: "verify_file",
+      arguments: { file: mcpWarnFile },
+    });
+    assert.equal(warningVerifyResult.isError, undefined);
+    assert.equal(warningVerifyResult.structuredContent.warnings[0].code, "CLASSNAME_CONFLICT");
+    assert.equal(warningVerifyResult.structuredContent.warnings[0].group, "width");
 
     const textVerifyResult = await client.callTool({
       name: "verify_file",
@@ -3017,6 +3028,90 @@ test("single-file chain can mix base edit and JSX actions", () => {
 
   assert.equal(result.success, true);
   assert.match(readFileSync(file, "utf8"), /<Button data-edited>Confirm<\/Button>/);
+});
+
+test("className conflict guardrail reports static JSX utility conflicts", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  writeFileSync(file, `export function Page() {
+  return <input className="w-full w-9 text-sm text-red-500" />;
+}
+`);
+
+  const result = JSON.parse(run(["verify-file", file, "--json"]));
+  const warning = result.warnings.find((item) => item.code === "CLASSNAME_CONFLICT");
+
+  assert.ok(warning);
+  assert.equal(warning.group, "width");
+  assert.equal(warning.element, "input");
+  assert.deepEqual(warning.classes, ["w-full", "w-9"]);
+  assert.ok(!result.warnings.some((item) => item.group === "text-color"));
+});
+
+test("className conflict guardrail does not flag mutually exclusive ternary branches", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  writeFileSync(file, `export function Page({ selected }) {
+  return <input className={selected ? "w-full" : "w-9"} />;
+}
+`);
+
+  const result = JSON.parse(run(["verify-file", file, "--json"]));
+  assert.deepEqual(result.warnings, []);
+});
+
+test("className conflict guardrail honors project config groups and disable flag", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const configDir = join(dir, ".tedit");
+  const file = join(dir, "Page.tsx");
+  mkdirp(configDir);
+  writeFileSync(join(configDir, "config.json"), JSON.stringify({
+    classNameConflicts: {
+      groups: {
+        area: ["area-"]
+      }
+    }
+  }, null, 2));
+  writeFileSync(file, `export function Page() {
+  return <section className="area-main area-sidebar" />;
+}
+`);
+
+  const configured = JSON.parse(run(["verify-file", file, "--json"]));
+  assert.equal(configured.warnings.find((item) => item.group === "area").code, "CLASSNAME_CONFLICT");
+
+  writeFileSync(join(configDir, "config.json"), JSON.stringify({
+    classNameConflicts: {
+      enabled: false,
+      groups: {
+        area: ["area-"]
+      }
+    }
+  }, null, 2));
+
+  const disabled = JSON.parse(run(["verify-file", file, "--json"]));
+  assert.deepEqual(disabled.warnings, []);
+});
+
+test("compact mutation output includes className conflict warnings", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  writeFileSync(file, `export function Page() {
+  return <input className="w-full" />;
+}
+`);
+
+  const compact = JSON.parse(runRaw([
+    "edit", file,
+    "--find", 'className="w-full"',
+    "--replace", 'className="w-full w-9"',
+    "--dry-run"
+  ]));
+
+  assert.equal(compact.ok, true);
+  assert.equal(compact.warnings[0].code, "CLASSNAME_CONFLICT");
+  assert.equal(compact.warnings[0].group, "width");
+  assert.equal(compact.files[0].warnings[0].code, "CLASSNAME_CONFLICT");
 });
 
 test("file length guardrail reports threshold crossings without blocking dry-run", () => {

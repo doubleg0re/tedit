@@ -21,7 +21,7 @@ import { parseMultieditInput, runMultiedit, runMultieditInput, type MultieditRes
 import { runPatchInput } from "./patch.js";
 import { runRefactorState } from "./refactor-state.js";
 import { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, inspectRefactorPlan, writePlanFile, type InspectPlanResult } from "./refactor-plan.js";
-import { analyzeState, fileLengthWarnings, formatFileLengthWarnings, loadQualityConfig, type FileLengthWarning } from "./quality.js";
+import { analyzeState, formatQualityWarnings, loadQualityConfig, qualityWarnings, type QualityWarning } from "./quality.js";
 import { loadParams, parseFlowInput, runFlow } from "./flow.js";
 import {
   buildScaffoldSource,
@@ -204,7 +204,7 @@ function commandEdit(args: ParsedArgs): void {
   });
   const policy = resolveWritePolicy(filePath, writeFlags(args));
   const shouldWrite = policy.write;
-  const warnings = fileLengthWarnings(filePath, source, plan.nextSource);
+  const warnings = qualityWarnings(filePath, source, plan.nextSource);
   let backup: BackupResult = {};
 
   if (shouldWrite && plan.changed) {
@@ -559,8 +559,8 @@ function commandExtract(args: ParsedArgs): void {
   const previousNewSource = targetExisted ? readFileSync(plan.result.to, "utf8") : "";
   const newFileDiff = unifiedDiff(previousNewSource, plan.newSource, plan.result.to);
   const warnings = [
-    ...fileLengthWarnings(filePath, plan.source, plan.nextSource),
-    ...fileLengthWarnings(plan.result.to, previousNewSource, plan.newSource),
+    ...qualityWarnings(filePath, plan.source, plan.nextSource),
+    ...qualityWarnings(plan.result.to, previousNewSource, plan.newSource),
   ];
   const sourcePolicy = resolveWritePolicy(filePath, writeFlags(args));
   const targetPolicy = resolveWritePolicy(plan.result.to, writeFlags(args));
@@ -584,8 +584,8 @@ function commandExtract(args: ParsedArgs): void {
     written: shouldWrite,
     warnings,
     files: [
-      { file: filePath, existed: true, changed: plan.source !== plan.nextSource, written: shouldWrite, warnings: fileLengthWarnings(filePath, plan.source, plan.nextSource), write_policy: writePolicyReport(sourcePolicy, sourceBackup), ...(sourceBackup.path ? { backup: sourceBackup.path } : {}), ...(sourceDiff ? { diff: sourceDiff } : {}) },
-      { file: plan.result.to, existed: targetExisted, changed: previousNewSource !== plan.newSource, written: shouldWrite, warnings: fileLengthWarnings(plan.result.to, previousNewSource, plan.newSource), write_policy: writePolicyReport(targetPolicy, targetBackup), ...(targetBackup.path ? { backup: targetBackup.path } : {}), ...(newFileDiff ? { diff: newFileDiff } : {}) },
+      { file: filePath, existed: true, changed: plan.source !== plan.nextSource, written: shouldWrite, warnings: qualityWarnings(filePath, plan.source, plan.nextSource), write_policy: writePolicyReport(sourcePolicy, sourceBackup), ...(sourceBackup.path ? { backup: sourceBackup.path } : {}), ...(sourceDiff ? { diff: sourceDiff } : {}) },
+      { file: plan.result.to, existed: targetExisted, changed: previousNewSource !== plan.newSource, written: shouldWrite, warnings: qualityWarnings(plan.result.to, previousNewSource, plan.newSource), write_policy: writePolicyReport(targetPolicy, targetBackup), ...(targetBackup.path ? { backup: targetBackup.path } : {}), ...(newFileDiff ? { diff: newFileDiff } : {}) },
     ],
     write_policy: {
       source: writePolicyReport(sourcePolicy, sourceBackup),
@@ -728,11 +728,13 @@ function commandVerify(args: ParsedArgs): void {
 
 function commandVerifyFile(args: ParsedArgs): void {
   const [filePath] = requirePositionals(args, 1, "verify-file <file>");
-  const verification = verifyParseForFile(filePath, readFileSync(filePath, "utf8"));
+  const source = readFileSync(filePath, "utf8");
+  const verification = verifyParseForFile(filePath, source);
   const result = {
     success: true,
     file: filePath,
     ...parseVerificationFields(verification),
+    warnings: qualityWarnings(filePath, source, source),
   };
   output(args, result, verification.verified
     ? `${filePath}: parse verified (${verification.parser})`
@@ -841,7 +843,7 @@ function finishMutation(args: ParsedArgs, doc: { filePath: string; source: strin
   const next = doc.print();
   const changed = next !== doc.source;
   const diff = unifiedDiff(doc.source, next, doc.filePath);
-  const warnings = fileLengthWarnings(doc.filePath, doc.source, next);
+  const warnings = qualityWarnings(doc.filePath, doc.source, next);
   const policy = resolveWritePolicy(doc.filePath, writeFlags(args));
   const shouldWrite = policy.write;
   let backup: BackupResult = {};
@@ -881,7 +883,7 @@ function finishCreation(args: ParsedArgs, filePath: string, source: string, resu
   const previous = existed ? readFileSync(filePath, "utf8") : "";
   const changed = previous !== source;
   const diff = unifiedDiff(previous, source, filePath);
-  const warnings = fileLengthWarnings(filePath, previous, source);
+  const warnings = qualityWarnings(filePath, previous, source);
   const policy = resolveWritePolicy(filePath, writeFlags(args));
   const shouldWrite = policy.write;
   let backup: BackupResult = {};
@@ -1542,8 +1544,8 @@ function collectDiffs(value: unknown): string[] {
   return diffs;
 }
 
-function withWarnings(text: string, warnings: FileLengthWarning[]): string {
-  const formatted = formatFileLengthWarnings(warnings);
+function withWarnings(text: string, warnings: QualityWarning[]): string {
+  const formatted = formatQualityWarnings(warnings);
   return formatted ? `${text}\n${formatted}` : text;
 }
 

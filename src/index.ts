@@ -37,9 +37,8 @@ export { parseExtractSlot, planExtract } from "./extract.js";
 export { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, inspectRefactorPlan, writePlanFile } from "./refactor-plan.js";
 export type { ExtractOptions, ExtractPlan, ExtractResult, ExtractSlotSpec } from "./extract.js";
 export type { ApplyPlanOptions, ApplyPlanResult, ExtractComponentPlanFile, InspectPlanResult, RefactorPlanKind, RefactorPlanRisk, RefactorPlanStep, RefactorStatePlanFile, SerializableExtractOptions, SerializableRefactorStateOptions, TeditRefactorPlanFile } from "./refactor-plan.js";
-export { analyzeState, fileLengthWarnings, loadQualityConfig } from "./quality.js";
-export type { FileLengthThresholds, FileLengthWarning, QualityConfig, StateAnalysis, StateAnalysisGuidance, StateCluster } from "./quality.js";
+export { analyzeState, classNameConflictWarnings, fileLengthWarnings, formatQualityWarnings, loadQualityConfig, qualityWarnings } from "./quality.js";
+export type { ClassNameConflictConfig, ClassNameConflictWarning, FileLengthThresholds, FileLengthWarning, QualityConfig, QualityWarning, StateAnalysis, StateAnalysisGuidance, StateCluster } from "./quality.js";
 export { TeditError } from "./errors.js";
 export { TEDIT_MCP_TOOL_NAMES, TEDIT_MCP_TOOLS, runMcpTool } from "./mcp-tools.js";
 export type { TeditMcpTool } from "./mcp-tools.js";
-

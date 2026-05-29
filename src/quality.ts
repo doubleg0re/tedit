@@ -17,8 +17,14 @@ export type FileLengthThresholds = {
   urgent: number;
 };
 
+export type ClassNameConflictConfig = {
+  enabled: boolean;
+  groups: Record<string, string[]>;
+};
+
 export type QualityConfig = {
   fileLengthThresholds: FileLengthThresholds;
+  classNameConflicts: ClassNameConflictConfig;
   maxExtractProps: number;
   defaultWrite: "auto" | "true" | "false";
   defaultOutput: "auto" | "compact" | "detailed";
@@ -34,6 +40,23 @@ export type FileLengthWarning = {
   message: string;
   next_step_hint: string;
 };
+
+export type ClassNameConflictWarning = {
+  code: "CLASSNAME_CONFLICT";
+  level: "warn";
+  file: string;
+  element: string;
+  attribute: "className" | "class";
+  group: string;
+  classes: string[];
+  message: string;
+  next_step_hint: string;
+  line?: number;
+  column?: number;
+  variant?: string;
+};
+
+export type QualityWarning = FileLengthWarning | ClassNameConflictWarning;
 
 export type StateCluster = {
   name: string;
@@ -88,14 +111,96 @@ type HandlerUsage = {
   writes: Set<string>;
 };
 
+type ClassToken = {
+  value: string;
+  exclusiveGroup?: string;
+  branch?: "consequent" | "alternate";
+};
+
 const GIANT_CLUSTER_STATE_THRESHOLD = 8;
 const LARGE_HANDLER_STATE_THRESHOLD = 8;
+
+const DEFAULT_CLASS_GROUPS: Record<string, string[]> = {
+  width: ["w-"],
+  "min-width": ["min-w-"],
+  "max-width": ["max-w-"],
+  height: ["h-"],
+  "min-height": ["min-h-"],
+  "max-height": ["max-h-"],
+  display: [
+    "block",
+    "inline-block",
+    "inline",
+    "flex",
+    "inline-flex",
+    "grid",
+    "inline-grid",
+    "hidden",
+    "contents",
+    "flow-root",
+    "table",
+    "inline-table",
+    "table-row",
+    "table-cell",
+  ],
+  position: ["static", "fixed", "absolute", "relative", "sticky"],
+  "flex-direction": ["flex-row", "flex-row-reverse", "flex-col", "flex-col-reverse"],
+  "align-items": ["items-start", "items-end", "items-center", "items-baseline", "items-stretch"],
+  "justify-content": [
+    "justify-normal",
+    "justify-start",
+    "justify-end",
+    "justify-center",
+    "justify-between",
+    "justify-around",
+    "justify-evenly",
+    "justify-stretch",
+  ],
+  "gap-x": ["gap-x-"],
+  "gap-y": ["gap-y-"],
+  gap: ["gap-"],
+  padding: ["p-"],
+  "padding-x": ["px-"],
+  "padding-y": ["py-"],
+  "padding-top": ["pt-"],
+  "padding-right": ["pr-"],
+  "padding-bottom": ["pb-"],
+  "padding-left": ["pl-"],
+  margin: ["m-"],
+  "margin-x": ["mx-"],
+  "margin-y": ["my-"],
+  "margin-top": ["mt-"],
+  "margin-right": ["mr-"],
+  "margin-bottom": ["mb-"],
+  "margin-left": ["ml-"],
+  overflow: ["overflow-auto", "overflow-hidden", "overflow-clip", "overflow-visible", "overflow-scroll"],
+  "overflow-x": ["overflow-x-"],
+  "overflow-y": ["overflow-y-"],
+  "text-size": ["text-xs", "text-sm", "text-base", "text-lg", "text-xl", "text-2xl", "text-3xl", "text-4xl", "text-5xl", "text-6xl", "text-7xl", "text-8xl", "text-9xl"],
+  "text-align": ["text-left", "text-center", "text-right", "text-justify", "text-start", "text-end"],
+  "text-color": ["text-"],
+  "background-color": ["bg-"],
+  opacity: ["opacity-"],
+  z: ["z-"],
+  "object-fit": ["object-contain", "object-cover", "object-fill", "object-none", "object-scale-down"],
+  "inset-x": ["inset-x-"],
+  "inset-y": ["inset-y-"],
+  inset: ["inset-"],
+  top: ["top-"],
+  right: ["right-"],
+  bottom: ["bottom-"],
+  left: ["left-"],
+};
 
 const DEFAULT_CONFIG: QualityConfig = {
   fileLengthThresholds: {
     info: 500,
     warn: 1000,
     urgent: 2000,
+  },
+  classNameConflicts: {
+    enabled: true,
+    groups: DEFAULT_CLASS_GROUPS,
   },
   maxExtractProps: 12,
   defaultWrite: "auto",
@@ -118,10 +223,11 @@ export function loadQualityConfig(filePath?: string): QualityConfig {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return DEFAULT_CONFIG;
   const data = parsed as Record<string, unknown>;
   const thresholds = normalizeThresholds(data.file_length_thresholds ?? data.fileLengthThresholds);
+  const classNameConflicts = normalizeClassNameConflicts(data);
   const maxExtractProps = normalizePositiveInteger(data.max_extract_props ?? data.maxExtractProps, DEFAULT_CONFIG.maxExtractProps);
   const defaultWrite = normalizeDefaultWrite(data.defaultWrite ?? data.default_write, DEFAULT_CONFIG.defaultWrite);
   const defaultOutput = normalizeDefaultOutput(outputDefaultValue(data), DEFAULT_CONFIG.defaultOutput);
-  return { fileLengthThresholds: thresholds, maxExtractProps, defaultWrite, defaultOutput };
+  return { fileLengthThresholds: thresholds, classNameConflicts, maxExtractProps, defaultWrite, defaultOutput };
 }
 
 export function fileLengthWarnings(filePath: string, previous: string, next: string): FileLengthWarning[] {
@@ -149,10 +255,270 @@ export function fileLengthWarnings(filePath: string, previous: string, next: str
 }
 
 export function formatFileLengthWarnings(warnings: FileLengthWarning[]): string {
+  return formatQualityWarnings(warnings);
+}
+
+export function qualityWarnings(filePath: string, previous: string, next: string): QualityWarning[] {
+  return [
+    ...fileLengthWarnings(filePath, previous, next),
+    ...classNameConflictWarnings(filePath, next),
+  ];
+}
+
+export function classNameConflictWarnings(filePath: string, source: string): ClassNameConflictWarning[] {
+  if (!supportsClassNameLint(filePath)) return [];
+
+  const config = loadQualityConfig(filePath).classNameConflicts;
+  if (!config.enabled) return [];
+
+  let ast: t.File;
+  try {
+    ast = recast.parse(source, { parser: babelTsParser }) as unknown as t.File;
+  } catch {
+    return [];
+  }
+
+  const warnings: ClassNameConflictWarning[] = [];
+  traverseAst(ast, {
+    JSXOpeningElement(path: NodePath<t.JSXOpeningElement>) {
+      const element = jsxElementName(path.node.name);
+      for (const attribute of path.node.attributes) {
+        if (!t.isJSXAttribute(attribute) || !t.isJSXIdentifier(attribute.name)) continue;
+        if (attribute.name.name !== "className" && attribute.name.name !== "class") continue;
+        const classes = extractClassTokens(attribute.value);
+        warnings.push(...conflictsForClassTokens(filePath, element, attribute.name.name, classes, attribute, config));
+      }
+    },
+  });
+
+  return warnings;
+}
+
+export function formatQualityWarnings(warnings: QualityWarning[]): string {
   if (warnings.length === 0) return "";
   return warnings.map((warning) => {
     return `tedit: ${warning.message}\n  Suggested next step: ${warning.next_step_hint}`;
   }).join("\n");
+}
+
+function supportsClassNameLint(filePath: string): boolean {
+  return /\.[cm]?[jt]sx?$/.test(filePath);
+}
+
+function extractClassTokens(value: t.JSXAttribute["value"]): ClassToken[] {
+  if (!value) return [];
+  if (t.isStringLiteral(value)) return classTokensFromText(value.value);
+  if (t.isJSXExpressionContainer(value)) return extractClassTokensFromExpression(value.expression);
+  return [];
+}
+
+function extractClassTokensFromExpression(expression: t.Expression | t.JSXEmptyExpression): ClassToken[] {
+  if (t.isJSXEmptyExpression(expression)) return [];
+  if (t.isStringLiteral(expression)) return classTokensFromText(expression.value);
+  if (t.isTemplateLiteral(expression) && expression.expressions.length === 0) {
+    return classTokensFromText(expression.quasis.map((quasi) => quasi.value.cooked ?? quasi.value.raw).join(""));
+  }
+  if (t.isLogicalExpression(expression)) {
+    return [
+      ...extractExpressionLikeTokens(expression.left),
+      ...extractExpressionLikeTokens(expression.right),
+    ];
+  }
+  if (t.isConditionalExpression(expression)) {
+    const exclusiveGroup = `${expression.start ?? ""}:${expression.end ?? ""}`;
+    return [
+      ...markExclusiveBranch(extractExpressionLikeTokens(expression.consequent), exclusiveGroup, "consequent"),
+      ...markExclusiveBranch(extractExpressionLikeTokens(expression.alternate), exclusiveGroup, "alternate"),
+    ];
+  }
+  if (t.isArrayExpression(expression)) {
+    return expression.elements.flatMap((element) => element ? extractExpressionLikeTokens(element) : []);
+  }
+  if (t.isObjectExpression(expression)) {
+    return expression.properties.flatMap((property) => {
+      if (!t.isObjectProperty(property) || property.computed) return [];
+      if (t.isStringLiteral(property.key)) return classTokensFromText(property.key.value);
+      if (t.isIdentifier(property.key)) return classTokensFromText(property.key.name);
+      return [];
+    });
+  }
+  if (t.isCallExpression(expression) && isClassNameHelperCall(expression.callee)) {
+    return expression.arguments.flatMap((argument) => extractExpressionLikeTokens(argument));
+  }
+  return [];
+}
+
+function extractExpressionLikeTokens(node: t.Node): ClassToken[] {
+  if (t.isSpreadElement(node)) return extractExpressionLikeTokens(node.argument);
+  if (t.isExpression(node) || t.isJSXEmptyExpression(node)) return extractClassTokensFromExpression(node);
+  return [];
+}
+
+function isClassNameHelperCall(callee: t.CallExpression["callee"]): boolean {
+  if (t.isIdentifier(callee)) return ["cn", "clsx", "classNames", "classnames", "twMerge"].includes(callee.name);
+  if (t.isMemberExpression(callee) && !callee.computed && t.isIdentifier(callee.property)) {
+    return ["cn", "clsx", "classNames", "classnames", "twMerge"].includes(callee.property.name);
+  }
+  return false;
+}
+
+function splitClassTokens(value: string): string[] {
+  return value.split(/\s+/).map((token) => token.trim()).filter(Boolean);
+}
+
+function classTokensFromText(value: string): ClassToken[] {
+  return splitClassTokens(value).map((token) => ({ value: token }));
+}
+
+function markExclusiveBranch(tokens: ClassToken[], exclusiveGroup: string, branch: "consequent" | "alternate"): ClassToken[] {
+  return tokens.map((token) => token.exclusiveGroup
+    ? token
+    : { ...token, exclusiveGroup, branch });
+}
+
+function conflictsForClassTokens(
+  filePath: string,
+  element: string,
+  attribute: "className" | "class",
+  classes: ClassToken[],
+  node: t.JSXAttribute,
+  config: ClassNameConflictConfig,
+): ClassNameConflictWarning[] {
+  const byGroup = new Map<string, { group: string; variant: string; classes: ClassToken[] }>();
+  for (const className of classes) {
+    const parsed = parseTailwindToken(className.value);
+    if (!parsed || parsed.important) continue;
+    const group = classGroupForUtility(parsed.utility, config.groups);
+    if (!group) continue;
+
+    const key = `${parsed.variant}\u0000${group}`;
+    const entry = byGroup.get(key) ?? { group, variant: parsed.variant, classes: [] };
+    if (!entry.classes.some((item) => item.value === className.value && item.exclusiveGroup === className.exclusiveGroup && item.branch === className.branch)) {
+      entry.classes.push(className);
+    }
+    byGroup.set(key, entry);
+  }
+
+  const location = node.loc?.start;
+  return [...byGroup.values()]
+    .map((entry) => ({ entry, classes: conflictingClassValues(entry.classes) }))
+    .filter(({ classes: conflictClasses }) => conflictClasses.length > 1)
+    .map(({ entry, classes: conflictClasses }) => ({
+      code: "CLASSNAME_CONFLICT",
+      level: "warn",
+      file: filePath,
+      element,
+      attribute,
+      group: entry.group,
+      classes: conflictClasses,
+      ...(location ? { line: location.line, column: location.column + 1 } : {}),
+      ...(entry.variant ? { variant: entry.variant } : {}),
+      message: `${locationPrefix(filePath, location)}<${element}> ${entry.group} class conflict: ${conflictClasses.map((item) => JSON.stringify(item)).join(" + ")}.`,
+      next_step_hint: `Remove the older ${entry.group} utility, or add ! to the intended override if the conflict is deliberate.`,
+    }));
+}
+
+function conflictingClassValues(classes: ClassToken[]): string[] {
+  const conflicts = new Set<string>();
+  for (let index = 0; index < classes.length; index++) {
+    for (let otherIndex = index + 1; otherIndex < classes.length; otherIndex++) {
+      if (classes[index].value === classes[otherIndex].value) continue;
+      if (!canClassTokensCoexist(classes[index], classes[otherIndex])) continue;
+      conflicts.add(classes[index].value);
+      conflicts.add(classes[otherIndex].value);
+    }
+  }
+  return [...conflicts];
+}
+
+function canClassTokensCoexist(left: ClassToken, right: ClassToken): boolean {
+  if (!left.exclusiveGroup || !right.exclusiveGroup) return true;
+  return left.exclusiveGroup !== right.exclusiveGroup || left.branch === right.branch;
+}
+
+function parseTailwindToken(token: string): { variant: string; utility: string; important: boolean } | null {
+  const parts = splitVariantParts(token);
+  const utilityRaw = parts.pop();
+  if (!utilityRaw) return null;
+  const important = utilityRaw.startsWith("!") || token.startsWith("!");
+  const utility = utilityRaw.replace(/^!/, "").replace(/^-/, "");
+  return {
+    variant: parts.join(":"),
+    utility,
+    important,
+  };
+}
+
+function splitVariantParts(token: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let bracketDepth = 0;
+  for (const char of token) {
+    if (char === "[") bracketDepth++;
+    else if (char === "]" && bracketDepth > 0) bracketDepth--;
+
+    if (char === ":" && bracketDepth === 0) {
+      parts.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  parts.push(current);
+  return parts;
+}
+
+function classGroupForUtility(utility: string, groups: Record<string, string[]>): string | null {
+  for (const [group, patterns] of Object.entries(groups)) {
+    if (matchesClassGroup(utility, group, patterns)) return group;
+  }
+  return null;
+}
+
+function matchesClassGroup(utility: string, group: string, patterns: string[]): boolean {
+  if (group === "text-color") return isTextColorUtility(utility);
+  if (group === "background-color") return isBackgroundColorUtility(utility);
+  return patterns.some((pattern) => matchesClassPattern(utility, pattern));
+}
+
+function matchesClassPattern(utility: string, pattern: string): boolean {
+  if (pattern.endsWith("*")) return utility.startsWith(pattern.slice(0, -1));
+  if (pattern.endsWith("-") || pattern.endsWith("[")) return utility.startsWith(pattern);
+  return utility === pattern;
+}
+
+function isTextColorUtility(utility: string): boolean {
+  if (!utility.startsWith("text-")) return false;
+  const nonColor = new Set([
+    ...DEFAULT_CLASS_GROUPS["text-size"],
+    ...DEFAULT_CLASS_GROUPS["text-align"],
+    "text-balance",
+    "text-pretty",
+    "text-wrap",
+    "text-nowrap",
+    "text-ellipsis",
+    "text-clip",
+  ]);
+  return !nonColor.has(utility) && !utility.startsWith("text-opacity-");
+}
+
+function isBackgroundColorUtility(utility: string): boolean {
+  if (!utility.startsWith("bg-")) return false;
+  if (["bg-fixed", "bg-local", "bg-scroll", "bg-cover", "bg-contain", "bg-auto", "bg-center", "bg-top", "bg-right", "bg-bottom", "bg-left", "bg-none"].includes(utility)) {
+    return false;
+  }
+  return !["bg-opacity-", "bg-blend-", "bg-clip-", "bg-origin-", "bg-gradient-", "bg-size-"].some((prefix) => utility.startsWith(prefix));
+}
+
+function jsxElementName(name: t.JSXOpeningElement["name"]): string {
+  if (t.isJSXIdentifier(name)) return name.name;
+  if (t.isJSXMemberExpression(name)) return `${jsxElementName(name.object)}.${jsxElementName(name.property)}`;
+  if (t.isJSXNamespacedName(name)) return `${name.namespace.name}:${name.name.name}`;
+  return "unknown";
+}
+
+function locationPrefix(filePath: string, location: t.SourceLocation["start"] | undefined): string {
+  return location ? `${filePath}:${location.line}:${location.column + 1} ` : `${filePath} `;
 }
 
 export function analyzeState(filePath: string, source = readFileSync(filePath, "utf8")): StateAnalysis {
@@ -205,6 +571,49 @@ function normalizeThresholds(value: unknown): FileLengthThresholds {
     fail("INVALID_TEDIT_CONFIG", "file_length_thresholds must satisfy info <= warn <= urgent.");
   }
   return { info, warn, urgent };
+}
+
+function normalizeClassNameConflicts(data: Record<string, unknown>): ClassNameConflictConfig {
+  const raw = data.classNameConflicts ?? data.class_name_conflicts;
+  const rawGroups = data.classNameConflictGroups ?? data.class_name_conflict_groups;
+  let enabled = DEFAULT_CONFIG.classNameConflicts.enabled;
+  let groups = { ...DEFAULT_CLASS_GROUPS };
+
+  if (raw === false) enabled = false;
+  else if (raw === true || raw === undefined) {
+    // Keep defaults.
+  } else if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const input = raw as Record<string, unknown>;
+    enabled = normalizeOptionalBoolean(input.enabled, enabled, "classNameConflicts.enabled");
+    groups = normalizeClassGroupMap(input.groups ?? input.class_groups, groups);
+  } else {
+    fail("INVALID_TEDIT_CONFIG", "classNameConflicts must be a boolean or an object.");
+  }
+
+  groups = normalizeClassGroupMap(rawGroups, groups);
+  return { enabled, groups };
+}
+
+function normalizeClassGroupMap(value: unknown, base: Record<string, string[]>): Record<string, string[]> {
+  if (value === undefined) return base;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    fail("INVALID_TEDIT_CONFIG", "classNameConflicts.groups must be an object of string arrays.");
+  }
+  const groups = { ...base };
+  for (const [group, patterns] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(patterns) || patterns.some((item) => typeof item !== "string" || item.length === 0)) {
+      fail("INVALID_TEDIT_CONFIG", `classNameConflicts.groups.${group} must be a non-empty string array.`);
+    }
+    groups[group] = patterns as string[];
+  }
+  return groups;
+}
+
+function normalizeOptionalBoolean(value: unknown, fallback: boolean, label: string): boolean {
+  if (value === undefined) return fallback;
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  fail("INVALID_TEDIT_CONFIG", `${label} must be true or false.`);
 }
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {

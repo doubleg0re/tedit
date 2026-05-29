@@ -6,7 +6,7 @@ import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { planExtract, type HelperPolicy } from "./extract.js";
 import { runFlow, type FlowStep } from "./flow.js";
-import { fileLengthWarnings, type FileLengthWarning } from "./quality.js";
+import { qualityWarnings, type QualityWarning } from "./quality.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult, type WritePolicyFlags } from "./write-policy.js";
 
 export type WorkspaceFlowStep = FlowStep & {
@@ -66,7 +66,7 @@ export type WorkspaceFileChange = {
   changed: boolean;
   written: boolean;
   deleted?: boolean;
-  warnings: FileLengthWarning[];
+  warnings: QualityWarning[];
   write_policy?: Record<string, unknown>;
   backup?: string;
   diff?: string;
@@ -415,7 +415,7 @@ class WorkspaceTransaction {
         changed,
         written: shouldWrite && changed,
         ...(entry.deleted && changed ? { deleted: true } : {}),
-        warnings: fileLengthWarnings(entry.file, entry.original, next),
+        warnings: qualityWarnings(entry.file, entry.original, next),
         ...(policy ? { write_policy: writePolicyReport(policy, backup) } : {}),
         ...(backup.path ? { backup: backup.path } : {}),
         ...(diff ? { diff } : {}),

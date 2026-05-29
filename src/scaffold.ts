@@ -31,9 +31,11 @@ export type ScaffoldSpec = {
 };
 
 const builtInTemplates: Record<string, ScaffoldSpec> = {
+  "react-component": {
+    source: `export type {{name}}Props = {\n};\n\nexport function {{name}}(props: {{name}}Props) {\n  return <div />;\n}\n`,
+  },
   "react-client-component": {
-    directives: ["use client"],
-    exports: [{ kind: "function", name: "{{name}}", params: "props", body: { tag: "div" } }],
+    source: `"use client";\n\nexport type {{name}}Props = {\n};\n\nexport function {{name}}(props: {{name}}Props) {\n  return <div />;\n}\n`,
   },
   "next-page": {
     exports: [{ kind: "function", name: "Page", default: true, body: { tag: "main" } }],

@@ -26,6 +26,7 @@ type AgentFileSummary = {
   hunks?: number;
   bytesDelta?: number;
   backup?: string;
+  warnings?: unknown[];
 };
 
 export function parseOutputMode(value: unknown, label = "output"): OutputMode | undefined {
@@ -95,6 +96,8 @@ function compactMutationResult(record: JsonRecord, files: AgentFileSummary[], op
     if (files[0].parse_skipped !== undefined) compact.parse_skipped = files[0].parse_skipped;
     if (files[0].parse_skip_reason) compact.parse_skip_reason = files[0].parse_skip_reason;
   }
+  const warnings = collectWarnings(record, files);
+  if (warnings.length > 0) compact.warnings = warnings;
   if (typeof record.plan === "string") compact.plan = record.plan;
   if (next.length > 0) compact.next = next;
   if (options.includeDiffs) compact.diffs = collectDiffs(record);
@@ -133,6 +136,7 @@ function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
   if (kind === "verify-file") {
     if (typeof record.file === "string") compact.path = record.file;
     copyKeys(record, compact, ["parse_verified", "parser", "parse_skipped", "parse_skip_reason"]);
+    if (Array.isArray(record.warnings) && record.warnings.length > 0) compact.warnings = record.warnings;
     return compact;
   }
   if (kind === "actions") {
@@ -168,6 +172,33 @@ export function collectDiffs(value: unknown): string[] {
   }
   if (Array.isArray(record.files)) diffs.push(...record.files.flatMap(collectDiffs));
   return diffs;
+}
+
+function collectWarnings(record: JsonRecord, files: AgentFileSummary[]): unknown[] {
+  const warnings = Array.isArray(record.warnings) ? [...record.warnings] : [];
+  for (const file of files) {
+    if (Array.isArray(file.warnings)) warnings.push(...file.warnings);
+  }
+  return dedupeWarnings(warnings);
+}
+
+function dedupeWarnings(warnings: unknown[]): unknown[] {
+  const seen = new Set<string>();
+  const deduped: unknown[] = [];
+  for (const warning of warnings) {
+    const key = stableStringify(warning);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(warning);
+  }
+  return deduped;
+}
+
+function stableStringify(value: unknown): string {
+  if (!value || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const record = value as JsonRecord;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
 }
 
 function compactFiles(record: JsonRecord, options: OutputOptions): unknown[] {
@@ -236,6 +267,7 @@ function compactFileFrom(value: unknown, parseByFile: Map<string, Partial<AgentF
     ...(diff && diff.length > 0 ? { diffAvailable: true } : {}),
     ...stats,
     ...(typeof record.backup === "string" ? { backup: record.backup } : {}),
+    ...(Array.isArray(record.warnings) && record.warnings.length > 0 ? { warnings: record.warnings } : {}),
   };
 }
 

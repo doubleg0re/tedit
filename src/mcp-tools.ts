@@ -17,12 +17,11 @@ import { fail } from "./errors.js";
 import { formatAgentResult, outputOptionsFromRecord } from "./output.js";
 import { runMultiedit, runMultieditInput } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
-import { analyzeState } from "./quality.js";
+import { analyzeState, qualityWarnings } from "./quality.js";
 import { runRefactorState } from "./refactor-state.js";
 import { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, writePlanFile } from "./refactor-plan.js";
 import type { ExtractOptions, HelperPolicy } from "./extract.js";
 import { runWorkspaceFlow, type WorkspaceFlowOptions, type WorkspaceFlowStep } from "./workspace-flow.js";
-import { fileLengthWarnings } from "./quality.js";
 import { buildScaffoldSource, loadTemplateSpec, parseParams, type ScaffoldSpec } from "./scaffold.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
 
@@ -615,7 +614,7 @@ function runWholeFileTool(input: JsonRecord, label: string, kind: string, source
   const previous = existed ? readFileSync(filePath, "utf8") : "";
   const changed = previous !== source;
   const diff = unifiedDiff(previous, source, filePath);
-  const warnings = fileLengthWarnings(filePath, previous, source);
+  const warnings = qualityWarnings(filePath, previous, source);
   const policy = resolveWritePolicy(filePath, writeFlagsFromInput(input));
   const shouldWrite = policy.write;
   let backup: BackupResult = {};
@@ -656,7 +655,7 @@ function runEditTool(args: unknown): unknown {
   });
   const policy = resolveWritePolicy(filePath, writeFlagsFromInput(input));
   const shouldWrite = policy.write;
-  const warnings = fileLengthWarnings(filePath, source, plan.nextSource);
+  const warnings = qualityWarnings(filePath, source, plan.nextSource);
   let backup: BackupResult = {};
 
   if (shouldWrite && plan.changed) {
@@ -756,11 +755,13 @@ function runAnalyzeStateTool(args: unknown): unknown {
 function runVerifyFileTool(args: unknown): unknown {
   const input = recordInput(args, "verify_file");
   const filePath = requiredString(input.file, "verify_file requires file.");
-  const verification = verifyParseForFile(filePath, readFileSync(filePath, "utf8"));
+  const source = readFileSync(filePath, "utf8");
+  const verification = verifyParseForFile(filePath, source);
   return {
     success: true,
     file: filePath,
     ...parseVerificationFields(verification),
+    warnings: qualityWarnings(filePath, source, source),
   };
 }
 

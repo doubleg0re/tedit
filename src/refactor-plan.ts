@@ -5,7 +5,7 @@ import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { planExtract, type ExtractOptions, type ExtractPlan, type HelperPolicy } from "./extract.js";
 import { runRefactorState, type RefactorStateOptions, type RefactorStateResult } from "./refactor-state.js";
-import { fileLengthWarnings } from "./quality.js";
+import { qualityWarnings } from "./quality.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
 
 export type RefactorPlanKind = "extract-component-plan" | "refactor-state-plan";
@@ -92,7 +92,7 @@ export type ApplyPlanResult = {
   written: boolean;
   steps: Array<RefactorPlanStep & { selected: boolean; status: "applied" | "skipped" | "metadata" }>;
   files: Array<{ step: string; file: string; changed: boolean; written: boolean; diff?: string }>;
-  warnings: ReturnType<typeof fileLengthWarnings>;
+  warnings: ReturnType<typeof qualityWarnings>;
   write_policy: Record<string, unknown>;
 };
 
@@ -230,8 +230,8 @@ function applyExtractComponentPlan(planPath: string, plan: ExtractComponentPlanF
     ...(targetSelected ? [{ step: "create-component-file", file: plan.target, changed: targetChanged, written: targetPolicy.write && targetChanged, ...(targetDiff ? { diff: targetDiff } : {}) }] : []),
   ];
   const warnings = [
-    ...(sourceSelected ? fileLengthWarnings(plan.source, planned.source, planned.nextSource) : []),
-    ...(targetSelected ? fileLengthWarnings(plan.target, targetSource, planned.newSource) : []),
+    ...(sourceSelected ? qualityWarnings(plan.source, planned.source, planned.nextSource) : []),
+    ...(targetSelected ? qualityWarnings(plan.target, targetSource, planned.newSource) : []),
   ];
 
   return {
