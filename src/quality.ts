@@ -28,6 +28,11 @@ export type QualityConfig = {
   maxExtractProps: number;
   defaultWrite: "auto" | "true" | "false";
   defaultOutput: "auto" | "compact" | "detailed";
+  diffMode: "off" | "stats" | "auto" | "full";
+  inlineDiffMaxBytes: number;
+  inlineDiffMaxHunks: number;
+  diffArtifactDir: string;
+  diffArtifacts?: boolean;
 };
 
 export type FileLengthWarning = {
@@ -264,6 +269,10 @@ const DEFAULT_CONFIG: QualityConfig = {
   maxExtractProps: 12,
   defaultWrite: "auto",
   defaultOutput: "auto",
+  diffMode: "auto",
+  inlineDiffMaxBytes: 8_000,
+  inlineDiffMaxHunks: 10,
+  diffArtifactDir: ".tedit-cache/diffs",
 };
 
 export function loadQualityConfig(filePath?: string): QualityConfig {
@@ -286,7 +295,23 @@ export function loadQualityConfig(filePath?: string): QualityConfig {
   const maxExtractProps = normalizePositiveInteger(data.max_extract_props ?? data.maxExtractProps, DEFAULT_CONFIG.maxExtractProps);
   const defaultWrite = normalizeDefaultWrite(data.defaultWrite ?? data.default_write, DEFAULT_CONFIG.defaultWrite);
   const defaultOutput = normalizeDefaultOutput(outputDefaultValue(data), DEFAULT_CONFIG.defaultOutput);
-  return { fileLengthThresholds: thresholds, classNameConflicts, maxExtractProps, defaultWrite, defaultOutput };
+  const diffMode = normalizeDiffMode(diffConfigValue(data, "diffMode", "diff_mode", "diff-mode"), DEFAULT_CONFIG.diffMode);
+  const inlineDiffMaxBytes = normalizePositiveInteger(diffConfigValue(data, "inlineDiffMaxBytes", "inline_diff_max_bytes", "inline-diff-max-bytes"), DEFAULT_CONFIG.inlineDiffMaxBytes);
+  const inlineDiffMaxHunks = normalizePositiveInteger(diffConfigValue(data, "inlineDiffMaxHunks", "inline_diff_max_hunks", "inline-diff-max-hunks"), DEFAULT_CONFIG.inlineDiffMaxHunks);
+  const diffArtifactDir = normalizeNonEmptyString(diffConfigValue(data, "diffArtifactDir", "diff_artifact_dir", "diff-artifact-dir"), DEFAULT_CONFIG.diffArtifactDir, "output.diffArtifactDir");
+  const diffArtifacts = normalizeOptionalBoolean(diffConfigValue(data, "diffArtifacts", "diff_artifacts", "diff-artifacts"), undefined, "output.diffArtifacts");
+  return {
+    fileLengthThresholds: thresholds,
+    classNameConflicts,
+    maxExtractProps,
+    defaultWrite,
+    defaultOutput,
+    diffMode,
+    inlineDiffMaxBytes,
+    inlineDiffMaxHunks,
+    diffArtifactDir,
+    ...(diffArtifacts === undefined ? {} : { diffArtifacts }),
+  };
 }
 
 export function fileLengthWarnings(filePath: string, previous: string, next: string): FileLengthWarning[] {
@@ -878,7 +903,7 @@ function normalizeClassGroupMap(value: unknown, base: Record<string, string[]>):
   return groups;
 }
 
-function normalizeOptionalBoolean(value: unknown, fallback: boolean, label: string): boolean {
+function normalizeOptionalBoolean<T extends boolean | undefined>(value: unknown, fallback: T, label: string): boolean | T {
   if (value === undefined) return fallback;
   if (value === true || value === "true") return true;
   if (value === false || value === "false") return false;
@@ -920,6 +945,29 @@ function normalizeDefaultOutput(value: unknown, fallback: QualityConfig["default
   if (value === undefined) return fallback;
   if (value === "compact" || value === "detailed" || value === "auto") return value;
   fail("INVALID_TEDIT_CONFIG", "output.defaultMode must be compact, detailed, or auto.");
+}
+
+function normalizeDiffMode(value: unknown, fallback: QualityConfig["diffMode"]): QualityConfig["diffMode"] {
+  if (value === undefined) return fallback;
+  if (value === "off" || value === "stats" || value === "auto" || value === "full") return value;
+  fail("INVALID_TEDIT_CONFIG", "output.diffMode must be off, stats, auto, or full.");
+}
+
+function normalizeNonEmptyString(value: unknown, fallback: string, label: string): string {
+  if (value === undefined) return fallback;
+  if (typeof value === "string" && value.trim().length > 0) return value;
+  fail("INVALID_TEDIT_CONFIG", `${label} must be a non-empty string.`);
+}
+
+function diffConfigValue(data: Record<string, unknown>, ...keys: string[]): unknown {
+  const output = data.output && typeof data.output === "object" && !Array.isArray(data.output)
+    ? data.output as Record<string, unknown>
+    : {};
+  for (const key of keys) {
+    if (output[key] !== undefined) return output[key];
+    if (data[key] !== undefined) return data[key];
+  }
+  return undefined;
 }
 
 function fileLengthMessage(level: FileLengthWarning["level"]): string {

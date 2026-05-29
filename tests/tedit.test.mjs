@@ -1758,6 +1758,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(result.structuredContent.parse_skip_reason, "unsupported_extension");
     assert.equal(result.structuredContent.files[0].parse_skipped, true);
     assert.equal(result.structuredContent.files[0].diffAvailable, true);
+    assert.equal(result.structuredContent.files[0].diff.mode, "inline");
+    assert.match(result.structuredContent.files[0].diff.preview, /new value/);
     assert.equal(result.structuredContent.diff, undefined);
     assert.equal(result.structuredContent.write_policy, undefined);
     assert.equal(result.structuredContent.next, undefined);
@@ -1794,6 +1796,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(multieditResult.structuredContent.files.every((item) => item.written === undefined));
     assert.ok(multieditResult.structuredContent.files.every((item) => item.status === undefined));
     assert.ok(multieditResult.structuredContent.files.every((item) => item.diffAvailable === true));
+    assert.ok(multieditResult.structuredContent.files.every((item) => item.diff.mode === "inline"));
     const multieditText = JSON.parse(multieditResult.content[0].text);
     assert.deepEqual(multieditText, multieditResult.structuredContent);
     assert.equal(multieditText.results, undefined);
@@ -1801,6 +1804,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(multieditText.write_policy, undefined);
     assert.ok(multieditText.files.every((item) => item.file === undefined));
     assert.ok(multieditText.files.every((item) => item.change === "modified"));
+    assert.ok(multieditText.files.every((item) => item.diff.mode === "inline"));
     assert.equal(readFileSync(file, "utf8"), "# Title\nnew value\n");
 
     const detailedEdit = await client.callTool({
@@ -2533,11 +2537,11 @@ test("cli non-tty defaults to compact output and detailed override keeps legacy 
   assert.equal(compact.files[0].path, file);
   assert.equal(compact.files[0].status, undefined);
   assert.equal(compact.files[0].diffAvailable, true);
+  assert.equal(compact.files[0].diff.mode, "inline");
+  assert.equal(compact.files[0].diff.hunks, 1);
+  assert.match(compact.files[0].diff.preview, /\+new/);
   assert.equal(compact.diff, undefined);
-  assert.deepEqual(compact.next, [
-    "rerun with write=true to apply",
-    "add --include-diffs to inline diffs or --diff-out <file> to save them",
-  ]);
+  assert.deepEqual(compact.next, ["rerun with write=true to apply"]);
   assert.equal(readFileSync(file, "utf8"), "old\n");
 
   const detailed = runRaw(["edit", file, "--find", "old", "--replace", "new", "--dry-run", "--output", "detailed"]);
@@ -2567,6 +2571,77 @@ test("config file can choose the default CLI output mode", () => {
   assert.equal(compact.files[0].change, "modified");
   assert.equal(compact.files[0].persisted, false);
   assert.equal(compact.files[0].diffAvailable, true);
+  assert.equal(compact.files[0].diff.mode, "inline");
+  assert.match(compact.files[0].diff.preview, /\+new/);
+});
+
+test("compact diffMode auto inlines small diffs and spills large write diffs to artifacts", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const smallFile = join(dir, "small.txt");
+  const largeFile = join(dir, "large.txt");
+  writeFileSync(smallFile, "old\n");
+  writeFileSync(largeFile, "old\n");
+
+  const small = JSON.parse(runRawInCwd(["edit", smallFile, "--find", "old", "--replace", "new", "--dry-run"], dir));
+  assert.equal(small.files[0].diff.mode, "inline");
+  assert.match(small.files[0].diff.preview, /\+new/);
+  assert.equal(small.files[0].diff.path, undefined);
+
+  const largeReplace = "new " + "x".repeat(9000);
+  const large = JSON.parse(runRawInCwd(["edit", largeFile, "--find", "old", "--replace", largeReplace, "--write", "--no-backup"], dir));
+  const diff = large.files[0].diff;
+
+  assert.equal(diff.mode, "artifact");
+  assert.equal(diff.truncated, true);
+  assert.ok(diff.bytes > 8000);
+  assert.equal(diff.hunks, 1);
+  assert.ok(realpathSync(diff.path).startsWith(realpathSync(join(dir, ".tedit-cache", "diffs"))));
+  assert.match(diff.relPath, /^\.tedit-cache\/diffs\/large\.txt-[a-f0-9]+\.diff$/);
+  assert.match(diff.preview, /diff truncated/);
+  assert.match(readFileSync(diff.path, "utf8"), /\+new x/);
+  assert.equal(readFileSync(largeFile, "utf8"), largeReplace + "\n");
+});
+
+test("compact diffMode auto does not write dry-run artifacts unless explicitly enabled", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const dryFile = join(dir, "dry.txt");
+  const explicitFile = join(dir, "explicit.txt");
+  const replace = "new " + "x".repeat(9000);
+  writeFileSync(dryFile, "old\n");
+  writeFileSync(explicitFile, "old\n");
+
+  const dryRun = JSON.parse(runRawInCwd(["edit", dryFile, "--find", "old", "--replace", replace, "--dry-run"], dir));
+  assert.equal(dryRun.files[0].diff.mode, "truncated");
+  assert.equal(dryRun.files[0].diff.path, undefined);
+  assert.match(dryRun.files[0].diff.preview, /diff truncated/);
+  assert.equal(existsSync(join(dir, ".tedit-cache", "diffs")), false);
+  assert.equal(readFileSync(dryFile, "utf8"), "old\n");
+
+  const explicit = JSON.parse(runRawInCwd(["edit", explicitFile, "--find", "old", "--replace", replace, "--dry-run", "--diff-artifacts=true"], dir));
+  assert.equal(explicit.files[0].diff.mode, "artifact");
+  assert.ok(existsSync(explicit.files[0].diff.path));
+  assert.equal(readFileSync(explicitFile, "utf8"), "old\n");
+});
+
+test("compact diffMode can be configured or disabled per command", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const statsFile = join(dir, "stats.txt");
+  const disabledFile = join(dir, "disabled.txt");
+  mkdirp(join(dir, ".tedit"));
+  writeFileSync(join(dir, ".tedit", "config.json"), JSON.stringify({
+    output: { diffMode: "stats" }
+  }, null, 2));
+  writeFileSync(statsFile, "old\n");
+  writeFileSync(disabledFile, "old\n");
+
+  const stats = JSON.parse(runRawInCwd(["edit", statsFile, "--find", "old", "--replace", "new", "--dry-run"], dir));
+  assert.equal(stats.files[0].diff.mode, "stats");
+  assert.equal(stats.files[0].diff.preview, undefined);
+  assert.equal(stats.files[0].diff.path, undefined);
+
+  const disabled = JSON.parse(runRawInCwd(["edit", disabledFile, "--find", "old", "--replace", "new", "--dry-run", "--diff-mode=off"], dir));
+  assert.equal(disabled.files[0].diffAvailable, true);
+  assert.equal(disabled.files[0].diff, undefined);
 });
 
 test("config file validates the default CLI output mode", () => {
@@ -2587,6 +2662,27 @@ test("config file validates the default CLI output mode", () => {
   assert.equal(failed.status, 1);
   assert.equal(body.code, "INVALID_TEDIT_CONFIG");
   assert.match(body.error, /output\.defaultMode/);
+  assert.equal(readFileSync(file, "utf8"), "old\n");
+});
+
+test("config file validates compact diff output settings", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "notes.txt");
+  mkdirp(join(dir, ".tedit"));
+  writeFileSync(join(dir, ".tedit", "config.json"), JSON.stringify({
+    output: { diffMode: "hunks" }
+  }, null, 2));
+  writeFileSync(file, "old\n");
+
+  const failed = spawnSync(process.execPath, [cli, "edit", file, "--find", "old", "--replace", "new", "--dry-run"], {
+    encoding: "utf8",
+    env: rawEnv(),
+  });
+  const body = JSON.parse(failed.stderr);
+
+  assert.equal(failed.status, 1);
+  assert.equal(body.code, "INVALID_TEDIT_CONFIG");
+  assert.match(body.error, /output\.diffMode/);
   assert.equal(readFileSync(file, "utf8"), "old\n");
 });
 
@@ -3463,6 +3559,15 @@ function runWithInput(args, input) {
 function runRaw(args, input) {
   return execFileSync(process.execPath, [cli, ...args], {
     encoding: "utf8",
+    ...(input === undefined ? {} : { input }),
+    env: rawEnv(),
+  });
+}
+
+function runRawInCwd(args, cwd, input) {
+  return execFileSync(process.execPath, [cli, ...args], {
+    encoding: "utf8",
+    cwd,
     ...(input === undefined ? {} : { input }),
     env: rawEnv(),
   });

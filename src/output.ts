@@ -1,9 +1,20 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, relative, resolve } from "node:path";
+import { loadQualityConfig } from "./quality.js";
+
 export type OutputMode = "compact" | "detailed";
+export type DiffMode = "off" | "stats" | "auto" | "full";
 
 export type OutputOptions = {
   mode?: OutputMode;
   includeDiffs?: boolean;
   includeDetails?: boolean;
+  diffMode?: DiffMode;
+  inlineDiffMaxBytes?: number;
+  inlineDiffMaxHunks?: number;
+  diffArtifactDir?: string;
+  diffArtifacts?: boolean;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -29,6 +40,31 @@ type AgentFileSummary = {
   warnings?: unknown[];
 };
 
+type DiffStats = {
+  hunks: number;
+  bytesDelta: number;
+  bytes: number;
+};
+
+type DiffPayload = {
+  mode: "stats" | "inline" | "artifact" | "truncated" | "full";
+  bytes: number;
+  hunks: number;
+  bytesDelta?: number;
+  preview?: string;
+  text?: string;
+  path?: string;
+  relPath?: string;
+  truncated?: boolean;
+  artifactError?: string;
+};
+
+const DEFAULT_DIFF_MODE: DiffMode = "auto";
+const DEFAULT_INLINE_DIFF_MAX_BYTES = 8_000;
+const DEFAULT_INLINE_DIFF_MAX_HUNKS = 10;
+const DEFAULT_DIFF_ARTIFACT_DIR = ".tedit-cache/diffs";
+const ARTIFACT_PREVIEW_MAX_BYTES = 2_000;
+
 export function parseOutputMode(value: unknown, label = "output"): OutputMode | undefined {
   if (value === undefined || value === false) return undefined;
   const text = String(value);
@@ -36,11 +72,36 @@ export function parseOutputMode(value: unknown, label = "output"): OutputMode | 
   throw new Error(`${label} must be compact or detailed.`);
 }
 
-export function outputOptionsFromRecord(record: JsonRecord): OutputOptions {
+export function parseDiffMode(value: unknown, label = "diffMode"): DiffMode | undefined {
+  if (value === undefined || value === false) return undefined;
+  const text = String(value);
+  if (text === "off" || text === "stats" || text === "auto" || text === "full") return text;
+  throw new Error(`${label} must be off, stats, auto, or full.`);
+}
+
+export function outputOptionsFromConfig(filePath?: string): OutputOptions {
+  const config = loadQualityConfig(filePath);
   return {
+    diffMode: config.diffMode,
+    inlineDiffMaxBytes: config.inlineDiffMaxBytes,
+    inlineDiffMaxHunks: config.inlineDiffMaxHunks,
+    diffArtifactDir: config.diffArtifactDir,
+    ...(config.diffArtifacts === undefined ? {} : { diffArtifacts: config.diffArtifacts }),
+  };
+}
+
+export function outputOptionsFromRecord(record: JsonRecord): OutputOptions {
+  const base = outputOptionsFromConfig(outputConfigSearchPath(record));
+  return {
+    ...base,
     mode: parseOutputMode(record.output, "output"),
     includeDiffs: booleanValue(record.includeDiffs ?? record.include_diffs ?? record["include-diffs"]),
     includeDetails: booleanValue(record.includeDetails ?? record.include_details ?? record["include-details"]),
+    diffMode: parseDiffMode(pick(record, "diffMode", "diff_mode", "diff-mode"), "diffMode") ?? base.diffMode,
+    inlineDiffMaxBytes: positiveInteger(pick(record, "inlineDiffMaxBytes", "inline_diff_max_bytes", "inline-diff-max-bytes"), base.inlineDiffMaxBytes),
+    inlineDiffMaxHunks: positiveInteger(pick(record, "inlineDiffMaxHunks", "inline_diff_max_hunks", "inline-diff-max-hunks"), base.inlineDiffMaxHunks),
+    diffArtifactDir: stringValue(pick(record, "diffArtifactDir", "diff_artifact_dir", "diff-artifact-dir")) ?? base.diffArtifactDir,
+    diffArtifacts: optionalBoolean(pick(record, "diffArtifacts", "diff_artifacts", "diff-artifacts"), base.diffArtifacts),
   };
 }
 
@@ -100,7 +161,7 @@ function compactMutationResult(record: JsonRecord, files: AgentFileSummary[], op
   if (warnings.length > 0) compact.warnings = warnings;
   if (typeof record.plan === "string") compact.plan = record.plan;
   if (next.length > 0) compact.next = next;
-  if (options.includeDiffs) compact.diffs = collectDiffs(record);
+  if (effectiveDiffMode(options) === "full" && options.includeDiffs) compact.diffs = collectDiffs(record);
   return compact;
 }
 
@@ -203,7 +264,8 @@ function stableStringify(value: unknown): string {
 
 function compactFiles(record: JsonRecord, options: OutputOptions): unknown[] {
   if (Array.isArray(record.files)) return enrichAgentFiles(record.files, record, options);
-  return agentFilesFromRecord(record).map(compactFileOutput);
+  const file = compactFileFrom(record, parseByFileMap(record));
+  return file ? [compactFileOutputForRecord(record, file, options)] : [];
 }
 
 function agentFilesFromRecord(record: JsonRecord): AgentFileSummary[] {
@@ -231,14 +293,22 @@ function enrichAgentFiles(values: unknown[], record: JsonRecord, options: Output
       if (!value || typeof value !== "object" || Array.isArray(value)) return file;
       return { ...(value as JsonRecord), ...file };
     }
-    return options.includeDiffs && value && typeof value === "object" && !Array.isArray(value) && typeof (value as JsonRecord).diff === "string"
-      ? { ...compactFileOutput(file), diff: (value as JsonRecord).diff }
-      : compactFileOutput(file);
+    return compactFileOutputForRecord(value, file, options);
   });
 }
 
 function compactFileOutput(file: AgentFileSummary): Omit<AgentFileSummary, "file" | "changed" | "written" | "deleted"> {
   const { file: _file, changed: _changed, written: _written, deleted: _deleted, ...output } = file;
+  return output;
+}
+
+function compactFileOutputForRecord(value: unknown, file: AgentFileSummary, options: OutputOptions): JsonRecord {
+  const output = compactFileOutput(file) as JsonRecord;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return output;
+  const record = value as JsonRecord;
+  const diff = typeof record.diff === "string" && record.diff.length > 0 ? record.diff : undefined;
+  const diffPayload = diff ? diffPayloadForFile(diff, file, options) : undefined;
+  if (diffPayload) output.diff = diffPayload;
   return output;
 }
 
@@ -362,6 +432,14 @@ function countFiles(files: AgentFileSummary[], predicate: (file: AgentFileSummar
 }
 
 function diffStats(diff: string): Pick<AgentFileSummary, "hunks" | "bytesDelta"> {
+  const stats = fullDiffStats(diff);
+  return {
+    ...(stats.hunks > 0 ? { hunks: stats.hunks } : {}),
+    ...(stats.bytesDelta !== 0 ? { bytesDelta: stats.bytesDelta } : {}),
+  };
+}
+
+function fullDiffStats(diff: string): DiffStats {
   let hunks = 0;
   let bytesDelta = 0;
   for (const line of diff.split(/\r?\n/)) {
@@ -369,10 +447,98 @@ function diffStats(diff: string): Pick<AgentFileSummary, "hunks" | "bytesDelta">
     else if (line.startsWith("+") && !line.startsWith("+++")) bytesDelta += line.length;
     else if (line.startsWith("-") && !line.startsWith("---")) bytesDelta -= line.length;
   }
+  return { hunks, bytesDelta, bytes: Buffer.byteLength(diff, "utf8") };
+}
+
+function diffPayloadForFile(diff: string, file: AgentFileSummary, options: OutputOptions): DiffPayload | undefined {
+  const mode = effectiveDiffMode(options);
+  if (mode === "off") return undefined;
+  const stats = fullDiffStats(diff);
+  const base = diffPayloadBase(mode === "auto" ? "stats" : mode, stats);
+  if (mode === "stats") return base;
+  if (mode === "full") return { ...base, mode: "full", text: diff };
+
+  const inlineMaxBytes = outputPositive(options.inlineDiffMaxBytes, DEFAULT_INLINE_DIFF_MAX_BYTES);
+  const inlineMaxHunks = outputPositive(options.inlineDiffMaxHunks, DEFAULT_INLINE_DIFF_MAX_HUNKS);
+  if (stats.bytes <= inlineMaxBytes && stats.hunks <= inlineMaxHunks) {
+    return { ...base, mode: "inline", preview: diff };
+  }
+
+  const preview = previewDiff(diff, Math.min(inlineMaxBytes, ARTIFACT_PREVIEW_MAX_BYTES));
+  const artifactAllowed = file.written === true || options.diffArtifacts === true;
+  if (!artifactAllowed) return { ...base, mode: "truncated", preview, truncated: true };
+  if (options.diffArtifacts === false) return { ...base, mode: "truncated", preview, truncated: true };
+
+  const artifact = writeDiffArtifact(diff, file, options);
+  if (artifact.ok) {
+    return {
+      ...base,
+      mode: "artifact",
+      path: artifact.path,
+      relPath: artifact.relPath,
+      preview,
+      truncated: true,
+    };
+  }
+  return { ...base, mode: "truncated", preview, truncated: true, artifactError: artifact.error };
+}
+
+function diffPayloadBase(mode: DiffPayload["mode"], stats: DiffStats): DiffPayload {
   return {
-    ...(hunks > 0 ? { hunks } : {}),
-    ...(bytesDelta !== 0 ? { bytesDelta } : {}),
+    mode,
+    bytes: stats.bytes,
+    hunks: stats.hunks,
+    ...(stats.bytesDelta !== 0 ? { bytesDelta: stats.bytesDelta } : {}),
   };
+}
+
+function effectiveDiffMode(options: OutputOptions): DiffMode {
+  return options.diffMode ?? DEFAULT_DIFF_MODE;
+}
+
+function writeDiffArtifact(diff: string, file: AgentFileSummary, options: OutputOptions): { ok: true; path: string; relPath: string } | { ok: false; error: string } {
+  try {
+    const cwd = process.cwd();
+    const dirInput = options.diffArtifactDir ?? DEFAULT_DIFF_ARTIFACT_DIR;
+    const artifactDir = resolveArtifactDir(cwd, dirInput);
+    const hash = createHash("sha256").update(file.path).update("\0").update(diff).digest("hex").slice(0, 16);
+    const safeBase = sanitizeArtifactName(basename(file.path) || "diff");
+    const artifactPath = resolve(artifactDir, `${safeBase}-${hash}.diff`);
+    mkdirSync(artifactDir, { recursive: true });
+    writeFileSync(artifactPath, diff);
+    return { ok: true, path: artifactPath, relPath: relative(cwd, artifactPath) || basename(artifactPath) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function resolveArtifactDir(cwd: string, dirInput: string): string {
+  const resolved = isAbsolute(dirInput) ? resolve(dirInput) : resolve(cwd, dirInput);
+  const relativePath = relative(cwd, resolved);
+  if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error("diffArtifactDir must stay inside the current working directory.");
+  }
+  return resolved;
+}
+
+function sanitizeArtifactName(name: string): string {
+  const cleaned = name.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return (cleaned || "diff").slice(0, 80);
+}
+
+function previewDiff(diff: string, maxBytes: number): string {
+  const limit = Math.max(1, maxBytes);
+  if (Buffer.byteLength(diff, "utf8") <= limit) return diff;
+  let bytes = 0;
+  const lines: string[] = [];
+  for (const line of diff.split(/\r?\n/)) {
+    const nextBytes = Buffer.byteLength(line + "\n", "utf8");
+    if (bytes + nextBytes > limit) break;
+    lines.push(line);
+    bytes += nextBytes;
+  }
+  const preview = lines.length > 0 ? lines.join("\n") + "\n" : diff.slice(0, limit);
+  return preview + "... diff truncated ...";
 }
 
 function agentSummary(record: JsonRecord, files: AgentFileSummary[]): string {
@@ -411,8 +577,8 @@ function agentNextSteps(record: JsonRecord, files: AgentFileSummary[], options: 
 function deterministicNextSteps(files: AgentFileSummary[], options: OutputOptions): string[] {
   const steps: string[] = [];
   if (files.some((file) => file.changed && !file.written)) steps.push("rerun with write=true to apply");
-  if (options.mode !== "detailed" && !options.includeDetails && !options.includeDiffs && files.some((file) => file.diffAvailable && file.changed && !file.written)) {
-    steps.push("add --include-diffs to inline diffs or --diff-out <file> to save them");
+  if (options.mode !== "detailed" && !options.includeDetails && effectiveDiffMode(options) === "off" && files.some((file) => file.diffAvailable && file.changed && !file.written)) {
+    steps.push("set diffMode=auto or use --diff-out <file> to inspect diffs");
   }
   return steps;
 }
@@ -423,4 +589,49 @@ function plural(word: string, count: number): string {
 
 function booleanValue(value: unknown): boolean {
   return value === true || value === "true";
+}
+
+function optionalBoolean(value: unknown, fallback: boolean | undefined): boolean | undefined {
+  if (value === undefined) return fallback;
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  return fallback;
+}
+
+function positiveInteger(value: unknown, fallback: number | undefined): number | undefined {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return parsed;
+}
+
+function outputPositive(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function stringValue(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  return value;
+}
+
+function pick(record: JsonRecord, ...keys: string[]): unknown {
+  for (const key of keys) {
+    if (record[key] !== undefined) return record[key];
+  }
+  return undefined;
+}
+
+function outputConfigSearchPath(record: JsonRecord): string | undefined {
+  for (const key of ["file", "from", "to", "path", "plan"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  if (Array.isArray(record.edits)) {
+    for (const edit of record.edits) {
+      if (edit && typeof edit === "object" && !Array.isArray(edit) && typeof (edit as JsonRecord).file === "string") {
+        return (edit as JsonRecord).file as string;
+      }
+    }
+  }
+  return undefined;
 }

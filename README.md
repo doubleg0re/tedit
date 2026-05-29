@@ -141,11 +141,15 @@ policy, or deterministic retry hints are useful.
 Mutating MCP tools default to compact machine-readable results for agent loops:
 `ok`, `kind`, `summary`, `changedCount`, `writtenCount`, `files[].path`,
 `files[].change`, `files[].persisted`, parser verification fields, and a
-`next` array only when there is a deterministic follow-up such as applying a
-dry-run. Compact discovery output preserves primary payloads such as
+`files[].diff` payload when a diff exists, plus a `next` array only when there
+is a deterministic follow-up such as applying a dry-run. Compact discovery
+output preserves primary payloads such as
 `matches`, `node`, `actions`, `rules`, and parse verification fields. Pass
-`output: "detailed"`, `includeDiffs: true`, or
-`includeDetails: true` to retrieve full diffs, matches, and write-policy
+`diffMode: "off" | "stats" | "auto" | "full"` to control compact diff
+verbosity. `auto` inlines small diffs and returns a truncated preview for
+large dry-runs; large writes also save the full diff under `.tedit-cache/diffs`
+and return `files[].diff.path`. Pass `output: "detailed"` or
+`includeDetails: true` to retrieve legacy full results and write-policy
 diagnostics. Failures use the same structured tedit fields where possible,
 including `ok: false`, `kind: "error"`, `code`, `error`, and actionable
 `next` hints. Verbose failure details remain available through detailed output.
@@ -594,7 +598,10 @@ walking upward from the target/spec path, falling back to the current
 directory. `output.defaultMode` controls the CLI default when `--output`,
 `TEDIT_OUTPUT`, and `--json` are not set. Use `compact` for agent-first
 loops, `detailed` for legacy full-diff terminal output, or `auto` to keep
-the built-in TTY/non-TTY behavior.
+the built-in TTY/non-TTY behavior. `output.diffMode` controls compact diff
+payloads: `off` omits them, `stats` keeps counts only, `auto` inlines small
+diffs and spills large write diffs to artifacts, and `full` includes full
+inline text.
 
 ```json
 {
@@ -612,10 +619,18 @@ the built-in TTY/non-TTY behavior.
   },
   "defaultWrite": "auto",
   "output": {
-    "defaultMode": "compact"
+    "defaultMode": "compact",
+    "diffMode": "auto",
+    "inlineDiffMaxBytes": 8000,
+    "inlineDiffMaxHunks": 10,
+    "diffArtifactDir": ".tedit-cache/diffs"
   }
 }
 ```
+
+Set `output.diffArtifacts` to `false` to disable artifact writes, or `true` to
+allow large dry-run diffs to write diagnostic artifacts. By default, `auto`
+only writes diff artifacts after real file writes.
 
 Class group entries are merged with the built-in JSX groups. Built-in spacing,
 gap, inset, border-width, and border-radius groups use axis-overlap checks;

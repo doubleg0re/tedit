@@ -15,7 +15,7 @@ import type { ImportEditSpec, TextMatchSpec, TextValueSpec, TreeNodeSpec, ValueS
 import { getOptionalAdapterForFile, listRules, openDocumentForFile } from "./core/registry.js";
 import { unifiedDiff } from "./diff.js";
 import { toErrorResult } from "./errors.js";
-import { formatAgentResult, parseOutputMode, type OutputMode, type OutputOptions } from "./output.js";
+import { formatAgentResult, outputOptionsFromConfig, parseDiffMode, parseOutputMode, type OutputMode, type OutputOptions } from "./output.js";
 import { planExtract, type HelperPolicy } from "./extract.js";
 import { parseMultieditInput, runMultiedit, runMultieditInput, type MultieditResult } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
@@ -1511,11 +1511,34 @@ function outputConfigSearchPath(args: ParsedArgs): string {
 }
 
 function outputOptions(args: ParsedArgs): OutputOptions {
+  const configOptions = outputOptionsFromConfig(outputConfigSearchPath(args));
   return {
+    ...configOptions,
     mode: outputMode(args),
     includeDiffs: booleanFlag(args, "include-diffs") || booleanFlag(args, "includeDiffs"),
     includeDetails: booleanFlag(args, "include-details") || booleanFlag(args, "includeDetails"),
+    diffMode: parseDiffMode(stringFlag(args, "diff-mode") ?? stringFlag(args, "diffMode"), "--diff-mode") ?? configOptions.diffMode,
+    inlineDiffMaxBytes: positiveIntegerFlag(args, "inline-diff-max-bytes") ?? positiveIntegerFlag(args, "inlineDiffMaxBytes") ?? configOptions.inlineDiffMaxBytes,
+    inlineDiffMaxHunks: positiveIntegerFlag(args, "inline-diff-max-hunks") ?? positiveIntegerFlag(args, "inlineDiffMaxHunks") ?? configOptions.inlineDiffMaxHunks,
+    diffArtifactDir: stringFlag(args, "diff-artifact-dir") ?? stringFlag(args, "diffArtifactDir") ?? configOptions.diffArtifactDir,
+    diffArtifacts: optionalBooleanFlag(args, "diff-artifacts") ?? optionalBooleanFlag(args, "diffArtifacts") ?? configOptions.diffArtifacts,
   };
+}
+
+function positiveIntegerFlag(args: ParsedArgs, name: string): number | undefined {
+  const value = stringFlag(args, name);
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`--${name} must be a positive integer.`);
+  return parsed;
+}
+
+function optionalBooleanFlag(args: ParsedArgs, name: string): boolean | undefined {
+  const value = args.flags[name];
+  if (value === undefined) return undefined;
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  throw new Error(`--${name} must be true or false.`);
 }
 
 function booleanFlag(args: ParsedArgs, name: string): boolean {
@@ -1805,6 +1828,7 @@ Usage:
   tedit backups clean --older-than <duration> [--root <dir>] [--dry-run|--write]
 
 Mutation commands use git-aware default write mode. Pass --dry-run or --write to be explicit.
+Compact output uses --diff-mode off|stats|auto|full. auto inlines small diffs and saves large write diffs under .tedit-cache/diffs.
 Use tedit help <command> for short command-specific help.
 `);
 }
