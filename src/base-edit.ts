@@ -480,7 +480,7 @@ export function verifyParseForFile(filePath: string, source: string, enabled = t
   const adapter = getOptionalAdapterForFile(filePath);
   const extension = extname(filePath).toLowerCase();
   const adapterVerifier = adapter?.verify;
-  const parser = adapterVerifier ? adapter.rule.name : parserForExtension(extension);
+  const parser = adapterVerifier ? parserLabelForAdapter(adapter.rule.name, extension) : parserForExtension(extension);
   if (!parser) return { verified: false, skipped: true, skipReason: "unsupported_extension" };
 
   try {
@@ -506,6 +506,13 @@ function parserForExtension(extension: string): string | undefined {
   if (extension === ".md" || extension === ".markdown" || extension === ".mdx") return "markdown-lite";
   if (extension === ".yaml" || extension === ".yml") return "yaml-lite";
   return undefined;
+}
+
+function parserLabelForAdapter(ruleName: string, extension: string): string {
+  if (ruleName !== "jsx") return ruleName;
+  if (extension === ".ts") return "typescript";
+  if (extension === ".js") return "javascript";
+  return ruleName;
 }
 
 function jsonParseLocation(error: unknown): Record<string, unknown> {

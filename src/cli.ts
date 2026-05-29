@@ -2103,7 +2103,7 @@ function shortHelp(command: string): string | null {
       return "tedit inspect-range\nUsage:\n  tedit inspect-range <file> --lines N:M [--context N] [--json]\n\nShows line context, byte range, parser status, and edit-ready suggestions.";
     case "search-text":
     case "search_text":
-      return "tedit search-text\nUsage:\n  tedit search-text <query> [path...] [--regex] [--glob <glob>] [--context N] [--multiedit-spec --replace <text>] [--max-results N] [--json]\n\nSearches text and returns edit-ready candidates with optional context, multiedit specs, and inspect/edit follow-ups.";
+      return "tedit search-text\nUsage:\n  tedit search-text <query> [path...] [--regex] [--glob <glob>] [--context N] [--multiedit-spec --replace <text>] [--max-results N] [--json]\n\nSearches text and returns edit-ready candidates with optional context, multiedit specs, and inspect/edit follow-ups.\n\nGlob supports *, **, ?, and comma braces such as **/*.{ts,tsx}; spaces around brace alternatives are ignored.";
     case "history-trace":
     case "history_trace":
       return "tedit history-trace\nUsage:\n  tedit history-trace <file> [--lines N:M|--contains <text>|--regex <pattern>] [--limit N] [--json]\n\nTraces git history with blame/log -L for lines or log -S/-G for text.";

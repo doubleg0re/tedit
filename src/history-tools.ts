@@ -49,7 +49,7 @@ export function historyTrace(filePath: string, options: HistoryTraceOptions = {}
     blame,
     commands,
     next: [
-      ...(mode === "lines" ? [{ tool: "inspect_range", arguments: { file, lines: options.lines, context: 3 } }] : []),
+      ...(mode === "lines" ? [{ tool: "inspect_range", cliCommand: "inspect-range", arguments: { file, lines: options.lines, context: 3 } }] : []),
       { tool: "git", command: commands.log },
     ],
   };

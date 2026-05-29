@@ -258,7 +258,7 @@ function candidateForMatch(index: number, filePath: string, source: string, line
       replaceHint: "findLines replaces whole lines; include the trailing newline unless replacing the final line.",
     },
     next: [
-      { tool: "inspect_range", arguments: { file: filePath, lines: range.lineRange, context: context > 0 ? context : 3 } },
+      { tool: "inspect_range", cliCommand: "inspect-range", arguments: { file: filePath, lines: range.lineRange, context: context > 0 ? context : 3 } },
       { tool: "edit", arguments: { file: filePath, findLines: range.lineRange, replace: "<replacement including trailing newline>" } },
     ],
   };
@@ -347,7 +347,8 @@ function globToRegExp(glob: string): RegExp {
       if (!body) {
         pattern += escapeRegExp(char);
       } else {
-        pattern += `(?:${body.split(",").map(escapeRegExp).join("|")})`;
+        const alternatives = body.split(",").map((part) => part.trim()).filter(Boolean);
+        pattern += alternatives.length > 0 ? `(?:${alternatives.map(escapeRegExp).join("|")})` : escapeRegExp(char);
         index = close;
       }
     } else {

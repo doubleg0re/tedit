@@ -157,11 +157,16 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   assert.equal(search.results[0].suggested.findLines, "2");
   assert.match(search.results[0].suggested.replaceHint, /trailing newline/);
   assert.equal(search.results[0].next[0].tool, "inspect_range");
+  assert.equal(search.results[0].next[0].cliCommand, "inspect-range");
 
-  const braceGlobSearch = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.{tsx,ts}", "--multiedit-spec", "--replace", "Delete", "--json"]));
+  const braceGlobSearch = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.{tsx, ts}", "--multiedit-spec", "--replace", "Delete", "--json"]));
   assert.equal(braceGlobSearch.count, 2);
   assert.equal(braceGlobSearch.multiedit.edits.length, 2);
   assert.deepEqual(braceGlobSearch.results.map((result) => basename(result.file)).sort(), ["Page.tsx", "labels.ts"]);
+
+  const helperVerify = JSON.parse(run(["verify-file", helper, "--json"]));
+  assert.equal(helperVerify.parse_verified, true);
+  assert.equal(helperVerify.parser, "typescript");
 
   const generatedMultiedit = JSON.parse(runWithInput(["multiedit", "--from-stdin", "--dry-run"], JSON.stringify(search.multiedit)));
   assert.equal(generatedMultiedit.success, true);
@@ -2819,6 +2824,10 @@ test("CLI version and subcommand help are concise", () => {
     assert.match(topicHelp, /^tedit /, topic);
     assert.doesNotMatch(topicHelp, /Unknown help topic/, topic);
   }
+
+  const searchHelp = run(["help", "search-text"]);
+  assert.match(searchHelp, /\*\*\/\*\.\{ts,tsx\}/);
+  assert.match(searchHelp, /spaces around brace alternatives are ignored/);
 });
 
 test("cli non-tty defaults to compact output and detailed override keeps legacy diff text", () => {
