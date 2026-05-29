@@ -21,7 +21,7 @@ import { parseMultieditInput, runMultiedit, runMultieditInput, type MultieditRes
 import { runPatchInput } from "./patch.js";
 import { runRefactorState } from "./refactor-state.js";
 import { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, inspectRefactorPlan, writePlanFile, type InspectPlanResult } from "./refactor-plan.js";
-import { analyzeState, fileLengthWarnings, formatFileLengthWarnings, type FileLengthWarning } from "./quality.js";
+import { analyzeState, fileLengthWarnings, formatFileLengthWarnings, loadQualityConfig, type FileLengthWarning } from "./quality.js";
 import { loadParams, parseFlowInput, runFlow } from "./flow.js";
 import {
   buildScaffoldSource,
@@ -49,7 +49,11 @@ let currentArgs: ParsedArgs | undefined;
 
 main().catch((error) => {
   const result = toErrorResult(error);
-  process.stderr.write(JSON.stringify(formatErrorResult(result), null, 2) + "\n");
+  if (currentArgs?.command === "edit" && summaryRequested(currentArgs) && !quietRequested(currentArgs) && !currentArgs.flags.json) {
+    process.stdout.write(formatEditFailureSummary(result, currentArgs) + "\n");
+  } else {
+    process.stderr.write(JSON.stringify(formatErrorResult(result), null, 2) + "\n");
+  }
   process.exitCode = 1;
 });
 
@@ -1274,6 +1278,7 @@ type EditSummaryResult = {
   strategy: string;
   changed: boolean;
   written: boolean;
+  diff?: string;
   matches: unknown[];
   parse_verified: boolean;
   parse_skipped?: boolean;
@@ -1309,11 +1314,30 @@ function summarySpecName(args: ParsedArgs): string {
 function formatEditSummary(result: EditSummaryResult): string {
   const matched = result.matches.length;
   const writeText = result.written ? "wrote 1 file" : result.changed ? "no files written (dry-run)" : "no changes";
-  return [
+  const lines = [
     "edit: " + result.file,
     "  " + result.file + "  ok  " + matched + "/" + matched + " " + result.strategy + " " + result.action,
     "result: success - " + matched + "/" + matched + " match" + (matched === 1 ? "" : "es") + ", " + writeText,
-  ].join("\n");
+  ];
+  if (result.diff && result.diff.length > 0) {
+    lines.push("next: full diff omitted; use --diff-out <file> to save it or --output detailed to print it");
+  }
+  return lines.join("\n");
+}
+
+function formatEditFailureSummary(result: ErrorResult, args: ParsedArgs): string {
+  const [filePath] = args.positionals;
+  const file = typeof filePath === "string" ? filePath : "<unknown>";
+  const lines = [
+    "edit: " + file,
+    "  " + file + "  FAIL - " + summarizeFailureReason(result),
+    "result: failure - " + result.code + ": " + result.error,
+  ];
+  if (result.next && result.next.length > 0) {
+    lines.push("next:");
+    lines.push(...result.next.map((hint) => "  - " + hint));
+  }
+  return lines.join("\n");
 }
 
 function formatMultieditSummary(result: MultieditResult, edits: unknown[], spec: string, mode: SummaryMode): string {
@@ -1475,7 +1499,13 @@ function outputMode(args: ParsedArgs): OutputMode {
   const explicit = parseOutputMode(stringFlag(args, "output") ?? process.env.TEDIT_OUTPUT, "--output/TEDIT_OUTPUT");
   if (explicit) return explicit;
   if (args.flags.json) return "detailed";
+  const configured = loadQualityConfig(outputConfigSearchPath(args)).defaultOutput;
+  if (configured === "compact" || configured === "detailed") return configured;
   return process.stdout.isTTY ? "detailed" : "compact";
+}
+
+function outputConfigSearchPath(args: ParsedArgs): string {
+  return args.positionals[0] ?? process.cwd();
 }
 
 function outputOptions(args: ParsedArgs): OutputOptions {

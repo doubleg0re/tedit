@@ -101,6 +101,15 @@ type RecoveryHint = {
   preview?: string;
 };
 
+type NearTextCandidate = {
+  line_range: string;
+  find_lines: string;
+  score: number;
+  distance: number;
+  preview: string;
+  context: string;
+};
+
 export function planBaseEdit(options: BaseEditOptions): BaseEditPlan {
   validateOptions(options);
 
@@ -208,16 +217,17 @@ function failNoMatch(options: BaseEditOptions): never {
     }
   }
 
+  const nearCandidates = noMatchNearCandidates(options);
+  const retryHints = nearCandidateRetryHints(options, nearCandidates);
   fail("MATCH_NONE", "No match found.", {
     tried_strategy: describeStrategy(options.strategy),
     matches: [],
-    suggestions: [
-      "Check the literal text for stale whitespace or punctuation.",
-      "Use --find-fuzzy for whitespace-insensitive matching.",
-      "Use --find-anchor-after with --find when the target is in a known section.",
-      "Use --find-lines N:M as a last resort when a diagnostic already gave line numbers.",
-    ],
-    next_step_hint: "Re-run with a strategy that can identify exactly one target span.",
+    ...(nearCandidates.length > 0 ? { near_candidates: nearCandidates } : {}),
+    ...(retryHints.length > 0 ? { retry_hints: retryHints, next: recoveryNext(retryHints) } : {}),
+    suggestions: noMatchSuggestions(nearCandidates.length),
+    next_step_hint: nearCandidates.length > 0
+      ? "Inspect the near candidates, then retry with --find-lines or correct the find text."
+      : "Re-run with a strategy that can identify exactly one target span.",
   });
 }
 
@@ -259,6 +269,16 @@ function countMismatchRetryHints(options: BaseEditOptions, matches: RawMatch[]):
     expectCount: matches.length,
     mutation: mutationHint(options.mutation),
   }];
+}
+
+function nearCandidateRetryHints(options: BaseEditOptions, candidates: NearTextCandidate[]): RecoveryHint[] {
+  return candidates.slice(0, 3).map((candidate, index) => ({
+    kind: "find-lines",
+    description: "Retry near candidate " + (index + 1) + " with --find-lines " + candidate.find_lines + ".",
+    findLines: candidate.find_lines,
+    mutation: mutationHint(options.mutation),
+    preview: candidate.preview,
+  }));
 }
 
 function lineRangeRetryHints(options: BaseEditOptions, matches: RawMatch[], limit: number): RecoveryHint[] {
@@ -627,6 +647,131 @@ function fuzzyCandidateHints(source: string, pattern: string, matches: RawMatch[
       preview: previewForSpan(source, match.start, match.end),
     };
   });
+}
+
+function noMatchNearCandidates(options: BaseEditOptions): NearTextCandidate[] {
+  const pattern = noMatchCandidatePattern(options.strategy);
+  return pattern ? nearestTextCandidates(options.source, pattern, 3) : [];
+}
+
+function noMatchCandidatePattern(strategy: BaseFindStrategy): string | undefined {
+  switch (strategy.kind) {
+    case "exact":
+    case "fuzzy":
+      return strategy.pattern;
+    case "anchor":
+      return strategy.contains;
+    case "regex":
+    case "lines":
+      return undefined;
+  }
+}
+
+function noMatchSuggestions(candidateCount: number): string[] {
+  return [
+    ...(candidateCount > 0 ? ["Inspect near_candidates; use --find-lines for the intended span or correct the find text."] : []),
+    "Check the literal text for stale whitespace, punctuation, or typos.",
+    "Use --find-fuzzy for whitespace-insensitive matching.",
+    "Use --find-anchor-after with --find when the target is in a known section.",
+    "Use --find-lines N:M as a last resort when a diagnostic already gave line numbers.",
+  ].slice(0, 4);
+}
+
+function nearestTextCandidates(source: string, pattern: string, limit: number): NearTextCandidate[] {
+  const target = compactComparableText(pattern);
+  if (target.length < 2) return [];
+
+  const candidates: NearTextCandidate[] = [];
+  const lines = source.split(/\r?\n/);
+  const maxLines = Math.min(lines.length, 2_000);
+  for (let index = 0; index < maxLines; index++) {
+    const rawLine = lines[index] ?? "";
+    const preview = previewForLine(rawLine);
+    if (!preview) continue;
+    const best = bestNearLineMatch(target, compactComparableText(rawLine));
+    if (!best) continue;
+    const score = similarityScore(best.distance, target.length, best.length);
+    if (!isUsefulNearCandidate(target.length, best.distance, score)) continue;
+    const line = index + 1;
+    candidates.push({
+      line_range: String(line),
+      find_lines: String(line),
+      score: Number(score.toFixed(3)),
+      distance: best.distance,
+      preview,
+      context: contextForLine(source, line),
+    });
+  }
+
+  return candidates
+    .sort((a, b) => a.distance - b.distance || b.score - a.score || Number(a.find_lines) - Number(b.find_lines))
+    .slice(0, limit);
+}
+
+function bestNearLineMatch(target: string, line: string): { distance: number; length: number } | undefined {
+  if (!line) return undefined;
+  const targetLower = target.toLowerCase();
+  const lineLower = line.toLowerCase();
+  const targetLength = targetLower.length;
+  if (lineLower.length <= targetLength + 2) {
+    return { distance: levenshteinDistance(targetLower, lineLower), length: lineLower.length };
+  }
+
+  let best: { distance: number; length: number } | undefined;
+  const spread = Math.max(2, Math.ceil(targetLength * 0.2));
+  const minLength = Math.max(1, targetLength - spread);
+  const maxLength = Math.min(lineLower.length, targetLength + spread);
+  for (let length = minLength; length <= maxLength; length++) {
+    for (let start = 0; start + length <= lineLower.length; start++) {
+      const distance = levenshteinDistance(targetLower, lineLower.slice(start, start + length));
+      if (!best || distance < best.distance || (distance === best.distance && length < best.length)) {
+        best = { distance, length };
+        if (distance === 0) return best;
+      }
+    }
+  }
+  return best;
+}
+
+function isUsefulNearCandidate(targetLength: number, distance: number, score: number): boolean {
+  const maxDistance = Math.max(2, Math.ceil(targetLength * 0.35));
+  const minScore = targetLength <= 5 ? 0.7 : 0.58;
+  return distance <= maxDistance && score >= minScore;
+}
+
+function similarityScore(distance: number, leftLength: number, rightLength: number): number {
+  return 1 - distance / Math.max(leftLength, rightLength, 1);
+}
+
+function compactComparableText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function previewForLine(line: string): string {
+  const preview = line.replace(/\s+/g, " ").trim();
+  return preview.length <= 120 ? preview : preview.slice(0, 117) + "...";
+}
+
+function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  let current = new Array<number>(b.length + 1);
+  for (let i = 1; i <= a.length; i++) {
+    current[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const substitution = previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1);
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        substitution,
+      );
+    }
+    [previous, current] = [current, previous];
+  }
+  return previous[b.length];
 }
 
 function whitespaceRuns(value: string): number[] {

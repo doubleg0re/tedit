@@ -109,6 +109,12 @@ startup:
 }
 ```
 
+The MCP server keeps tool schemas stable for the life of the stdio connection,
+but each tool call runs through a small `mcp-runner` subprocess that imports
+the current `dist` files. Replacing `dist` therefore updates edit/multiedit/
+patch/output behavior on the next MCP call without reconnecting. Tool name or
+input-schema changes still require the client to reconnect or refresh tools.
+
 Start with the MCP `actions` tool when an agent needs to choose an edit
 strategy. It returns available tools, file-specific rules, normalized
 `action` names for flow-style aliases, and an agent-oriented `guidance`
@@ -133,13 +139,16 @@ MultiEdit, and Patch calls when parser guardrails, dry-runs, git-aware write
 policy, or deterministic retry hints are useful.
 
 Mutating MCP tools default to compact machine-readable results for agent loops:
-`success`, `ok`, `summary`, `changed`, `written`, `files`, parser
-verification fields, and a `next` array only when there is a deterministic
-follow-up such as applying a dry-run. Pass `output: "detailed"`, `includeDiffs: true`, or
+`ok`, `kind`, `summary`, `changedCount`, `writtenCount`, `files[].path`,
+`files[].change`, `files[].persisted`, parser verification fields, and a
+`next` array only when there is a deterministic follow-up such as applying a
+dry-run. Compact discovery output preserves primary payloads such as
+`matches`, `node`, `actions`, `rules`, and parse verification fields. Pass
+`output: "detailed"`, `includeDiffs: true`, or
 `includeDetails: true` to retrieve full diffs, matches, and write-policy
 diagnostics. Failures use the same structured tedit fields where possible,
-including `ok: false`, `code`, `error`, `details`, and actionable `next`
-hints.
+including `ok: false`, `kind: "error"`, `code`, `error`, and actionable
+`next` hints. Verbose failure details remain available through detailed output.
 
 ## Best Fit
 
@@ -572,6 +581,13 @@ Every mutation result can include file-length warnings. Warnings are
 passive: they do not block writes, and they fire only when an edit
 crosses a configured threshold.
 
+Project config lives at `.tedit/config.json` and is discovered by
+walking upward from the target/spec path, falling back to the current
+directory. `output.defaultMode` controls the CLI default when `--output`,
+`TEDIT_OUTPUT`, and `--json` are not set. Use `compact` for agent-first
+loops, `detailed` for legacy full-diff terminal output, or `auto` to keep
+the built-in TTY/non-TTY behavior.
+
 ```json
 {
   "file_length_thresholds": {
@@ -580,7 +596,10 @@ crosses a configured threshold.
     "urgent": 2000
   },
   "max_extract_props": 12,
-  "defaultWrite": "auto"
+  "defaultWrite": "auto",
+  "output": {
+    "defaultMode": "compact"
+  }
 }
 ```
 

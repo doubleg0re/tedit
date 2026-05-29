@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 const cli = new URL("../dist/cli.js", import.meta.url).pathname;
 const mcp = new URL("../dist/mcp.js", import.meta.url).pathname;
+const distDir = new URL("../dist", import.meta.url).pathname;
 
 test("find returns JSX nodes as JSON", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
@@ -21,6 +22,53 @@ test("find returns JSX nodes as JSON", () => {
   assert.equal(result.success, true);
   assert.equal(result.matches.length, 1);
   assert.equal(result.matches[0].name, "main");
+});
+
+test("compact discovery output preserves payloads", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  writeFileSync(file, fixture());
+
+  const find = JSON.parse(runRaw(["find", file, "main"]));
+  assert.equal(find.ok, true);
+  assert.equal(find.kind, "find");
+  assert.match(find.summary, /1 match/);
+  assert.equal(find.matches.length, 1);
+  assert.equal(find.matches[0].name, "main");
+
+  const inspect = JSON.parse(runRaw(["inspect", file, "main"]));
+  assert.equal(inspect.ok, true);
+  assert.equal(inspect.kind, "inspect");
+  assert.equal(inspect.node.name, "main");
+
+  const verify = JSON.parse(runRaw(["verify-file", file]));
+  assert.equal(verify.ok, true);
+  assert.equal(verify.kind, "verify-file");
+  assert.equal(verify.path, file);
+  assert.equal(verify.parse_verified, true);
+  assert.equal(verify.parser, "jsx");
+
+  const actions = JSON.parse(runRaw(["actions", file]));
+  assert.equal(actions.ok, true);
+  assert.equal(actions.kind, "actions");
+  assert.ok(actions.actions.includes("wrap"));
+  assert.ok(actions.rules.some((rule) => rule.name === "jsx"));
+
+  const rules = JSON.parse(runRaw(["rules"]));
+  assert.equal(rules.ok, true);
+  assert.equal(rules.kind, "rules");
+  assert.ok(rules.rules.some((rule) => rule.name === "jsx"));
+
+  const stateFile = join(dir, "StatePage.tsx");
+  writeFileSync(stateFile, refactorStateFixture());
+  const state = JSON.parse(runRaw(["analyze-state", stateFile]));
+  assert.equal(state.ok, true);
+  assert.equal(state.kind, "analyze-state");
+  assert.equal(state.path, stateFile);
+  assert.equal(typeof state.states_total, "number");
+  assert.equal(typeof state.handlers_total, "number");
+  assert.ok(Array.isArray(state.clusters));
+  assert.ok(state.analysis_summary);
 });
 
 test("append dry-run prints a diff and does not write", () => {
@@ -1604,6 +1652,7 @@ test("npm pack includes CLI and MCP distribution files", () => {
   assert.equal(pkg.bin["tedit-mcp"], "./dist/mcp.js");
   assert.ok(files.includes("dist/cli.js"));
   assert.ok(files.includes("dist/mcp.js"));
+  assert.ok(files.includes("dist/mcp-runner.js"));
   assert.ok(files.includes("dist/mcp-tools.js"));
   assert.ok(files.includes("dist/output.js"));
   assert.ok(files.includes("README.md"));
@@ -1693,11 +1742,15 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
 
     assert.equal(result.isError, undefined);
-    assert.equal(result.structuredContent.success, true);
-    assert.equal(result.structuredContent.written, true);
+    assert.equal(result.structuredContent.success, undefined);
     assert.equal(result.structuredContent.ok, true);
+    assert.equal(result.structuredContent.kind, "mutation");
+    assert.equal(result.structuredContent.changedCount, 1);
+    assert.equal(result.structuredContent.writtenCount, 1);
     assert.match(result.structuredContent.summary, /1 file written/);
     assert.equal(result.structuredContent.files[0].path, file);
+    assert.equal(result.structuredContent.files[0].change, "modified");
+    assert.equal(result.structuredContent.files[0].persisted, true);
     assert.equal(result.structuredContent.parse_skipped, true);
     assert.equal(result.structuredContent.parse_skip_reason, "unsupported_extension");
     assert.equal(result.structuredContent.files[0].parse_skipped, true);
@@ -1705,6 +1758,46 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(result.structuredContent.diff, undefined);
     assert.equal(result.structuredContent.write_policy, undefined);
     assert.equal(result.structuredContent.next, undefined);
+    assert.equal(result.structuredContent.files[0].file, undefined);
+    assert.equal(result.structuredContent.files[0].changed, undefined);
+    assert.equal(result.structuredContent.files[0].written, undefined);
+    assert.equal(result.structuredContent.files[0].status, undefined);
+    assert.equal(readFileSync(file, "utf8"), "# Title\nnew value\n");
+
+    const multieditResult = await client.callTool({
+      name: "multiedit",
+      arguments: {
+        edits: [
+          { file, find: "new value", replace: "multi value" },
+          { file: jsonFile, find: "\"enabled\":true", replace: "\"enabled\":false" }
+        ],
+        dryRun: true,
+      },
+    });
+    assert.equal(multieditResult.isError, undefined);
+    assert.equal(multieditResult.structuredContent.success, undefined);
+    assert.equal(multieditResult.structuredContent.ok, true);
+    assert.equal(multieditResult.structuredContent.kind, "mutation");
+    assert.equal(multieditResult.structuredContent.changedCount, 2);
+    assert.equal(multieditResult.structuredContent.writtenCount, 0);
+    assert.match(multieditResult.structuredContent.summary, /2 files would change/);
+    assert.equal(multieditResult.structuredContent.results, undefined);
+    assert.equal(multieditResult.structuredContent.diff, undefined);
+    assert.equal(multieditResult.structuredContent.write_policy, undefined);
+    assert.ok(multieditResult.structuredContent.files.every((item) => item.file === undefined));
+    assert.ok(multieditResult.structuredContent.files.every((item) => item.change === "modified"));
+    assert.ok(multieditResult.structuredContent.files.every((item) => item.persisted === false));
+    assert.ok(multieditResult.structuredContent.files.every((item) => item.changed === undefined));
+    assert.ok(multieditResult.structuredContent.files.every((item) => item.written === undefined));
+    assert.ok(multieditResult.structuredContent.files.every((item) => item.status === undefined));
+    assert.ok(multieditResult.structuredContent.files.every((item) => item.diffAvailable === true));
+    const multieditText = JSON.parse(multieditResult.content[0].text);
+    assert.deepEqual(multieditText, multieditResult.structuredContent);
+    assert.equal(multieditText.results, undefined);
+    assert.equal(multieditText.diff, undefined);
+    assert.equal(multieditText.write_policy, undefined);
+    assert.ok(multieditText.files.every((item) => item.file === undefined));
+    assert.ok(multieditText.files.every((item) => item.change === "modified"));
     assert.equal(readFileSync(file, "utf8"), "# Title\nnew value\n");
 
     const detailedEdit = await client.callTool({
@@ -1737,7 +1830,9 @@ test("mcp server lists tools and runs universal edit", async () => {
       arguments: { file: mcpLoopFile, findFuzzy: "function save( value )", replace: "function save(value)", write: true },
     });
     assert.equal(fuzzyRetry.isError, undefined);
-    assert.equal(fuzzyRetry.structuredContent.written, true);
+    assert.equal(fuzzyRetry.structuredContent.writtenCount, 1);
+    assert.equal(fuzzyRetry.structuredContent.files[0].change, "modified");
+    assert.equal(fuzzyRetry.structuredContent.files[0].persisted, true);
     assert.ok(readFileSync(mcpLoopFile, "utf8").includes("function save(value)"));
 
     const writeFileResult = await client.callTool({
@@ -1746,7 +1841,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(writeFileResult.isError, undefined);
     assert.equal(writeFileResult.structuredContent.parser, "json");
-    assert.equal(writeFileResult.structuredContent.files[0].change, "create");
+    assert.equal(writeFileResult.structuredContent.files[0].change, "created");
+    assert.equal(writeFileResult.structuredContent.files[0].persisted, true);
     assert.match(writeFileResult.structuredContent.summary, /1 file written; parse verified with json/);
     assert.equal(readFileSync(mcpWriteFile, "utf8"), "{\"ok\":true}\n");
 
@@ -1756,7 +1852,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(createFileResult.isError, undefined);
     assert.equal(createFileResult.structuredContent.parser, "markdown-lite");
-    assert.equal(createFileResult.structuredContent.files[0].change, "create");
+    assert.equal(createFileResult.structuredContent.files[0].change, "created");
+    assert.equal(createFileResult.structuredContent.files[0].persisted, true);
     assert.equal(readFileSync(mcpCreateFile, "utf8"), "# Created\n");
 
     const scaffoldResult = await client.callTool({
@@ -1785,7 +1882,10 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
 
     assert.equal(wrapResult.isError, undefined);
-    assert.equal(wrapResult.structuredContent.success, true);
+    assert.equal(wrapResult.structuredContent.success, undefined);
+    assert.equal(wrapResult.structuredContent.ok, true);
+    assert.equal(wrapResult.structuredContent.kind, "mutation");
+    assert.equal(wrapResult.structuredContent.writtenCount, 1);
     assert.match(readFileSync(jsxFile, "utf8"), /<div className="flex gap-4"><DailyPlanBody \/><\/div>/);
 
     const verifyResult = await client.callTool({
@@ -1818,10 +1918,55 @@ test("mcp server lists tools and runs universal edit", async () => {
       arguments: { plan: extractPlan, write: true },
     });
     assert.equal(applyResult.isError, undefined);
-    assert.equal(applyResult.structuredContent.written, true);
+    assert.ok(applyResult.structuredContent.writtenCount > 0);
     assert.match(readFileSync(extractOut, "utf8"), /export function PageCard/);
   } finally {
     await client.close();
+  }
+});
+
+test("mcp server hot-loads tool logic without reconnect", async () => {
+  const dir = mkdtempSync(join(process.cwd(), ".tmp-tedit-mcp-hot-"));
+  const installDir = join(dir, "dist");
+  const file = join(dir, "notes.md");
+  cpSync(distDir, installDir, { recursive: true });
+  writeFileSync(file, "# Title\n");
+
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [join(installDir, "mcp.js")],
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "tedit-test", version: "0.1.0" });
+
+  try {
+    await client.connect(transport);
+    const before = await client.callTool({
+      name: "verify_file",
+      arguments: { file },
+    });
+    assert.equal(before.isError, undefined);
+    assert.equal(before.structuredContent.hot_reload_probe, undefined);
+
+    const toolsFile = join(installDir, "mcp-tools.js");
+    const source = readFileSync(toolsFile, "utf8");
+    assert.match(source, /function runVerifyFileTool/);
+    const patched = source.replace(
+      /(function runVerifyFileTool[\s\S]*?success: true,\n)(\s+file: filePath,)/,
+      "$1        hot_reload_probe: \"after\",\n$2",
+    );
+    assert.notEqual(patched, source);
+    writeFileSync(toolsFile, patched);
+
+    const after = await client.callTool({
+      name: "verify_file",
+      arguments: { file },
+    });
+    assert.equal(after.isError, undefined);
+    assert.equal(after.structuredContent.hot_reload_probe, "after");
+  } finally {
+    await client.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -1883,6 +2028,23 @@ test("base edit exact failure surfaces a fuzzy-only diagnostic without writing",
   assert.equal(readFileSync(file, "utf8"), original);
 });
 
+test("base edit exact miss surfaces near candidates and retry hints", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "source.txt");
+  writeFileSync(file, "Hello world\nStatus: pending\n");
+
+  const failed = runFail(["edit", file, "--find", "Helo", "--replace", "Hi", "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "MATCH_NONE");
+  assert.equal(failed.body.details.near_candidates[0].find_lines, "1");
+  assert.match(failed.body.details.near_candidates[0].preview, /Hello world/);
+  assert.equal(failed.body.details.retry_hints[0].kind, "find-lines");
+  assert.equal(failed.body.details.retry_hints[0].findLines, "1");
+  assert.equal(failed.body.next[0], "Retry near candidate 1 with --find-lines 1.");
+  assert.equal(readFileSync(file, "utf8"), "Hello world\nStatus: pending\n");
+});
+
 test("base edit fuzzy strategy applies whitespace-insensitive replacements", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "source.txt");
@@ -1923,6 +2085,26 @@ test("base edit regex replacement treats dollar backrefs literally", () => {
 
   assert.equal(result.success, true);
   assert.equal(readFileSync(file, "utf8"), "color: var($1);\n");
+});
+
+test("dogfood regression covers edit summary replace-all and TSX prop set", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const notes = join(dir, "dogfood.md");
+  const card = join(dir, "Card.tsx");
+  writeFileSync(notes, "# Demo\nThe quick brown fox.\nStatus: pending\nStatus: pending\n");
+  writeFileSync(card, "export function Card() {\n  return <div className=\"card\">Hello</div>;\n}\n");
+
+  const summary = run(["edit", notes, "--find", "quick brown", "--replace", "careful brown", "--dry-run", "--summary"]);
+  assert.match(summary, /result: success - 1\/1 match/);
+  assert.match(summary, /full diff omitted/);
+  assert.equal(readFileSync(notes, "utf8"), "# Demo\nThe quick brown fox.\nStatus: pending\nStatus: pending\n");
+
+  run(["edit", notes, "--find", "quick brown", "--replace", "careful brown", "--write"]);
+  run(["edit", notes, "--find-regex", "Status: pending", "--replace", "Status: done", "--replace-all", "--expect-count", "2", "--write"]);
+  run(["prop", "set", card, "div.card", "className", "card active", "--write"]);
+
+  assert.equal(readFileSync(notes, "utf8"), "# Demo\nThe careful brown fox.\nStatus: done\nStatus: done\n");
+  assert.match(readFileSync(card, "utf8"), /<div className="card active">Hello<\/div>/);
 });
 
 test("base edit line ranges can delete full lines", () => {
@@ -2192,8 +2374,13 @@ test("multiedit applies multiple files and reports final parse verification", ()
   });
   const compact = JSON.parse(runRaw(["multiedit", "--from-stdin", "--write"], compactInput));
   assert.match(compact.summary, /2 files written; parse verified\/skipped/);
-  assert.equal(compact.files.find((item) => item.file === compactTextFile).parse_skipped, true);
-  assert.equal(compact.files.find((item) => item.file === compactJsonFile).parser, "json");
+  assert.equal(compact.kind, "mutation");
+  assert.equal(compact.changedCount, 2);
+  assert.equal(compact.writtenCount, 2);
+  assert.equal(compact.files.find((item) => item.path === compactTextFile).parse_skipped, true);
+  assert.equal(compact.files.find((item) => item.path === compactJsonFile).parser, "json");
+  assert.ok(compact.files.every((item) => item.change === "modified"));
+  assert.ok(compact.files.every((item) => item.persisted === true));
 
   assert.equal(readFileSync(textFile, "utf8"), "Status: reviewed\n");
   assert.deepEqual(JSON.parse(readFileSync(jsonFile, "utf8")), { timeout: 5000 });
@@ -2236,8 +2423,27 @@ test("edit summary mode omits dry-run diffs", () => {
 
   assert.ok(output.includes("edit: " + file));
   assert.match(output, /result: success - 1\/1 match, no files written \(dry-run\)/);
+  assert.match(output, /full diff omitted/);
   assert.doesNotMatch(output, /^--- /m);
   assert.equal(readFileSync(file, "utf8"), "old\n");
+});
+
+test("edit summary mode reports failures tersely with next hints", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "notes.txt");
+  writeFileSync(file, "Hello world\n");
+
+  const failed = spawnSync(process.execPath, [cli, "edit", file, "--find", "Helo", "--replace", "Hi", "--summary"], {
+    encoding: "utf8",
+    env: { ...process.env, FORCE_COLOR: "0" },
+  });
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.stderr, "");
+  assert.match(failed.stdout, /FAIL - no match/);
+  assert.match(failed.stdout, /result: failure - MATCH_NONE/);
+  assert.match(failed.stdout, /Retry near candidate 1 with --find-lines 1/);
+  assert.equal(readFileSync(file, "utf8"), "Hello world\n");
 });
 
 test("multiedit summary mode reports failures tersely", () => {
@@ -2300,17 +2506,27 @@ test("cli non-tty defaults to compact output and detailed override keeps legacy 
 
   const compact = JSON.parse(runRaw(["edit", file, "--find", "old", "--replace", "new", "--dry-run"]));
 
-  assert.equal(compact.success, true);
+  assert.equal(compact.success, undefined);
   assert.equal(compact.ok, true);
-  assert.equal(compact.changed, true);
-  assert.equal(compact.written, false);
+  assert.equal(compact.kind, "mutation");
+  assert.equal(compact.changedCount, 1);
+  assert.equal(compact.writtenCount, 0);
   assert.match(compact.summary, /1 file would change; parse skipped \(unsupported_extension\)/);
   assert.equal(compact.parse_skipped, true);
   assert.equal(compact.parse_skip_reason, "unsupported_extension");
+  assert.equal(compact.files[0].file, undefined);
+  assert.equal(compact.files[0].change, "modified");
+  assert.equal(compact.files[0].persisted, false);
+  assert.equal(compact.files[0].changed, undefined);
+  assert.equal(compact.files[0].written, undefined);
   assert.equal(compact.files[0].path, file);
+  assert.equal(compact.files[0].status, undefined);
   assert.equal(compact.files[0].diffAvailable, true);
   assert.equal(compact.diff, undefined);
-  assert.deepEqual(compact.next, ["rerun with write=true to apply"]);
+  assert.deepEqual(compact.next, [
+    "rerun with write=true to apply",
+    "add --include-diffs to inline diffs or --diff-out <file> to save them",
+  ]);
   assert.equal(readFileSync(file, "utf8"), "old\n");
 
   const detailed = runRaw(["edit", file, "--find", "old", "--replace", "new", "--dry-run", "--output", "detailed"]);
@@ -2318,23 +2534,70 @@ test("cli non-tty defaults to compact output and detailed override keeps legacy 
   assert.match(detailed, /\+new/);
 });
 
-test("cli non-tty failures use compact error output", () => {
+test("config file can choose the default CLI output mode", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "notes.txt");
+  mkdirp(join(dir, ".tedit"));
+  writeFileSync(join(dir, ".tedit", "config.json"), JSON.stringify({
+    output: { defaultMode: "detailed" }
+  }, null, 2));
   writeFileSync(file, "old\n");
 
-  const failed = spawnSync(process.execPath, [cli, "edit", file, "--find", "missing", "--replace", "new"], {
+  const detailed = runRaw(["edit", file, "--find", "old", "--replace", "new", "--dry-run"]);
+  assert.match(detailed, /^--- /m);
+  assert.match(detailed, /\+new/);
+
+  const compact = JSON.parse(runRaw(["edit", file, "--find", "old", "--replace", "new", "--dry-run", "--output", "compact"]));
+  assert.equal(compact.success, undefined);
+  assert.equal(compact.ok, true);
+  assert.equal(compact.kind, "mutation");
+  assert.equal(compact.diff, undefined);
+  assert.equal(compact.files[0].file, undefined);
+  assert.equal(compact.files[0].change, "modified");
+  assert.equal(compact.files[0].persisted, false);
+  assert.equal(compact.files[0].diffAvailable, true);
+});
+
+test("config file validates the default CLI output mode", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "notes.txt");
+  mkdirp(join(dir, ".tedit"));
+  writeFileSync(join(dir, ".tedit", "config.json"), JSON.stringify({
+    output: { defaultMode: "verbose" }
+  }, null, 2));
+  writeFileSync(file, "old\n");
+
+  const failed = spawnSync(process.execPath, [cli, "edit", file, "--find", "old", "--replace", "new", "--dry-run"], {
     encoding: "utf8",
     env: rawEnv(),
   });
   const body = JSON.parse(failed.stderr);
 
   assert.equal(failed.status, 1);
-  assert.equal(body.success, false);
+  assert.equal(body.code, "INVALID_TEDIT_CONFIG");
+  assert.match(body.error, /output\.defaultMode/);
+  assert.equal(readFileSync(file, "utf8"), "old\n");
+});
+
+test("cli non-tty failures use compact error output", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "notes.txt");
+  writeFileSync(file, "Hello world\n");
+
+  const failed = spawnSync(process.execPath, [cli, "edit", file, "--find", "Helo", "--replace", "Hi"], {
+    encoding: "utf8",
+    env: rawEnv(),
+  });
+  const body = JSON.parse(failed.stderr);
+
+  assert.equal(failed.status, 1);
+  assert.equal(body.success, undefined);
   assert.equal(body.ok, false);
+  assert.equal(body.kind, "error");
   assert.equal(body.code, "MATCH_NONE");
   assert.match(body.summary, /No match found/);
   assert.equal(body.details, undefined);
+  assert.equal(body.next[0], "Retry near candidate 1 with --find-lines 1.");
 });
 
 test("edit quiet mode suppresses stdout while diff-out captures detail", () => {
@@ -2485,6 +2748,24 @@ test("patch applies unified diffs and verifies changed files", () => {
 `);
 
   const result = JSON.parse(run(["patch", patch, "--write"]));
+  assert.equal(result.success, true);
+  assert.equal(result.patches[0].file, file);
+  assert.equal(readFileSync(file, "utf8"), "new\nkeep\n");
+});
+
+test("patch accepts git-prefixed absolute paths without the leading slash", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "notes.txt");
+  writeFileSync(file, "old\nkeep\n");
+
+  const result = JSON.parse(runWithInput(["patch", "--stdin", "--write"], `--- a${file}
++++ b${file}
+@@ -1,2 +1,2 @@
+-old
++new
+ keep
+`));
+
   assert.equal(result.success, true);
   assert.equal(result.patches[0].file, file);
   assert.equal(readFileSync(file, "utf8"), "new\nkeep\n");

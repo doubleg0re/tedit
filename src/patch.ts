@@ -36,8 +36,7 @@ export type PatchLine =
 export function runPatchInput(input: string, options: WorkspaceFlowOptions = {}): PatchResult {
   const patches = parsePatchInput(input);
   const updates = patches.flatMap((patch): WorkspaceFileChangeInput[] => {
-    const sourceFile = patchSourceFile(patch);
-    const targetFile = patchTargetFile(patch);
+    const { sourceFile, targetFile } = resolvePatchFiles(patch);
 
     if (!patch.added && (!sourceFile || !existsSync(sourceFile))) {
       fail("FILE_NOT_FOUND", `File not found: ${sourceFile ?? patch.oldPath}`);
@@ -78,14 +77,17 @@ export function runPatchInput(input: string, options: WorkspaceFlowOptions = {})
   const files = commitWorkspaceUpdates(updates, options);
   return {
     success: true,
-    patches: patches.map((patch) => ({
-      file: patchTargetFile(patch),
-      hunks: patch.hunks.length,
-      added: patch.added,
-      deleted: patch.deleted,
-      renamed: patch.renamed,
-      ...(patch.renamed ? { old_file: patchSourceFile(patch) } : {}),
-    })),
+    patches: patches.map((patch) => {
+      const { sourceFile, targetFile } = resolvePatchFiles(patch);
+      return {
+        file: targetFile,
+        hunks: patch.hunks.length,
+        added: patch.added,
+        deleted: patch.deleted,
+        renamed: patch.renamed,
+        ...(patch.renamed ? { old_file: sourceFile } : {}),
+      };
+    }),
     parse,
     files,
   };
@@ -430,17 +432,49 @@ function parsePatchPath(input: string): string {
   return trimmed.split(/\s+/)[0] ?? "";
 }
 
-function patchSourceFile(patch: ParsedPatchFile): string | undefined {
-  return patch.added ? undefined : normalizePatchPath(patch.oldPath);
+function resolvePatchFiles(patch: ParsedPatchFile): { sourceFile?: string; targetFile: string } {
+  const sourceFile = patch.added ? undefined : resolveExistingPatchPath(patch.oldPath);
+  const targetFile = patch.deleted
+    ? sourceFile ?? resolvePatchPath(patch.oldPath)
+    : resolveTargetPatchPath(patch.newPath, patch.oldPath, sourceFile);
+  return { sourceFile, targetFile };
 }
 
-function patchTargetFile(patch: ParsedPatchFile): string {
-  return normalizePatchPath(patch.deleted ? patch.oldPath : patch.newPath);
+function resolveExistingPatchPath(path: string): string {
+  const normalized = normalizePatchPath(path);
+  if (existsSync(normalized)) return normalized;
+  const absolute = gitPrefixedAbsolutePath(path);
+  if (absolute && existsSync(absolute)) return absolute;
+  return normalized;
+}
+
+function resolveTargetPatchPath(path: string, oldPath: string, sourceFile?: string): string {
+  const normalized = normalizePatchPath(path);
+  if (existsSync(normalized)) return normalized;
+  const absolute = gitPrefixedAbsolutePath(path);
+  const oldAbsolute = gitPrefixedAbsolutePath(oldPath);
+  if (absolute && sourceFile && oldAbsolute && sourceFile === oldAbsolute) return absolute;
+  if (absolute && existsSync(absolute)) return absolute;
+  return normalized;
+}
+
+function resolvePatchPath(path: string): string {
+  const normalized = normalizePatchPath(path);
+  const absolute = gitPrefixedAbsolutePath(path);
+  if (absolute && existsSync(absolute)) return absolute;
+  return normalized;
 }
 
 function normalizePatchPath(path: string): string {
   if (path.startsWith("a/") || path.startsWith("b/")) return path.slice(2);
   return path;
+}
+
+function gitPrefixedAbsolutePath(path: string): string | undefined {
+  if (!path.startsWith("a/") && !path.startsWith("b/")) return undefined;
+  const stripped = path.slice(2);
+  if (!stripped) return undefined;
+  return stripped.startsWith("/") ? stripped : `/${stripped}`;
 }
 
 function splitLines(source: string): string[] {

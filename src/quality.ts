@@ -21,6 +21,7 @@ export type QualityConfig = {
   fileLengthThresholds: FileLengthThresholds;
   maxExtractProps: number;
   defaultWrite: "auto" | "true" | "false";
+  defaultOutput: "auto" | "compact" | "detailed";
 };
 
 export type FileLengthWarning = {
@@ -98,6 +99,7 @@ const DEFAULT_CONFIG: QualityConfig = {
   },
   maxExtractProps: 12,
   defaultWrite: "auto",
+  defaultOutput: "auto",
 };
 
 export function loadQualityConfig(filePath?: string): QualityConfig {
@@ -118,7 +120,8 @@ export function loadQualityConfig(filePath?: string): QualityConfig {
   const thresholds = normalizeThresholds(data.file_length_thresholds ?? data.fileLengthThresholds);
   const maxExtractProps = normalizePositiveInteger(data.max_extract_props ?? data.maxExtractProps, DEFAULT_CONFIG.maxExtractProps);
   const defaultWrite = normalizeDefaultWrite(data.defaultWrite ?? data.default_write, DEFAULT_CONFIG.defaultWrite);
-  return { fileLengthThresholds: thresholds, maxExtractProps, defaultWrite };
+  const defaultOutput = normalizeDefaultOutput(outputDefaultValue(data), DEFAULT_CONFIG.defaultOutput);
+  return { fileLengthThresholds: thresholds, maxExtractProps, defaultWrite, defaultOutput };
 }
 
 export function fileLengthWarnings(filePath: string, previous: string, next: string): FileLengthWarning[] {
@@ -178,7 +181,7 @@ export function analyzeState(filePath: string, source = readFileSync(filePath, "
 }
 
 function findConfigPath(filePath?: string): string | null {
-  let current = filePath ? dirname(filePath) : process.cwd();
+  let current = filePath ? configSearchStart(filePath) : process.cwd();
   while (true) {
     const candidate = join(current, ".tedit", "config.json");
     if (existsSync(candidate)) return candidate;
@@ -186,6 +189,10 @@ function findConfigPath(filePath?: string): string | null {
     if (parent === current) return null;
     current = parent;
   }
+}
+
+function configSearchStart(filePath: string): string {
+  return existsSync(join(filePath, ".tedit", "config.json")) ? filePath : dirname(filePath);
 }
 
 function normalizeThresholds(value: unknown): FileLengthThresholds {
@@ -215,6 +222,26 @@ function normalizeDefaultWrite(value: unknown, fallback: QualityConfig["defaultW
   if (value === false || value === "false") return "false";
   if (value === "auto") return "auto";
   fail("INVALID_TEDIT_CONFIG", "defaultWrite must be true, false, or auto.");
+}
+
+function outputDefaultValue(data: Record<string, unknown>): unknown {
+  if (data.defaultOutput !== undefined || data.default_output !== undefined) {
+    return data.defaultOutput ?? data.default_output;
+  }
+  const output = data.output;
+  if (output === undefined) return undefined;
+  if (typeof output === "string") return output;
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    fail("INVALID_TEDIT_CONFIG", "output must be compact, detailed, auto, or an object with defaultMode.");
+  }
+  const record = output as Record<string, unknown>;
+  return record.defaultMode ?? record.default_mode ?? record.default ?? record.mode;
+}
+
+function normalizeDefaultOutput(value: unknown, fallback: QualityConfig["defaultOutput"]): QualityConfig["defaultOutput"] {
+  if (value === undefined) return fallback;
+  if (value === "compact" || value === "detailed" || value === "auto") return value;
+  fail("INVALID_TEDIT_CONFIG", "output.defaultMode must be compact, detailed, or auto.");
 }
 
 function fileLengthMessage(level: FileLengthWarning["level"]): string {

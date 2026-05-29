@@ -8,10 +8,13 @@ export type OutputOptions = {
 
 type JsonRecord = Record<string, unknown>;
 
+type AgentFileChange = "created" | "modified" | "deleted" | "unchanged";
+
 type AgentFileSummary = {
   file: string;
   path: string;
-  change: "create" | "update" | "delete" | "noop";
+  change: AgentFileChange;
+  persisted: boolean;
   changed?: boolean;
   written?: boolean;
   deleted?: boolean;
@@ -49,7 +52,7 @@ export function formatAgentResult(result: unknown, options: OutputOptions = {}):
 
 export function detailedAgentResult(record: JsonRecord, options: OutputOptions = {}): JsonRecord {
   const files = agentFilesFromRecord(record);
-  const next = agentNextSteps(record, files);
+  const next = agentNextSteps(record, files, options);
   const nextRecord: JsonRecord = {
     ...record,
     ok: record.success !== false,
@@ -65,21 +68,26 @@ export function detailedAgentResult(record: JsonRecord, options: OutputOptions =
 
 export function compactAgentResult(record: JsonRecord, options: OutputOptions = {}): JsonRecord {
   const files = agentFilesFromRecord(record);
-  const next = agentNextSteps(record, files);
-  const success = record.success !== false;
+  if (record.success === false) return compactErrorResult(record, files, options);
+  const kind = compactResultKind(record, files);
+  if (kind !== "mutation") return compactPayloadResult(record, kind);
+  return compactMutationResult(record, files, options);
+}
+
+function compactMutationResult(record: JsonRecord, files: AgentFileSummary[], options: OutputOptions): JsonRecord {
+  const next = agentNextSteps(record, files, options);
   const compact: JsonRecord = {
-    success,
-    ok: success,
+    ok: true,
+    kind: "mutation",
     summary: agentSummary(record, files),
   };
 
   if (files.length > 0) {
-    compact.changed = files.some((file) => file.changed === true);
-    compact.written = files.some((file) => file.written === true);
+    compact.changedCount = countFiles(files, (file) => file.changed === true);
+    compact.writtenCount = countFiles(files, (file) => file.written === true);
     compact.files = compactFiles(record, options);
   }
 
-  if (typeof record.file === "string") compact.file = record.file;
   if (files.length === 1) {
     compact.path = files[0].path;
     if (files[0].parse_verified !== undefined) compact.parse_verified = files[0].parse_verified;
@@ -88,14 +96,63 @@ export function compactAgentResult(record: JsonRecord, options: OutputOptions = 
     if (files[0].parse_skip_reason) compact.parse_skip_reason = files[0].parse_skip_reason;
   }
   if (typeof record.plan === "string") compact.plan = record.plan;
-  if (!success) {
-    if (typeof record.code === "string") compact.code = record.code;
-    if (typeof record.error === "string") compact.error = record.error;
-    if (options.includeDetails && record.details !== undefined) compact.details = record.details;
-  }
   if (next.length > 0) compact.next = next;
   if (options.includeDiffs) compact.diffs = collectDiffs(record);
   return compact;
+}
+
+function compactErrorResult(record: JsonRecord, files: AgentFileSummary[], options: OutputOptions): JsonRecord {
+  const next = agentNextSteps(record, files, options);
+  const compact: JsonRecord = {
+    ok: false,
+    kind: "error",
+    summary: agentSummary(record, files),
+  };
+  if (typeof record.code === "string") compact.code = record.code;
+  if (typeof record.error === "string") compact.error = record.error;
+  if (options.includeDetails && record.details !== undefined) compact.details = record.details;
+  if (next.length > 0) compact.next = next;
+  return compact;
+}
+
+function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
+  const compact: JsonRecord = {
+    ok: true,
+    kind,
+    summary: payloadSummary(record, kind),
+  };
+
+  if (kind === "find" && Array.isArray(record.matches)) {
+    compact.matches = record.matches;
+    return compact;
+  }
+  if (kind === "inspect" && record.node !== undefined) {
+    compact.node = record.node;
+    return compact;
+  }
+  if (kind === "verify-file") {
+    if (typeof record.file === "string") compact.path = record.file;
+    copyKeys(record, compact, ["parse_verified", "parser", "parse_skipped", "parse_skip_reason"]);
+    return compact;
+  }
+  if (kind === "actions") {
+    if (typeof record.file === "string") compact.path = record.file;
+    copyKeys(record, compact, ["tools", "rules", "actions", "guidance"]);
+    return compact;
+  }
+  if (kind === "rules") {
+    copyKeys(record, compact, ["rules"]);
+    return compact;
+  }
+  if (kind === "analyze-state") {
+    if (typeof record.file === "string") compact.path = record.file;
+    copyKeys(record, compact, ["states_total", "handlers_total", "clusters", "guidance", "ambiguous", "ungrouped"]);
+    if (record.summary && typeof record.summary === "object" && !Array.isArray(record.summary)) compact.analysis_summary = record.summary;
+    return compact;
+  }
+
+  const { success: _success, summary: rawSummary, ...payload } = record;
+  return { ...compact, ...(rawSummary === undefined || typeof rawSummary === "string" ? payload : { ...payload, result_summary: rawSummary }) };
 }
 
 export function collectDiffs(value: unknown): string[] {
@@ -115,7 +172,7 @@ export function collectDiffs(value: unknown): string[] {
 
 function compactFiles(record: JsonRecord, options: OutputOptions): unknown[] {
   if (Array.isArray(record.files)) return enrichAgentFiles(record.files, record, options);
-  return agentFilesFromRecord(record);
+  return agentFilesFromRecord(record).map(compactFileOutput);
 }
 
 function agentFilesFromRecord(record: JsonRecord): AgentFileSummary[] {
@@ -144,9 +201,14 @@ function enrichAgentFiles(values: unknown[], record: JsonRecord, options: Output
       return { ...(value as JsonRecord), ...file };
     }
     return options.includeDiffs && value && typeof value === "object" && !Array.isArray(value) && typeof (value as JsonRecord).diff === "string"
-      ? { ...file, diff: (value as JsonRecord).diff }
-      : file;
+      ? { ...compactFileOutput(file), diff: (value as JsonRecord).diff }
+      : compactFileOutput(file);
   });
+}
+
+function compactFileOutput(file: AgentFileSummary): Omit<AgentFileSummary, "file" | "changed" | "written" | "deleted"> {
+  const { file: _file, changed: _changed, written: _written, deleted: _deleted, ...output } = file;
+  return output;
 }
 
 function compactFileFrom(value: unknown, parseByFile: Map<string, Partial<AgentFileSummary>>): AgentFileSummary | null {
@@ -162,6 +224,7 @@ function compactFileFrom(value: unknown, parseByFile: Map<string, Partial<AgentF
     file: record.file,
     path: record.file,
     change: changeKind(record, changed, deleted),
+    persisted: record.written === true,
     ...(typeof changed === "boolean" ? { changed } : {}),
     ...(typeof record.written === "boolean" ? { written: record.written } : {}),
     ...(deleted ? { deleted: true } : {}),
@@ -204,11 +267,66 @@ function parseFields(file: AgentFileSummary): Partial<AgentFileSummary> {
   };
 }
 
+function compactResultKind(record: JsonRecord, files: AgentFileSummary[]): string {
+  if (isMutationResult(record, files)) return "mutation";
+  if (Array.isArray(record.matches)) return "find";
+  if (record.node !== undefined) return "inspect";
+  if (typeof record.parse_verified === "boolean" && typeof record.file === "string") return "verify-file";
+  if (typeof record.states_total === "number" && Array.isArray(record.clusters)) return "analyze-state";
+  if (Array.isArray(record.actions) && Array.isArray(record.rules)) return "actions";
+  if (Array.isArray(record.rules)) return "rules";
+  if (Array.isArray(record.results) && record.vars && typeof record.vars === "object") return "workflow";
+  if (typeof record.kind === "string") return record.kind;
+  return "result";
+}
+
+function isMutationResult(record: JsonRecord, files: AgentFileSummary[]): boolean {
+  if (typeof record.changed === "boolean" || typeof record.written === "boolean") return true;
+  if (typeof record.diff === "string" && record.diff.length > 0) return true;
+  return files.some((file) => file.changed !== undefined || file.written !== undefined || file.deleted || file.diffAvailable);
+}
+
+function payloadSummary(record: JsonRecord, kind: string): string {
+  if (typeof record.summary === "string") return record.summary;
+  if (kind === "find" && Array.isArray(record.matches)) return String(record.matches.length) + " " + plural("match", record.matches.length);
+  if (kind === "inspect") return "node inspected";
+  if (kind === "verify-file") return parseResultSummary(record);
+  if (kind === "actions" && Array.isArray(record.actions)) return String(record.actions.length) + " " + plural("action", record.actions.length) + " available";
+  if (kind === "rules" && Array.isArray(record.rules)) return String(record.rules.length) + " " + plural("rule", record.rules.length) + " available";
+  if (kind === "analyze-state") {
+    const states = typeof record.states_total === "number" ? record.states_total : 0;
+    const handlers = typeof record.handlers_total === "number" ? record.handlers_total : 0;
+    return String(states) + " " + plural("state", states) + ", " + String(handlers) + " " + plural("handler", handlers);
+  }
+  if (kind === "workflow" && Array.isArray(record.results)) return String(record.results.length) + " workflow " + plural("step", record.results.length) + " completed";
+  return "operation succeeded";
+}
+
+function parseResultSummary(record: JsonRecord): string {
+  if (record.parse_verified === true) {
+    return typeof record.parser === "string" ? "parse verified with " + record.parser : "parse verified";
+  }
+  if (record.parse_skipped === true) {
+    return typeof record.parse_skip_reason === "string" ? "parse skipped (" + record.parse_skip_reason + ")" : "parse skipped";
+  }
+  return "parse not verified";
+}
+
+function copyKeys(source: JsonRecord, target: JsonRecord, keys: string[]): void {
+  for (const key of keys) {
+    if (source[key] !== undefined) target[key] = source[key];
+  }
+}
+
 function changeKind(record: JsonRecord, changed: boolean | undefined, deleted: boolean): AgentFileSummary["change"] {
-  if (deleted) return "delete";
-  if (changed !== true) return "noop";
-  if (record.existed === false) return "create";
-  return "update";
+  if (deleted) return "deleted";
+  if (changed !== true) return "unchanged";
+  if (record.existed === false) return "created";
+  return "modified";
+}
+
+function countFiles(files: AgentFileSummary[], predicate: (file: AgentFileSummary) => boolean): number {
+  return files.filter(predicate).length;
 }
 
 function diffStats(diff: string): Pick<AgentFileSummary, "hunks" | "bytesDelta"> {
@@ -251,16 +369,20 @@ function parseSummarySuffix(files: AgentFileSummary[]): string {
   return reasons.length === 1 ? "; parse skipped (" + reasons[0] + ")" : "; parse skipped";
 }
 
-function agentNextSteps(record: JsonRecord, files: AgentFileSummary[]): string[] {
+function agentNextSteps(record: JsonRecord, files: AgentFileSummary[], options: OutputOptions): string[] {
   const explicit = Array.isArray(record.next) && record.next.every((item) => typeof item === "string")
     ? record.next as string[]
     : [];
-  return [...new Set([...explicit, ...deterministicNextSteps(files)])].slice(0, 3);
+  return [...new Set([...explicit, ...deterministicNextSteps(files, options)])].slice(0, 3);
 }
 
-function deterministicNextSteps(files: AgentFileSummary[]): string[] {
-  if (files.some((file) => file.changed && !file.written)) return ["rerun with write=true to apply"];
-  return [];
+function deterministicNextSteps(files: AgentFileSummary[], options: OutputOptions): string[] {
+  const steps: string[] = [];
+  if (files.some((file) => file.changed && !file.written)) steps.push("rerun with write=true to apply");
+  if (options.mode !== "detailed" && !options.includeDetails && !options.includeDiffs && files.some((file) => file.diffAvailable && file.changed && !file.written)) {
+    steps.push("add --include-diffs to inline diffs or --diff-out <file> to save them");
+  }
+  return steps;
 }
 
 function plural(word: string, count: number): string {
