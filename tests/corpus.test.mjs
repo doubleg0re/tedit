@@ -9,6 +9,50 @@ const cli = new URL("../dist/cli.js", import.meta.url).pathname;
 
 const corpusCases = [
   {
+    name: "javascript base edit parse verification",
+    file: "helpers.js",
+    input: `export function label() {
+  return "old";
+}
+`,
+    commands: [
+      ["edit", "{file}", "--find", "old", "--replace", "new", "--write"],
+      ["verify-file", "{file}", "--json"],
+    ],
+    expected: `export function label() {
+  return "new";
+}
+`,
+  },
+  {
+    name: "jsx text child edit",
+    file: "Card.jsx",
+    input: `export function Card() {
+  return <span>Old</span>;
+}
+`,
+    commands: [
+      ["text", "replace", "{file}", "span", "--match-text", "Old", "--with-text", "New", "--write"],
+      ["verify-file", "{file}", "--json"],
+    ],
+    expected: `export function Card() {
+  return <span>New</span>;
+}
+`,
+  },
+  {
+    name: "typescript base edit parse verification",
+    file: "labels.ts",
+    input: `export const label: string = "old";
+`,
+    commands: [
+      ["edit", "{file}", "--find", "old", "--replace", "new", "--write"],
+      ["verify-file", "{file}", "--json"],
+    ],
+    expected: `export const label: string = "new";
+`,
+  },
+  {
     name: "tsx component class and prop edit",
     file: "Page.tsx",
     input: `export function Page() {
@@ -50,6 +94,20 @@ const corpusCases = [
   {
     name: "jsonl first record edit",
     file: "events.jsonl",
+    input: `{"id":1,"status":"old"}
+{"id":2,"status":"keep"}
+`,
+    commands: [
+      ["prop", "set", "{file}", '[path="$[0]"]', "status", "new", "--write"],
+      ["verify-file", "{file}", "--json"],
+    ],
+    expected: `{"id":1,"status":"new"}
+{"id":2,"status":"keep"}
+`,
+  },
+  {
+    name: "ndjson first record edit",
+    file: "events.ndjson",
     input: `{"id":1,"status":"old"}
 {"id":2,"status":"keep"}
 `,
@@ -131,6 +189,16 @@ Old text
     expected: `<main id="app" class="new"><p>Hi</p></main>`,
   },
   {
+    name: "xml attribute edit",
+    file: "feed.xml",
+    input: `<root><item id="a">One</item></root>`,
+    commands: [
+      ["prop", "set", "{file}", "item[id=a]", "id", "b", "--write"],
+      ["verify-file", "{file}", "--json"],
+    ],
+    expected: `<root><item id="b">One</item></root>`,
+  },
+  {
     name: "svg namespaced element selected by attribute",
     file: "icon.svg",
     input: `<svg viewBox="0 0 10 10"><svg:path id="shape" d="M0 0" /></svg>`,
@@ -139,6 +207,39 @@ Old text
       ["verify-file", "{file}", "--json"],
     ],
     expected: `<svg viewBox="0 0 10 10"><svg:path id="shape" d="M0 0" data-icon="check" /></svg>`,
+  },
+];
+
+const invalidParserCases = [
+  {
+    name: "javascript invalid edit is atomic",
+    file: "broken.js",
+    input: "export function f() { return 1; }\n",
+    command: ["edit", "{file}", "--find", "}", "--delete", "--write"],
+  },
+  {
+    name: "jsonl invalid edit is atomic",
+    file: "broken.jsonl",
+    input: "{\"id\":1}\n{\"id\":2}\n",
+    command: ["edit", "{file}", "--find", "1", "--replace", "}", "--write"],
+  },
+  {
+    name: "yaml invalid edit is atomic",
+    file: "broken.yaml",
+    input: "server:\n  host: localhost\n",
+    command: ["edit", "{file}", "--find", "  host: localhost", "--replace", "  \thost: localhost", "--write"],
+  },
+  {
+    name: "markdown invalid edit is atomic",
+    file: "broken.md",
+    input: "# Title\n\n```ts\nconst ok = true;\n```\n",
+    command: ["edit", "{file}", "--find", "\n```\n", "--replace", "\n", "--write"],
+  },
+  {
+    name: "xml invalid edit is atomic",
+    file: "broken.xml",
+    input: "<root><item>One</item></root>",
+    command: ["edit", "{file}", "--find", "</item>", "--replace", "</entry>", "--write"],
   },
 ];
 
@@ -159,6 +260,20 @@ test("corpus rule round-trips representative structural edits", () => {
   }
 });
 
+test("corpus invalid parser edits fail atomically", () => {
+  for (const item of invalidParserCases) {
+    const dir = mkdtempSync(join(tmpdir(), "tedit-corpus-invalid-"));
+    const file = join(dir, item.file);
+    writeFileSync(file, item.input);
+
+    const failed = runFail(item.command.map((arg) => arg === "{file}" ? file : arg), item.name);
+
+    assert.equal(failed.status, 1, item.name);
+    assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT", item.name);
+    assert.equal(readFileSync(file, "utf8"), item.input, item.name);
+  }
+});
+
 function run(args, input, label = args.join(" ")) {
   const result = spawnSync(process.execPath, [cli, ...args], {
     input,
@@ -169,4 +284,16 @@ function run(args, input, label = args.join(" ")) {
     assert.fail(`${label}\nstatus=${result.status}\nstdout=${result.stdout}\nstderr=${result.stderr}`);
   }
   return result.stdout;
+}
+
+function runFail(args, label = args.join(" ")) {
+  const result = spawnSync(process.execPath, [cli, ...args], {
+    encoding: "utf8",
+    env: { ...process.env, FORCE_COLOR: "0" },
+  });
+  assert.notEqual(result.status, 0, label);
+  return {
+    status: result.status,
+    body: JSON.parse(result.stderr || result.stdout),
+  };
 }

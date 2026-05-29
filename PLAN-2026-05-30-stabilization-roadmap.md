@@ -60,6 +60,8 @@ Acceptance:
 
 ### Phase 3. Error Recovery Quality
 
+Status: completed in `tests/recovery-output.test.mjs`.
+
 Scope:
 
 - Keep deterministic retry hints in compact errors.
@@ -112,6 +114,8 @@ Acceptance:
 
 ### Phase 6. Parser And Rule Hardening
 
+Status: completed in `tests/corpus.test.mjs`.
+
 Scope:
 
 - Keep current supported file types stable:
@@ -137,6 +141,5 @@ Before claiming a stabilization phase is done:
 
 ## Current Next Step
 
-Continue with Phase 3 error recovery quality. Convert remaining real dogfood
-failure cases into compact structured error tests before changing agent-facing
-messages.
+All planned stabilization phases are implemented. Keep this roadmap as the
+regression checklist for future parser, MCP, and output-contract changes.
