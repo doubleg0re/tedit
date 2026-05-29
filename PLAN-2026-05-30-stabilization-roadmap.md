@@ -78,10 +78,12 @@ Acceptance:
 
 ### Phase 4. MCP Surface Slimming
 
+Status: completed in `04163c9`.
+
 Scope:
 
 - Keep the default agent profile focused on core workflows:
-  `edit`, `multiedit`, `patch`, `file_write`, `search_text`,
+  `actions`, `edit`, `multiedit`, `patch`, `file_write`, `search_text`,
   `inspect_range`, and `verify_file`.
 - Keep JSX/AST/refactor/extract tools available in advanced/all profiles.
 - Make tool descriptions say when to use the tool, not how impressive it is.
@@ -93,6 +95,8 @@ Acceptance:
 - Existing aliases remain backward-compatible.
 
 ### Phase 5. Docs And Help Sync
+
+Status: completed in `tests/docs-sync.test.mjs`.
 
 Scope:
 

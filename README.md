@@ -144,11 +144,6 @@ validity checks without trying to replace native Read.
 Use `file_write` with a required `mode` for whole-file writes:
 `mode: "write"` for complete source replacement, `mode: "scaffold"` for
 scaffold specs, and `mode: "template"` for built-in or project templates.
-`create_file` stays separate because no-overwrite creation is a safety
-boundary. Use `extract_component` with `mode: "direct"` for small confident
-extracts or `mode: "plan"` plus `apply_plan` for reviewable refactors.
-Use `scan_strings` for hardcoded text audits before i18n work, then narrow
-with `ast_select` and apply one safe string replacement with `ast_edit`.
 
 Set `TEDIT_MCP_PROFILE=all` (or `TEDIT_MCP_EXPOSE_ADVANCED=true`) to expose
 the advanced and legacy fine-grained tools as MCP tools too, including
@@ -162,6 +157,13 @@ the advanced and legacy fine-grained tools as MCP tools too, including
 `imports_remove`, `imports_rename`, `imports_move`, `expr_replace`,
 `expr_wrap`, `expr_unwrap`, `expr_to_ternary`, `expr_to_short_circuit`,
 `extract`, `extract_plan`, and `refactor_state_plan`.
+
+In the `all` profile, `create_file` stays separate because no-overwrite
+creation is a safety boundary. Use `extract_component` with `mode: "direct"`
+for small confident extracts or `mode: "plan"` plus `apply_plan` for
+reviewable refactors. Use `scan_strings` for hardcoded text audits before i18n
+work, then narrow with `ast_select` and apply one safe string replacement with
+`ast_edit`.
 
 Mutating MCP tools are described as safer replacements for routine Edit, Write,
 MultiEdit, and Patch calls when parser guardrails, dry-runs, git-aware write
