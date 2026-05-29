@@ -353,6 +353,7 @@ function applyPatchToSource(source: string, patch: ParsedPatchFile): string {
           expected: line.text,
           actual: sourceLine === undefined ? null : stripEol(sourceLine),
           old_start: hunk.oldStart,
+          next: patchRecoveryNext(patch.file, hunk.oldStart),
         });
       }
 
@@ -395,6 +396,10 @@ function findContextualHunkStart(lines: string[], hunk: PatchHunk, patch: Parsed
       file: patch.file,
       hunk: hunkIndex,
       matches,
+      next: [
+        "Regenerate the patch with more surrounding context.",
+        "For a small change, use tedit edit/multiedit with an exact current snippet.",
+      ],
     });
   }
   fail("PATCH_HUNK_FAILED", `Patch hunk ${hunkIndex + 1} failed for ${patch.file}.`, {
@@ -402,7 +407,17 @@ function findContextualHunkStart(lines: string[], hunk: PatchHunk, patch: Parsed
     hunk: hunkIndex,
     expected: expected[0],
     actual: null,
+    next: patchRecoveryNext(patch.file, hunk.oldStart),
   });
+}
+
+function patchRecoveryNext(file: string, line: number): string[] {
+  const targetLine = Math.max(1, line);
+  return [
+    `Inspect current context: tedit inspect-range ${JSON.stringify(file)} --lines ${targetLine}:${targetLine} --context 3 --json.`,
+    "Regenerate the patch against the current file contents.",
+    "For a small change, use tedit edit/multiedit with an exact current snippet.",
+  ];
 }
 
 function parseHunkHeader(line: string, lineNumber: number): PatchHunk {

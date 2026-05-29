@@ -46,6 +46,10 @@ export function parseMultieditInput(input: string): unknown[] {
   } catch (error) {
     fail("INVALID_MULTIEDIT", "multiedit input must be valid JSON.", {
       parser_error: error instanceof Error ? error.message : String(error),
+      next: [
+        "Validate stdin as JSON before piping it to tedit multiedit.",
+        "Pass an edits array or an object shaped like {\"edits\":[...]}.",
+      ],
     });
   }
 
