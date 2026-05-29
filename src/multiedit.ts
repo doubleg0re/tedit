@@ -53,7 +53,26 @@ export function parseMultieditInput(input: string): unknown[] {
   if (root && typeof root === "object" && Array.isArray((root as { edits?: unknown }).edits)) {
     return (root as { edits: unknown[] }).edits;
   }
-  fail("INVALID_MULTIEDIT", "multiedit input must be an array or an object with an edits array.");
+  fail("INVALID_MULTIEDIT", "multiedit input must be an array or an object with an edits array.", multieditShapeDetails(root));
+}
+
+function multieditShapeDetails(root: unknown): Record<string, unknown> {
+  if (root && typeof root === "object" && !Array.isArray(root)) {
+    const record = root as Record<string, unknown>;
+    const nested = record.multiedit;
+    if (nested && typeof nested === "object" && !Array.isArray(nested) && Array.isArray((nested as { edits?: unknown }).edits)) {
+      return {
+        detected: "search-text-result",
+        next: [
+          "Pass the nested multiedit object, e.g. jq '.multiedit' | tedit multiedit --from-stdin --dry-run.",
+        ],
+      };
+    }
+  }
+  return {
+    expected: "array or object with edits array",
+    next: ["Pass an edits array or an object shaped like {\"edits\":[...]}."],
+  };
 }
 
 export function runMultiedit(edits: unknown[], options: WorkspaceFlowOptions = {}): MultieditResult {
