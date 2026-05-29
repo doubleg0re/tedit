@@ -64,6 +64,38 @@ perfectly) but would have caught this exact bug at edit time.
 frontend." A syntactic editor that also catches the #1 class of silent
 Tailwind bugs is strictly better than Write/Edit for React+Tailwind.
 
+### Fixed follow-up: text-size/text-color false positive (found 2026-05-29)
+
+The first lint pass fired (good!), but the `text-` group was bucketed too coarsely —
+it conflates **font-size** with **text-color**:
+
+```
+CLASSNAME_CONFLICT  group "text-color"
+  <span> "text-text-3" + "text-[10px]"   ← NOT a conflict
+  <span> "text-[14px]" + "text-text-1"   ← NOT a conflict
+  <input> "text-[12px]" + "text-text-1"  ← NOT a conflict
+```
+
+`text-[10px]` / `text-[14px]` / `text-sm` are **font-size**; `text-text-3` /
+`text-text-1` / `text-primary` are **color**. They don't conflict — pairing a
+size and a color on one element is the norm, so the lint fires on almost every
+styled text element (very noisy → trains the agent to ignore it).
+
+Fix: split the `text-` prefix into two groups:
+- **font-size**: `text-[<len>]`, `text-xs|sm|base|lg|xl|2xl|…`
+- **text-color**: `text-[<color>]`, `text-<token>` (text-text-N, text-primary,
+  text-danger, text-foreground, …), `text-current/inherit/transparent`
+
+Distinguishing `text-[10px]` (size) vs `text-[#fff]`/`text-[var(--x)]` (color)
+in the arbitrary `text-[...]` form: treat as size if the value matches a length
+(`px|rem|em|%|vh|vw|ch|ex` or unitless number), else color. Same split applies
+to `w-`/`h-` only at the width/height level (those were already correct).
+
+This follow-up is now covered by tests. The className lint splits text size
+from text color, treats arbitrary `text-[10px]`-style lengths as size, treats
+arbitrary color values as color, and uses axis-overlap checks for spacing,
+gap, inset, border-width, and border-radius utilities.
+
 ## Proposal B (from the dogfood discussion): convention-aware scaffold
 
 Idea: instead of the agent hand-writing the whole new file (≈ `Write`), let

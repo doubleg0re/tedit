@@ -117,8 +117,51 @@ type ClassToken = {
   branch?: "consequent" | "alternate";
 };
 
+type ClassEffect = {
+  group: string;
+  family: string;
+  axes: string[];
+};
+
+type ClassTokenEffect = ClassToken & {
+  effect: ClassEffect;
+};
+
 const GIANT_CLUSTER_STATE_THRESHOLD = 8;
 const LARGE_HANDLER_STATE_THRESHOLD = 8;
+
+const AXIS_ALL = ["all"];
+const BOX_AXES = ["top", "right", "bottom", "left"];
+const AXIS_X = ["right", "left"];
+const AXIS_Y = ["top", "bottom"];
+const CORNER_AXES = ["top-left", "top-right", "bottom-right", "bottom-left"];
+const TEXT_SIZE_CLASSES = new Set([
+  "text-xs",
+  "text-sm",
+  "text-base",
+  "text-lg",
+  "text-xl",
+  "text-2xl",
+  "text-3xl",
+  "text-4xl",
+  "text-5xl",
+  "text-6xl",
+  "text-7xl",
+  "text-8xl",
+  "text-9xl",
+]);
+const TEXT_ALIGN_CLASSES = new Set(["text-left", "text-center", "text-right", "text-justify", "text-start", "text-end"]);
+const TEXT_NON_COLOR_CLASSES = new Set([
+  ...TEXT_ALIGN_CLASSES,
+  "text-balance",
+  "text-pretty",
+  "text-wrap",
+  "text-nowrap",
+  "text-ellipsis",
+  "text-clip",
+]);
+const BORDER_WIDTH_VALUES = new Set(["0", "2", "4", "8"]);
+const ROUNDED_VALUES = new Set(["none", "sm", "md", "lg", "xl", "2xl", "3xl", "full"]);
 
 const DEFAULT_CLASS_GROUPS: Record<string, string[]> = {
   width: ["w-"],
@@ -180,6 +223,22 @@ const DEFAULT_CLASS_GROUPS: Record<string, string[]> = {
   "text-align": ["text-left", "text-center", "text-right", "text-justify", "text-start", "text-end"],
   "text-color": ["text-"],
   "background-color": ["bg-"],
+  "border-x-width": ["border-x", "border-x-"],
+  "border-y-width": ["border-y", "border-y-"],
+  "border-top-width": ["border-t", "border-t-"],
+  "border-right-width": ["border-r", "border-r-"],
+  "border-bottom-width": ["border-b", "border-b-"],
+  "border-left-width": ["border-l", "border-l-"],
+  "border-width": ["border", "border-"],
+  "rounded-top-left": ["rounded-tl", "rounded-tl-"],
+  "rounded-top-right": ["rounded-tr", "rounded-tr-"],
+  "rounded-bottom-right": ["rounded-br", "rounded-br-"],
+  "rounded-bottom-left": ["rounded-bl", "rounded-bl-"],
+  "rounded-top": ["rounded-t", "rounded-t-"],
+  "rounded-right": ["rounded-r", "rounded-r-"],
+  "rounded-bottom": ["rounded-b", "rounded-b-"],
+  "rounded-left": ["rounded-l", "rounded-l-"],
+  rounded: ["rounded", "rounded-"],
   opacity: ["opacity-"],
   z: ["z-"],
   "object-fit": ["object-contain", "object-cover", "object-fill", "object-none", "object-scale-down"],
@@ -384,17 +443,18 @@ function conflictsForClassTokens(
   node: t.JSXAttribute,
   config: ClassNameConflictConfig,
 ): ClassNameConflictWarning[] {
-  const byGroup = new Map<string, { group: string; variant: string; classes: ClassToken[] }>();
+  const byGroup = new Map<string, { family: string; variant: string; classes: ClassTokenEffect[] }>();
   for (const className of classes) {
     const parsed = parseTailwindToken(className.value);
     if (!parsed || parsed.important) continue;
-    const group = classGroupForUtility(parsed.utility, config.groups);
-    if (!group) continue;
+    const effect = classEffectForUtility(parsed.utility, config.groups);
+    if (!effect) continue;
 
-    const key = `${parsed.variant}\u0000${group}`;
-    const entry = byGroup.get(key) ?? { group, variant: parsed.variant, classes: [] };
-    if (!entry.classes.some((item) => item.value === className.value && item.exclusiveGroup === className.exclusiveGroup && item.branch === className.branch)) {
-      entry.classes.push(className);
+    const key = `${parsed.variant}\u0000${effect.family}`;
+    const entry = byGroup.get(key) ?? { family: effect.family, variant: parsed.variant, classes: [] };
+    const classEffect = { ...className, effect };
+    if (!entry.classes.some((item) => item.value === classEffect.value && item.exclusiveGroup === classEffect.exclusiveGroup && item.branch === classEffect.branch)) {
+      entry.classes.push(classEffect);
     }
     byGroup.set(key, entry);
   }
@@ -409,21 +469,22 @@ function conflictsForClassTokens(
       file: filePath,
       element,
       attribute,
-      group: entry.group,
+      group: entry.family,
       classes: conflictClasses,
       ...(location ? { line: location.line, column: location.column + 1 } : {}),
       ...(entry.variant ? { variant: entry.variant } : {}),
-      message: `${locationPrefix(filePath, location)}<${element}> ${entry.group} class conflict: ${conflictClasses.map((item) => JSON.stringify(item)).join(" + ")}.`,
-      next_step_hint: `Remove the older ${entry.group} utility, or add ! to the intended override if the conflict is deliberate.`,
+      message: `${locationPrefix(filePath, location)}<${element}> ${entry.family} class conflict: ${conflictClasses.map((item) => JSON.stringify(item)).join(" + ")}.`,
+      next_step_hint: `Remove the older ${entry.family} utility, or add ! to the intended override if the conflict is deliberate.`,
     }));
 }
 
-function conflictingClassValues(classes: ClassToken[]): string[] {
+function conflictingClassValues(classes: ClassTokenEffect[]): string[] {
   const conflicts = new Set<string>();
   for (let index = 0; index < classes.length; index++) {
     for (let otherIndex = index + 1; otherIndex < classes.length; otherIndex++) {
       if (classes[index].value === classes[otherIndex].value) continue;
       if (!canClassTokensCoexist(classes[index], classes[otherIndex])) continue;
+      if (!classEffectsOverlap(classes[index].effect, classes[otherIndex].effect)) continue;
       conflicts.add(classes[index].value);
       conflicts.add(classes[otherIndex].value);
     }
@@ -434,6 +495,12 @@ function conflictingClassValues(classes: ClassToken[]): string[] {
 function canClassTokensCoexist(left: ClassToken, right: ClassToken): boolean {
   if (!left.exclusiveGroup || !right.exclusiveGroup) return true;
   return left.exclusiveGroup !== right.exclusiveGroup || left.branch === right.branch;
+}
+
+function classEffectsOverlap(left: ClassEffect, right: ClassEffect): boolean {
+  if (left.family !== right.family) return false;
+  if (left.axes.includes("all") || right.axes.includes("all")) return true;
+  return left.axes.some((axis) => right.axes.includes(axis));
 }
 
 function parseTailwindToken(token: string): { variant: string; utility: string; important: boolean } | null {
@@ -468,6 +535,12 @@ function splitVariantParts(token: string): string[] {
   return parts;
 }
 
+function classEffectForUtility(utility: string, groups: Record<string, string[]>): ClassEffect | null {
+  const group = classGroupForUtility(utility, groups);
+  if (!group) return null;
+  return classEffectForGroup(group, utility);
+}
+
 function classGroupForUtility(utility: string, groups: Record<string, string[]>): string | null {
   for (const [group, patterns] of Object.entries(groups)) {
     if (matchesClassGroup(utility, group, patterns)) return group;
@@ -476,8 +549,11 @@ function classGroupForUtility(utility: string, groups: Record<string, string[]>)
 }
 
 function matchesClassGroup(utility: string, group: string, patterns: string[]): boolean {
+  if (group === "text-size") return isTextSizeUtility(utility);
   if (group === "text-color") return isTextColorUtility(utility);
   if (group === "background-color") return isBackgroundColorUtility(utility);
+  if (group.startsWith("border-") || group === "border-width") return isBorderWidthUtilityForGroup(utility, group);
+  if (group.startsWith("rounded")) return isRoundedUtilityForGroup(utility, group);
   return patterns.some((pattern) => matchesClassPattern(utility, pattern));
 }
 
@@ -487,19 +563,129 @@ function matchesClassPattern(utility: string, pattern: string): boolean {
   return utility === pattern;
 }
 
+function classEffectForGroup(group: string, utility: string): ClassEffect {
+  const axis = axisForClassGroup(group);
+  if (axis) return axis;
+  if (group === "text-size") return { group, family: "text-size", axes: AXIS_ALL };
+  if (group === "text-color") return { group, family: "text-color", axes: AXIS_ALL };
+  if (group === "border-width") return { group, family: "border-width", axes: BOX_AXES };
+  if (group.startsWith("border-") && group.endsWith("-width")) return { group, family: "border-width", axes: borderAxesForGroup(group) };
+  if (group === "rounded") return { group, family: "border-radius", axes: CORNER_AXES };
+  if (group.startsWith("rounded-")) return { group, family: "border-radius", axes: roundedAxesForGroup(group) };
+  return { group, family: group, axes: AXIS_ALL };
+}
+
+function axisForClassGroup(group: string): ClassEffect | null {
+  switch (group) {
+    case "padding":
+      return { group, family: "padding", axes: BOX_AXES };
+    case "padding-x":
+      return { group, family: "padding", axes: AXIS_X };
+    case "padding-y":
+      return { group, family: "padding", axes: AXIS_Y };
+    case "padding-top":
+      return { group, family: "padding", axes: ["top"] };
+    case "padding-right":
+      return { group, family: "padding", axes: ["right"] };
+    case "padding-bottom":
+      return { group, family: "padding", axes: ["bottom"] };
+    case "padding-left":
+      return { group, family: "padding", axes: ["left"] };
+    case "margin":
+      return { group, family: "margin", axes: BOX_AXES };
+    case "margin-x":
+      return { group, family: "margin", axes: AXIS_X };
+    case "margin-y":
+      return { group, family: "margin", axes: AXIS_Y };
+    case "margin-top":
+      return { group, family: "margin", axes: ["top"] };
+    case "margin-right":
+      return { group, family: "margin", axes: ["right"] };
+    case "margin-bottom":
+      return { group, family: "margin", axes: ["bottom"] };
+    case "margin-left":
+      return { group, family: "margin", axes: ["left"] };
+    case "gap":
+      return { group, family: "gap", axes: ["row", "column"] };
+    case "gap-x":
+      return { group, family: "gap", axes: ["column"] };
+    case "gap-y":
+      return { group, family: "gap", axes: ["row"] };
+    case "inset":
+      return { group, family: "inset", axes: BOX_AXES };
+    case "inset-x":
+      return { group, family: "inset", axes: AXIS_X };
+    case "inset-y":
+      return { group, family: "inset", axes: AXIS_Y };
+    case "top":
+      return { group, family: "inset", axes: ["top"] };
+    case "right":
+      return { group, family: "inset", axes: ["right"] };
+    case "bottom":
+      return { group, family: "inset", axes: ["bottom"] };
+    case "left":
+      return { group, family: "inset", axes: ["left"] };
+    default:
+      return null;
+  }
+}
+
+function borderAxesForGroup(group: string): string[] {
+  switch (group) {
+    case "border-x-width":
+      return AXIS_X;
+    case "border-y-width":
+      return AXIS_Y;
+    case "border-top-width":
+      return ["top"];
+    case "border-right-width":
+      return ["right"];
+    case "border-bottom-width":
+      return ["bottom"];
+    case "border-left-width":
+      return ["left"];
+    default:
+      return BOX_AXES;
+  }
+}
+
+function roundedAxesForGroup(group: string): string[] {
+  switch (group) {
+    case "rounded-top":
+      return ["top-left", "top-right"];
+    case "rounded-right":
+      return ["top-right", "bottom-right"];
+    case "rounded-bottom":
+      return ["bottom-right", "bottom-left"];
+    case "rounded-left":
+      return ["top-left", "bottom-left"];
+    case "rounded-top-left":
+      return ["top-left"];
+    case "rounded-top-right":
+      return ["top-right"];
+    case "rounded-bottom-right":
+      return ["bottom-right"];
+    case "rounded-bottom-left":
+      return ["bottom-left"];
+    default:
+      return CORNER_AXES;
+  }
+}
+
+function isTextSizeUtility(utility: string): boolean {
+  const base = stripSlashSuffix(utility);
+  if (TEXT_SIZE_CLASSES.has(base)) return true;
+  const arbitrary = arbitraryBracketValue(base, "text");
+  if (arbitrary === null) return false;
+  if (arbitrary.startsWith("length:")) return true;
+  if (arbitrary.startsWith("color:")) return false;
+  return isCssLengthValue(arbitrary);
+}
+
 function isTextColorUtility(utility: string): boolean {
   if (!utility.startsWith("text-")) return false;
-  const nonColor = new Set([
-    ...DEFAULT_CLASS_GROUPS["text-size"],
-    ...DEFAULT_CLASS_GROUPS["text-align"],
-    "text-balance",
-    "text-pretty",
-    "text-wrap",
-    "text-nowrap",
-    "text-ellipsis",
-    "text-clip",
-  ]);
-  return !nonColor.has(utility) && !utility.startsWith("text-opacity-");
+  const base = stripSlashSuffix(utility);
+  return !isTextSizeUtility(utility) && !TEXT_NON_COLOR_CLASSES.has(base) && !base.startsWith("text-opacity-");
 }
 
 function isBackgroundColorUtility(utility: string): boolean {
@@ -508,6 +694,89 @@ function isBackgroundColorUtility(utility: string): boolean {
     return false;
   }
   return !["bg-opacity-", "bg-blend-", "bg-clip-", "bg-origin-", "bg-gradient-", "bg-size-"].some((prefix) => utility.startsWith(prefix));
+}
+
+function isBorderWidthUtilityForGroup(utility: string, group: string): boolean {
+  if (group === "border-width") return utility === "border" || isPrefixedBorderWidth(utility, "border");
+  if (group === "border-x-width") return utility === "border-x" || isPrefixedBorderWidth(utility, "border-x");
+  if (group === "border-y-width") return utility === "border-y" || isPrefixedBorderWidth(utility, "border-y");
+  if (group === "border-top-width") return utility === "border-t" || isPrefixedBorderWidth(utility, "border-t");
+  if (group === "border-right-width") return utility === "border-r" || isPrefixedBorderWidth(utility, "border-r");
+  if (group === "border-bottom-width") return utility === "border-b" || isPrefixedBorderWidth(utility, "border-b");
+  if (group === "border-left-width") return utility === "border-l" || isPrefixedBorderWidth(utility, "border-l");
+  return false;
+}
+
+function isPrefixedBorderWidth(utility: string, prefix: string): boolean {
+  if (!utility.startsWith(`${prefix}-`)) return false;
+  const value = utility.slice(prefix.length + 1);
+  return BORDER_WIDTH_VALUES.has(value) || isArbitraryLengthToken(value);
+}
+
+function isRoundedUtilityForGroup(utility: string, group: string): boolean {
+  const prefix = roundedPrefixForGroup(group);
+  if (!prefix) return false;
+  if (utility === prefix) return true;
+  if (!utility.startsWith(`${prefix}-`)) return false;
+  const value = utility.slice(prefix.length + 1);
+  return ROUNDED_VALUES.has(value) || isArbitraryLengthToken(value);
+}
+
+function roundedPrefixForGroup(group: string): string | null {
+  switch (group) {
+    case "rounded":
+      return "rounded";
+    case "rounded-top":
+      return "rounded-t";
+    case "rounded-right":
+      return "rounded-r";
+    case "rounded-bottom":
+      return "rounded-b";
+    case "rounded-left":
+      return "rounded-l";
+    case "rounded-top-left":
+      return "rounded-tl";
+    case "rounded-top-right":
+      return "rounded-tr";
+    case "rounded-bottom-right":
+      return "rounded-br";
+    case "rounded-bottom-left":
+      return "rounded-bl";
+    default:
+      return null;
+  }
+}
+
+function stripSlashSuffix(utility: string): string {
+  let bracketDepth = 0;
+  for (let index = 0; index < utility.length; index++) {
+    const char = utility[index];
+    if (char === "[") bracketDepth++;
+    else if (char === "]" && bracketDepth > 0) bracketDepth--;
+    else if (char === "/" && bracketDepth === 0) return utility.slice(0, index);
+  }
+  return utility;
+}
+
+function arbitraryBracketValue(utility: string, prefix: string): string | null {
+  const start = `${prefix}-[`;
+  if (!utility.startsWith(start) || !utility.endsWith("]")) return null;
+  return utility.slice(start.length, -1);
+}
+
+function isArbitraryLengthToken(value: string): boolean {
+  if (!value.startsWith("[") || !value.endsWith("]")) return false;
+  return isCssLengthValue(value.slice(1, -1));
+}
+
+function isCssLengthValue(value: string): boolean {
+  const normalized = value.trim();
+  if (/^-?\d*\.?\d+$/.test(normalized)) return true;
+  if (/^-?\d*\.?\d+(px|r?em|%|vh|dvh|svh|lvh|vw|dvw|svw|lvw|vmin|vmax|ch|ex|cap|ic|lh|rlh|cm|mm|in|pt|pc|q)$/.test(normalized)) return true;
+  if (/^calc\(.+\)$/.test(normalized)) return true;
+  if (/^clamp\(.+\)$/.test(normalized)) return true;
+  if (/^min\(.+\)$/.test(normalized)) return true;
+  return /^max\(.+\)$/.test(normalized);
 }
 
 function jsxElementName(name: t.JSXOpeningElement["name"]): string {

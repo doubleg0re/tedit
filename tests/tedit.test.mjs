@@ -3048,6 +3048,61 @@ test("className conflict guardrail reports static JSX utility conflicts", () => 
   assert.ok(!result.warnings.some((item) => item.group === "text-color"));
 });
 
+test("className conflict guardrail splits text size and text color", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const okFile = join(dir, "TextOk.tsx");
+  const conflictFile = join(dir, "TextConflict.tsx");
+  writeFileSync(okFile, `export function TextOk() {
+  return <>
+    <span className="text-text-3 text-[10px]" />
+    <span className="text-[14px] text-text-1" />
+    <input className="text-[12px] text-primary" />
+    <span className="text-[14px] text-[var(--text-color)]" />
+  </>;
+}
+`);
+  writeFileSync(conflictFile, `export function TextConflict() {
+  return <>
+    <span className="text-sm text-[14px]" />
+    <span className="text-primary text-text-1" />
+    <span className="text-[#fff] text-primary" />
+  </>;
+}
+`);
+
+  const ok = JSON.parse(run(["verify-file", okFile, "--json"]));
+  const conflict = JSON.parse(run(["verify-file", conflictFile, "--json"]));
+
+  assert.deepEqual(ok.warnings, []);
+  assert.ok(conflict.warnings.some((item) => item.group === "text-size" && item.classes.includes("text-sm") && item.classes.includes("text-[14px]")));
+  assert.ok(conflict.warnings.some((item) => item.group === "text-color" && item.classes.includes("text-primary") && item.classes.includes("text-text-1")));
+  assert.ok(conflict.warnings.some((item) => item.group === "text-color" && item.classes.includes("text-[#fff]") && item.classes.includes("text-primary")));
+});
+
+test("className conflict guardrail uses axis overlap for spacing and positioning utilities", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const okFile = join(dir, "AxisOk.tsx");
+  const conflictFile = join(dir, "AxisConflict.tsx");
+  writeFileSync(okFile, `export function AxisOk() {
+  return <div className="px-2 py-3 mt-2 mb-4 gap-x-2 gap-y-4 inset-x-0 top-2 border-x border-y rounded-t rounded-b" />;
+}
+`);
+  writeFileSync(conflictFile, `export function AxisConflict() {
+  return <div className="p-4 px-2 pr-6 gap-4 gap-x-2 inset-0 top-2 border border-x-2 rounded rounded-tl-lg" />;
+}
+`);
+
+  const ok = JSON.parse(run(["verify-file", okFile, "--json"]));
+  const conflict = JSON.parse(run(["verify-file", conflictFile, "--json"]));
+
+  assert.deepEqual(ok.warnings, []);
+  assert.ok(conflict.warnings.some((item) => item.group === "padding" && item.classes.includes("p-4") && item.classes.includes("px-2") && item.classes.includes("pr-6")));
+  assert.ok(conflict.warnings.some((item) => item.group === "gap" && item.classes.includes("gap-4") && item.classes.includes("gap-x-2")));
+  assert.ok(conflict.warnings.some((item) => item.group === "inset" && item.classes.includes("inset-0") && item.classes.includes("top-2")));
+  assert.ok(conflict.warnings.some((item) => item.group === "border-width" && item.classes.includes("border") && item.classes.includes("border-x-2")));
+  assert.ok(conflict.warnings.some((item) => item.group === "border-radius" && item.classes.includes("rounded") && item.classes.includes("rounded-tl-lg")));
+});
+
 test("className conflict guardrail does not flag mutually exclusive ternary branches", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "Page.tsx");

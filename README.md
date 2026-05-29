@@ -582,9 +582,12 @@ they do not block writes. File-length warnings fire only when an edit crosses
 a configured threshold. JSX/TSX className conflict warnings also surface from
 `verify-file`, edit/mutation results, and compact MCP output when static
 Tailwind-like utilities in the same element target the same configured class
-group, such as `w-full w-9`. Deliberate overrides can use Tailwind's `!`
-prefix, for example `w-full !w-9`, or project config can add or disable
-groups.
+group or overlapping box axis, such as `w-full w-9`, `p-4 px-2`, or
+`inset-0 top-2`. Non-overlapping axes such as `px-2 py-3`, `gap-x-2 gap-y-4`,
+and `rounded-t rounded-b` are allowed. Text size and text color are split, so
+normal combinations like `text-[10px] text-primary` do not warn. Deliberate
+overrides can use Tailwind's `!` prefix, for example `w-full !w-9`, or project
+config can add or disable groups.
 
 Project config lives at `.tedit/config.json` and is discovered by
 walking upward from the target/spec path, falling back to the current
@@ -614,9 +617,11 @@ the built-in TTY/non-TTY behavior.
 }
 ```
 
-Class group entries are merged with the built-in JSX groups. A pattern ending
-in `-`, `[`, or `*` is treated as a prefix; other patterns are exact utility
-matches. Set `"classNameConflicts": false` or
+Class group entries are merged with the built-in JSX groups. Built-in spacing,
+gap, inset, border-width, and border-radius groups use axis-overlap checks;
+custom groups use whole-group conflict checks. A pattern ending in `-`, `[`,
+or `*` is treated as a prefix; other patterns are exact utility matches. Set
+`"classNameConflicts": false` or
 `"classNameConflicts": { "enabled": false }` to turn the guardrail off for a
 project.
 
