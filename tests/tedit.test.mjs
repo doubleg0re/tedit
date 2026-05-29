@@ -4,7 +4,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 const cli = new URL("../dist/cli.js", import.meta.url).pathname;
@@ -126,6 +126,7 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const src = join(dir, "src");
   const file = join(src, "Page.tsx");
+  const helper = join(src, "labels.ts");
   const ignored = join(src, "style.css");
   mkdirSync(src, { recursive: true });
   writeFileSync(file, [
@@ -135,6 +136,7 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
     "}",
     "",
   ].join("\n"));
+  writeFileSync(helper, "export const copy = \"삭제\";\n");
   writeFileSync(ignored, ".delete { content: \"삭제\"; }\n");
 
   const search = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.tsx", "--context", "1", "--multiedit-spec", "--replace", "Delete", "--json"]));
@@ -155,6 +157,11 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   assert.equal(search.results[0].suggested.findLines, "2");
   assert.match(search.results[0].suggested.replaceHint, /trailing newline/);
   assert.equal(search.results[0].next[0].tool, "inspect_range");
+
+  const braceGlobSearch = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.{tsx,ts}", "--multiedit-spec", "--replace", "Delete", "--json"]));
+  assert.equal(braceGlobSearch.count, 2);
+  assert.equal(braceGlobSearch.multiedit.edits.length, 2);
+  assert.deepEqual(braceGlobSearch.results.map((result) => basename(result.file)).sort(), ["Page.tsx", "labels.ts"]);
 
   const generatedMultiedit = JSON.parse(runWithInput(["multiedit", "--from-stdin", "--dry-run"], JSON.stringify(search.multiedit)));
   assert.equal(generatedMultiedit.success, true);

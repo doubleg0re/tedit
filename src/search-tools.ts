@@ -341,6 +341,15 @@ function globToRegExp(glob: string): RegExp {
       }
     } else if (char === "?") {
       pattern += "[^/]";
+    } else if (char === "{") {
+      const close = glob.indexOf("}", index + 1);
+      const body = close === -1 ? "" : glob.slice(index + 1, close);
+      if (!body) {
+        pattern += escapeRegExp(char);
+      } else {
+        pattern += `(?:${body.split(",").map(escapeRegExp).join("|")})`;
+        index = close;
+      }
     } else {
       pattern += escapeRegExp(char);
     }

@@ -209,7 +209,8 @@ printf '  const label = "Delete";\n' | tedit edit src/Page.tsx --find-lines 42 -
 `search-text` is intentionally a small built-in search bridge, not a full `rg`
 replacement. It searches text files under the given paths, skips common noisy
 directories such as `.git`, `node_modules`, `dist`, and `.tedit-cache`, accepts
-a simple `--glob` filter, can include nearby lines with `--context`, and returns
+a simple `--glob` filter (`*`, `**`, `?`, and comma braces such as
+`**/*.{ts,tsx}`), can include nearby lines with `--context`, and returns
 candidates with `file`, `line`, `column`, `preview`, `context`, `suggested`, and
 `next` fields. Use `rg` for broad exploratory search, and use `search-text` when
 the next step is likely a tedit edit.
