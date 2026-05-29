@@ -52,12 +52,20 @@ export type BaseEditPlan = {
   action: BaseEditMutation["kind"];
   strategy: BaseFindStrategy["kind"];
   matches: BaseMatch[];
+  guardrails: BaseEditGuardrail[];
   changed: boolean;
   source: string;
   nextSource: string;
   diff: string;
   parseVerified: boolean;
   parseVerification: BaseParseVerification;
+};
+
+export type BaseEditGuardrail = {
+  kind: "line-replace-newline-preserved";
+  message: string;
+  lineRange: string;
+  appended: "\n" | "\r\n";
 };
 
 export type ParseSkipReason = "disabled" | "unsupported_extension";
@@ -144,16 +152,18 @@ export function planBaseEdit(options: BaseEditOptions): BaseEditPlan {
     });
   }
 
-  const nextSource = applyMutation(options.source, matches, options.mutation, Boolean(options.replaceAll));
+  const guarded = guardLineReplaceMutation(options.source, options.strategy, matches, options.mutation);
+  const nextSource = applyMutation(options.source, matches, guarded.mutation, Boolean(options.replaceAll));
   const parseVerification = verifyParseForFile(options.filePath, nextSource, options.verifyParse !== false);
   const diff = unifiedDiff(options.source, nextSource, options.filePath);
 
   return {
     success: true,
     file: options.filePath,
-    action: options.mutation.kind,
+    action: guarded.mutation.kind,
     strategy: options.strategy.kind,
     matches: summarizeMatches(options.source, matches),
+    guardrails: guarded.guardrails,
     changed: nextSource !== options.source,
     source: options.source,
     nextSource,
@@ -444,6 +454,25 @@ function applyMutation(source: string, matches: RawMatch[], mutation: BaseEditMu
     }
   });
   return next;
+}
+
+function guardLineReplaceMutation(source: string, strategy: BaseFindStrategy, matches: RawMatch[], mutation: BaseEditMutation): { mutation: BaseEditMutation; guardrails: BaseEditGuardrail[] } {
+  if (strategy.kind !== "lines" || mutation.kind !== "replace" || matches.length === 0) {
+    return { mutation, guardrails: [] };
+  }
+  const match = matches[0];
+  const selected = source.slice(match.start, match.end);
+  const lineEnding = selected.endsWith("\r\n") ? "\r\n" : selected.endsWith("\n") ? "\n" : undefined;
+  if (!lineEnding || mutation.text.endsWith("\n")) return { mutation, guardrails: [] };
+  return {
+    mutation: { ...mutation, text: mutation.text + lineEnding },
+    guardrails: [{
+      kind: "line-replace-newline-preserved",
+      message: "find-lines replaces whole lines; tedit preserved the original trailing newline so the following line stays separate.",
+      lineRange: `${strategy.start}:${strategy.end}`,
+      appended: lineEnding,
+    }],
+  };
 }
 
 export function verifyParseForFile(filePath: string, source: string, enabled = true): BaseParseVerification {

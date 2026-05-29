@@ -36,6 +36,8 @@ type SearchTextOptions = {
   glob?: string;
   maxResults?: number;
   context?: number;
+  multieditSpec?: boolean;
+  replace?: string;
   caseSensitive?: boolean;
   includeHidden?: boolean;
 };
@@ -55,6 +57,13 @@ type SearchCandidate = {
   context?: SearchContext;
   suggested: JsonRecord;
   next: JsonRecord[];
+};
+
+type MultieditSpec = {
+  edits: JsonRecord[];
+  count: number;
+  replace: string;
+  truncated: boolean;
 };
 
 const DEFAULT_SEARCH_EXCLUDES = new Set([".git", "node_modules", "dist", "build", "coverage", ".tedit-cache"]);
@@ -123,10 +132,36 @@ export function searchText(options: SearchTextOptions): JsonRecord {
     paths,
     ...(options.glob ? { glob: options.glob } : {}),
     ...(context > 0 ? { context } : {}),
+    ...(options.multieditSpec ? { multiedit: multieditSpecForSearch(options, results, results.length >= maxResults) } : {}),
     results,
     count: results.length,
     truncated: results.length >= maxResults,
   };
+}
+
+function multieditSpecForSearch(options: SearchTextOptions, results: SearchCandidate[], truncated: boolean): MultieditSpec {
+  const replace = options.replace ?? "<replacement>";
+  const byFile = new Map<string, number>();
+  for (const result of results) byFile.set(result.file, (byFile.get(result.file) ?? 0) + 1);
+  const edits = [...byFile.entries()].map(([file, count]) => ({
+    file,
+    ...multieditFindForSearch(options),
+    replace,
+    replaceAll: true,
+    expectCount: count,
+  }));
+  return { edits, count: edits.length, replace, truncated };
+}
+
+function multieditFindForSearch(options: SearchTextOptions): JsonRecord {
+  if (options.regex) {
+    return {
+      findRegex: options.query,
+      ...(options.caseSensitive ? {} : { flags: "i" }),
+    };
+  }
+  if (options.caseSensitive) return { findExact: options.query };
+  return { findRegex: escapeRegExp(options.query), flags: "i" };
 }
 
 function filesForSearchPath(pathInput: string, options: SearchTextOptions): string[] {

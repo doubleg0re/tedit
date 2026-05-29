@@ -25,6 +25,7 @@ export type MultieditStepResult = {
   strategy: BaseFindStrategy["kind"];
   changed: boolean;
   matches: ReturnType<typeof planBaseEdit>["matches"];
+  guardrails: ReturnType<typeof planBaseEdit>["guardrails"];
   diff?: string;
 };
 
@@ -80,6 +81,7 @@ export function runMultiedit(edits: unknown[], options: WorkspaceFlowOptions = {
         strategy: plan.strategy,
         changed: plan.changed,
         matches: plan.matches,
+        guardrails: plan.guardrails,
         ...(plan.diff ? { diff: plan.diff } : {}),
       });
     } catch (error) {

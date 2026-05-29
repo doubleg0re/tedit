@@ -8,6 +8,7 @@ export type { BaseEditMutation, BaseEditOptions, BaseEditPlan, BaseFindStrategy,
 export { runAstEdit, runAstSelect, runScanStrings } from "./ast-tools.js";
 export type { AstNodeMatch, AstStringCandidate } from "./ast-tools.js";
 export { inspectRange, searchText } from "./search-tools.js";
+export { historyTrace } from "./history-tools.js";
 export type {
   CommentPosition,
   DocumentAdapter,
@@ -34,8 +35,8 @@ export { parseApplyPatch, parsePatchInput, parseUnifiedPatch, runPatchInput } fr
 export { runRefactorState } from "./refactor-state.js";
 export type { ParsedPatchFile, PatchHunk, PatchLine, PatchResult } from "./patch.js";
 export type { RefactorStateOptions, RefactorStateResult } from "./refactor-state.js";
-export { buildScaffoldSource, loadScaffoldSpec, loadTemplateSpec } from "./scaffold.js";
-export type { ScaffoldExportSpec, ScaffoldImportSpec, ScaffoldSpec } from "./scaffold.js";
+export { buildScaffoldSource, listTemplates, loadScaffoldSpec, loadTemplateSpec } from "./scaffold.js";
+export type { ScaffoldExportSpec, ScaffoldImportSpec, ScaffoldSpec, TemplateInfo } from "./scaffold.js";
 export { parseExtractSlot, planExtract } from "./extract.js";
 export { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, inspectRefactorPlan, writePlanFile } from "./refactor-plan.js";
 export type { ExtractOptions, ExtractPlan, ExtractResult, ExtractSlotSpec } from "./extract.js";

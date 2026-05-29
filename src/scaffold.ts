@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseElementShorthand } from "./chain.js";
@@ -28,6 +28,12 @@ export type ScaffoldSpec = {
   directives?: string | string[];
   imports?: ScaffoldImportSpec[];
   exports?: ScaffoldExportSpec[];
+};
+
+export type TemplateInfo = {
+  name: string;
+  source: "builtin" | "local" | "global";
+  path?: string;
 };
 
 const builtInTemplates: Record<string, ScaffoldSpec> = {
@@ -89,6 +95,16 @@ export function loadTemplateSpec(name: string, params: Record<string, string>, c
 
   if (!raw) fail("TEMPLATE_NOT_FOUND", `No tedit template named "${name}".`);
   return substituteParams(raw, params) as ScaffoldSpec;
+}
+
+export function listTemplates(cwd = process.cwd()): TemplateInfo[] {
+  const localDir = resolve(cwd, ".tedit", "templates");
+  const globalDir = join(homedir(), ".tedit", "templates");
+  return [
+    ...Object.keys(builtInTemplates).sort().map((name) => ({ name, source: "builtin" as const })),
+    ...templateFiles(globalDir, "global"),
+    ...templateFiles(localDir, "local"),
+  ];
 }
 
 export function parseScaffoldImport(input: string): ScaffoldImportSpec {
@@ -201,6 +217,18 @@ function loadJsonOrFile(input: string): unknown {
   } catch {
     fail("INVALID_JSON", `Invalid JSON or file not found: ${input}`);
   }
+}
+
+function templateFiles(dir: string, source: "local" | "global"): TemplateInfo[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((file) => file.endsWith(".tedit-template.json"))
+    .sort()
+    .map((file) => ({
+      name: file.slice(0, -".tedit-template.json".length),
+      source,
+      path: join(dir, file),
+    }));
 }
 
 function substituteParams(value: unknown, params: Record<string, string>): unknown {

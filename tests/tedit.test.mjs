@@ -114,6 +114,12 @@ test("ast string scan selects and edits hardcoded strings", () => {
   assert.equal(edit.written, true);
   assert.equal(edit.parse_verified, true);
   assert.match(readFileSync(file, "utf8"), /label: "Delete"/);
+
+  const shortcutFile = join(dir, "shortcut.tsx");
+  writeFileSync(shortcutFile, "const item = { label: \"삭제\" };\n");
+  const shortcut = JSON.parse(run(["ast-edit", shortcutFile, "--object-key", "label", "--replace", "Shortcut", "--write", "--json"]));
+  assert.equal(shortcut.success, true);
+  assert.match(readFileSync(shortcutFile, "utf8"), /label: "Shortcut"/);
 });
 
 test("search-text and inspect-range bridge grep and sed workflows", () => {
@@ -131,10 +137,14 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   ].join("\n"));
   writeFileSync(ignored, ".delete { content: \"삭제\"; }\n");
 
-  const search = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.tsx", "--context", "1", "--json"]));
+  const search = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.tsx", "--context", "1", "--multiedit-spec", "--replace", "Delete", "--json"]));
   assert.equal(search.kind, "search-text");
   assert.equal(search.count, 1);
   assert.equal(search.context, 1);
+  assert.equal(search.multiedit.edits.length, 1);
+  assert.equal(search.multiedit.edits[0].replace, "Delete");
+  assert.equal(search.multiedit.edits[0].replaceAll, true);
+  assert.equal(search.multiedit.edits[0].expectCount, 1);
   assert.equal(search.results[0].id, "text_1");
   assert.equal(search.results[0].match, "삭제");
   assert.equal(search.results[0].range.line, 2);
@@ -145,6 +155,11 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   assert.equal(search.results[0].suggested.findLines, "2");
   assert.match(search.results[0].suggested.replaceHint, /trailing newline/);
   assert.equal(search.results[0].next[0].tool, "inspect_range");
+
+  const generatedMultiedit = JSON.parse(runWithInput(["multiedit", "--from-stdin", "--dry-run"], JSON.stringify(search.multiedit)));
+  assert.equal(generatedMultiedit.success, true);
+  assert.equal(generatedMultiedit.results.length, 1);
+  assert.equal(generatedMultiedit.results[0].matches.length, 1);
 
   const regex = JSON.parse(run(["search-text", "--query", 'const\\s+label', src, "--regex", "--json"]));
   assert.equal(regex.regex, true);
@@ -166,6 +181,32 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   assert.equal(edit.written, true);
   assert.match(readFileSync(file, "utf8"), /"Delete"/);
   assert.match(readFileSync(file, "utf8"), /"Delete";\n  return/);
+});
+
+test("history-trace reports git line and text history", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-git-"));
+  execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "tedit@example.com"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "tedit"], { cwd: dir });
+  const file = join(dir, "Page.tsx");
+  writeFileSync(file, "export function Page() {\n  return \"Before\";\n}\n");
+  execFileSync("git", ["add", "Page.tsx"], { cwd: dir });
+  execFileSync("git", ["commit", "-m", "initial page"], { cwd: dir, stdio: "ignore" });
+  writeFileSync(file, "export function Page() {\n  return \"After\";\n}\n");
+  execFileSync("git", ["add", "Page.tsx"], { cwd: dir });
+  execFileSync("git", ["commit", "-m", "change label"], { cwd: dir, stdio: "ignore" });
+
+  const lineHistory = JSON.parse(runInCwd(["history-trace", file, "--lines", "2:2", "--json"], dir));
+  assert.equal(lineHistory.kind, "history-trace");
+  assert.equal(lineHistory.target.type, "lines");
+  assert.equal(lineHistory.blame.length, 1);
+  assert.equal(lineHistory.blame[0].lineCount, 1);
+  assert.ok(lineHistory.commands.blame.includes("git"));
+
+  const textHistory = JSON.parse(runInCwd(["history-trace", file, "--contains", "After", "--json"], dir));
+  assert.equal(textHistory.target.type, "contains");
+  assert.ok(textHistory.commits.some((commit) => commit.subject === "change label"));
+  assert.ok(textHistory.commands.log.includes("-S"));
 });
 
 test("append dry-run prints a diff and does not write", () => {
@@ -880,6 +921,11 @@ test("new creates files from built-in and local templates", () => {
       { kind: "function", name: "{{name}}", body: { tag: "section", attributes: { "data-name": "{{name}}" } } }
     ]
   }));
+
+  const templates = JSON.parse(runInCwd(["templates", "--json"], dir));
+  assert.equal(templates.kind, "templates");
+  assert.ok(templates.templates.some((template) => template.name === "react-client-component" && template.source === "builtin"));
+  assert.ok(templates.templates.some((template) => template.name === "named" && template.source === "local"));
 
   const local = join(dir, "Local.tsx");
   runInCwd(["new", "named", local, "--param", "name=LocalThing", "--write"], dir);
@@ -1806,8 +1852,10 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "apply_plan"));
     assert.ok(tools.tools.some((tool) => tool.name === "create_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "templates"));
     assert.ok(tools.tools.some((tool) => tool.name === "inspect_range"));
     assert.ok(tools.tools.some((tool) => tool.name === "search_text"));
+    assert.ok(tools.tools.some((tool) => tool.name === "history_trace"));
     assert.ok(tools.tools.some((tool) => tool.name === "scan_strings"));
     assert.ok(tools.tools.some((tool) => tool.name === "ast_select"));
     assert.ok(tools.tools.some((tool) => tool.name === "ast_edit"));
@@ -1838,8 +1886,10 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("file_write"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("create_file"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("templates"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("inspect_range"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("search_text"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("history_trace"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("scan_strings"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("ast_select"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("ast_edit"));
@@ -1849,6 +1899,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.tools.some((tool) => tool.name === "multiedit"));
     const editToolMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "edit");
     const jsxAttrMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "jsx_attr");
+    const templatesMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "templates");
     const searchTextMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "search_text");
     const scanStringsMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "scan_strings");
     const propSetMeta = actionsDiscovery.structuredContent.advanced_tools.find((tool) => tool.name === "prop_set");
@@ -1856,6 +1907,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(editToolMeta.best_for.includes("single localized text/code edit"));
     assert.equal(jsxAttrMeta.exposure, "default");
     assert.equal(jsxAttrMeta.registered, true);
+    assert.equal(templatesMeta.category, "discover");
+    assert.equal(templatesMeta.readOnly, true);
     assert.equal(searchTextMeta.category, "discover");
     assert.equal(searchTextMeta.readOnly, true);
     assert.equal(scanStringsMeta.category, "ast");
@@ -1869,6 +1922,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(actionsDiscovery.structuredContent.profiles.agent.includes("prop_set"), false);
     assert.ok(actionsDiscovery.structuredContent.profiles.all.includes("prop_set"));
     assert.match(actionsDiscovery.structuredContent.guidance.read_path[0], /native Read/);
+    assert.ok(actionsDiscovery.structuredContent.guidance.tool_priorities.some((item) => item.includes("history_trace")));
     assert.match(actionsDiscovery.structuredContent.guidance.no_read_file_tool, /less useful than native Read/);
 
     const jsxActionsDiscovery = await client.callTool({
@@ -1983,11 +2037,13 @@ test("mcp server lists tools and runs universal edit", async () => {
 
     const searchTextResult = await client.callTool({
       name: "search_text",
-      arguments: { query: "삭제", paths: [mcpSearchDir], glob: "**/*.tsx", context: 1 },
+      arguments: { query: "삭제", paths: [mcpSearchDir], glob: "**/*.tsx", context: 1, multieditSpec: true, replace: "Delete" },
     });
     assert.equal(searchTextResult.isError, undefined);
     assert.equal(searchTextResult.structuredContent.kind, "search-text");
     assert.equal(searchTextResult.structuredContent.context, 1);
+    assert.equal(searchTextResult.structuredContent.multiedit.edits.length, 1);
+    assert.equal(searchTextResult.structuredContent.multiedit.edits[0].replace, "Delete");
     assert.equal(searchTextResult.structuredContent.results.length, 1);
     assert.equal(searchTextResult.structuredContent.results[0].context.lines.length, 3);
     assert.equal(searchTextResult.structuredContent.results[0].suggested.findLines, "2");
@@ -2002,6 +2058,14 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(inspectRangeResult.structuredContent.lines.length, 3);
     assert.equal(inspectRangeResult.structuredContent.suggested.findLines, "2:2");
     assert.match(inspectRangeResult.structuredContent.suggested.replaceHint, /trailing newline/);
+
+    const templatesResult = await client.callTool({
+      name: "templates",
+      arguments: {},
+    });
+    assert.equal(templatesResult.isError, undefined);
+    assert.equal(templatesResult.structuredContent.kind, "templates");
+    assert.ok(templatesResult.structuredContent.templates.some((template) => template.name === "react-client-component"));
 
     const scanStringsResult = await client.callTool({
       name: "scan_strings",
@@ -2022,7 +2086,7 @@ test("mcp server lists tools and runs universal edit", async () => {
 
     const astEditResult = await client.callTool({
       name: "ast_edit",
-      arguments: { file: mcpAstFile, selector: 'ObjectProperty[key.name="label"]', replace: "Delete", write: true },
+      arguments: { file: mcpAstFile, objectKey: "label", replace: "Delete", write: true },
     });
     assert.equal(astEditResult.isError, undefined);
     assert.equal(astEditResult.structuredContent.ok, true);
@@ -2354,6 +2418,18 @@ test("base edit line ranges can delete full lines", () => {
   run(["edit", file, "--find-lines", "2:2", "--delete", "--write"]);
 
   assert.equal(readFileSync(file, "utf8"), "a\nc\n");
+});
+
+test("base edit line replacement preserves missing trailing newline", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "lines.txt");
+  writeFileSync(file, "a\nb\nc\n");
+
+  const result = JSON.parse(run(["edit", file, "--find-lines", "2", "--replace", "B", "--write", "--json"]));
+
+  assert.equal(result.success, true);
+  assert.equal(result.guardrails[0].kind, "line-replace-newline-preserved");
+  assert.equal(readFileSync(file, "utf8"), "a\nB\nc\n");
 });
 
 test("base edit can read find and replace text from files", () => {
@@ -2724,7 +2800,7 @@ test("CLI version and subcommand help are concise", () => {
   assert.doesNotMatch(help, /tedit scaffold/);
 
   const topics = [
-    "edit", "multiedit", "verify", "verify-file", "patch", "actions", "inspect-range", "search-text", "scan-strings", "ast-select", "ast-edit", "analyze-state",
+    "edit", "multiedit", "verify", "verify-file", "patch", "actions", "templates", "inspect-range", "search-text", "history-trace", "scan-strings", "ast-select", "ast-edit", "analyze-state",
     "refactor-state", "find", "inspect", "append", "prepend", "wrap",
     "unwrap", "remove", "rename", "insertComment", "text", "prop",
     "imports", "expr", "extract", "apply-plan", "plan", "create", "write", "scaffold", "new",

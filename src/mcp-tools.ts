@@ -14,6 +14,7 @@ import { parseElementShorthand } from "./chain.js";
 import { getOptionalAdapterForFile, listRules } from "./core/registry.js";
 import { runAstEdit as runAstEditEngine, runAstSelect, runScanStrings } from "./ast-tools.js";
 import { inspectRange, searchText } from "./search-tools.js";
+import { historyTrace } from "./history-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { formatAgentResult, outputOptionsFromRecord } from "./output.js";
@@ -24,7 +25,7 @@ import { runRefactorState } from "./refactor-state.js";
 import { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, writePlanFile } from "./refactor-plan.js";
 import type { ExtractOptions, HelperPolicy } from "./extract.js";
 import { runWorkspaceFlow, type WorkspaceFlowOptions, type WorkspaceFlowStep } from "./workspace-flow.js";
-import { buildScaffoldSource, loadTemplateSpec, parseParams, type ScaffoldSpec } from "./scaffold.js";
+import { buildScaffoldSource, listTemplates, loadTemplateSpec, parseParams, type ScaffoldSpec } from "./scaffold.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
 
 export type TeditMcpTool = {
@@ -239,6 +240,19 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
     handler: runActionsTool,
   },
   {
+    name: "templates",
+    title: "Templates",
+    description: "Read-only list of built-in, global, and project-local .tedit/templates available for file_write mode=template.",
+    category: "discover",
+    aliases: ["template_list", "list_templates"],
+    bestFor: ["discovering scaffold templates", "checking project conventions before file generation", "choosing file_write mode=template"],
+    inputSchema: {
+      cwd: z.string().optional().describe("Project directory used to resolve .tedit/templates. Defaults to process cwd."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runTemplatesTool,
+  },
+  {
     name: "inspect_range",
     title: "Inspect Range",
     description: "Read-only line/context inspection for sed-style workflows. Returns line objects, byte range, parse status, and edit-ready suggestions.",
@@ -267,12 +281,31 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       regex: z.boolean().optional().describe("Treat query as a JavaScript regular expression."),
       glob: z.string().optional().describe("Simple glob filter, e.g. **/*.tsx."),
       context: z.number().int().nonnegative().optional().describe("Additional context lines before and after each result."),
+      multieditSpec: z.boolean().optional().describe("Also return a file-grouped multiedit spec for replacing the matched query."),
+      replace: z.string().optional().describe("Replacement text for multieditSpec. Defaults to a placeholder."),
       maxResults: z.number().int().positive().optional().describe("Maximum result count. Defaults to 100."),
       caseSensitive: z.boolean().optional().describe("Use case-sensitive matching. Literal and regex searches default to case-insensitive."),
       includeHidden: z.boolean().optional().describe("Include hidden files and directories except built-in excluded directories."),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runSearchTextTool,
+  },
+  {
+    name: "history_trace",
+    title: "History Trace",
+    description: "Read-only git history trace. Uses blame/log -L for line ranges and log -S/-G for text or regex history.",
+    category: "discover",
+    aliases: ["history-trace", "git_history", "trace_history"],
+    bestFor: ["checking when code changed", "understanding why a line exists before editing", "finding commits that introduced text"],
+    inputSchema: {
+      file: fileSchema,
+      lines: z.string().optional().describe("Line range such as 42 or 40:50. Uses git blame and git log -L."),
+      contains: z.string().optional().describe("Literal text to trace with git log -S."),
+      regex: z.string().optional().describe("Regex to trace with git log -G."),
+      limit: z.number().int().positive().optional().describe("Maximum commits to return. Defaults to 10."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runHistoryTraceTool,
   },
   {
     name: "scan_strings",
@@ -313,7 +346,11 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
     bestFor: ["safe AST string replacement", "i18n prep edits after scan_strings", "call argument or object label text replacement"],
     inputSchema: {
       file: fileSchema,
-      selector: z.string().min(1).describe("AST selector that must match exactly one editable string target."),
+      selector: z.string().min(1).optional().describe("AST selector that must match exactly one editable string target."),
+      string: z.string().optional().describe("Shortcut for StringLiteral[value=...]."),
+      contains: z.string().optional().describe("Shortcut for StringLiteral[value*=...]."),
+      jsxText: z.string().optional().describe("Shortcut for JSXText[value*=...]."),
+      objectKey: z.string().optional().describe("Shortcut for ObjectProperty[key.name=...]."),
       replace: z.string().describe("Replacement text."),
       ...writeFlagSchema,
     },
@@ -964,6 +1001,7 @@ function runEditTool(args: unknown): unknown {
     written: shouldWrite && plan.changed,
     ...parseVerificationFields(plan.parseVerification),
     matches: plan.matches,
+    guardrails: plan.guardrails,
     warnings,
     write_policy: writePolicyReport(policy, backup),
     ...(plan.diff ? { diff: plan.diff } : {}),
@@ -1031,6 +1069,19 @@ function runActionsTool(args: unknown): unknown {
   };
 }
 
+function runTemplatesTool(args: unknown): unknown {
+  const input = optionalRecordInput(args, "templates");
+  const cwd = optionalString(input.cwd) ?? process.cwd();
+  const templates = listTemplates(cwd);
+  return {
+    success: true,
+    kind: "templates",
+    cwd,
+    templates,
+    count: templates.length,
+  };
+}
+
 function runInspectRangeTool(args: unknown): unknown {
   const input = recordInput(args, "inspect_range");
   return inspectRange(requiredString(input.file, "inspect_range requires file."), {
@@ -1051,9 +1102,21 @@ function runSearchTextTool(args: unknown): unknown {
     regex: booleanValue(input.regex),
     glob: optionalString(input.glob),
     context: optionalNonnegativeInteger(input.context, "context"),
+    multieditSpec: booleanValue(pick(input, "multieditSpec", "multiedit_spec", "multiedit-spec")),
+    replace: optionalString(input.replace),
     ...(maxResults === undefined ? {} : { maxResults: optionalInteger(maxResults, "maxResults") }),
     caseSensitive: booleanValue(pick(input, "caseSensitive", "case_sensitive", "case-sensitive")),
     includeHidden: booleanValue(pick(input, "includeHidden", "include_hidden", "include-hidden")),
+  });
+}
+
+function runHistoryTraceTool(args: unknown): unknown {
+  const input = recordInput(args, "history_trace");
+  return historyTrace(requiredString(input.file, "history_trace requires file."), {
+    lines: optionalString(input.lines),
+    contains: optionalString(input.contains),
+    regex: optionalString(input.regex),
+    limit: optionalInteger(input.limit, "limit"),
   });
 }
 
@@ -1075,10 +1138,33 @@ function runAstSelectTool(args: unknown): unknown {
 function runAstEditTool(args: unknown): unknown {
   const input = recordInput(args, "ast_edit");
   return withAgentFields(runAstEditEngine(requiredString(input.file, "ast_edit requires file."), {
-    selector: requiredString(input.selector, "ast_edit requires selector."),
+    selector: astEditSelectorFromInput(input),
     replace: requiredString(input.replace, "ast_edit requires replace."),
     ...writeFlagsFromInput(input),
   }), input);
+}
+
+function astEditSelectorFromInput(input: JsonRecord): string {
+  const selector = optionalString(input.selector);
+  const stringValue = optionalString(input.string);
+  const contains = optionalString(input.contains);
+  const jsxText = optionalString(pick(input, "jsxText", "jsx_text", "jsx-text"));
+  const objectKey = optionalString(pick(input, "objectKey", "object_key", "object-key"));
+  const shortcutCount = [stringValue, contains, jsxText, objectKey].filter((value) => value !== undefined).length;
+  if (selector && shortcutCount > 0) fail("INVALID_MCP_INPUT", "ast_edit accepts either selector or one shortcut field.");
+  if (shortcutCount > 1) fail("INVALID_MCP_INPUT", "ast_edit accepts only one shortcut field.");
+  if (selector) return selector;
+  if (stringValue !== undefined) return `StringLiteral[value=${astSelectorValue(stringValue)}]`;
+  if (contains !== undefined) return `StringLiteral[value*=${astSelectorValue(contains)}]`;
+  if (jsxText !== undefined) return `JSXText[value*=${astSelectorValue(jsxText)}]`;
+  if (objectKey !== undefined) return `ObjectProperty[key.name=${astSelectorValue(objectKey)}]`;
+  fail("INVALID_MCP_INPUT", "ast_edit requires selector, string, contains, jsxText, or objectKey.");
+}
+
+function astSelectorValue(value: string): string {
+  if (!value.includes("\"")) return JSON.stringify(value);
+  if (!value.includes("'")) return `'${value}'`;
+  fail("INVALID_MCP_INPUT", "AST shortcut values cannot contain both single and double quotes yet; pass an explicit selector.");
 }
 
 function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[]): JsonRecord {
@@ -1086,8 +1172,11 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     default_profile: "agent",
     read_path: [
       "Use the host/native Read tool for full file contents; tedit does not duplicate plain file reading yet.",
+      "Use actions first when unsure; it returns the current profile, tool priorities, and examples.",
       "Use inspect_range for sed-style line context plus parse status and edit-ready findLines suggestions.",
       "Use search_text for rg/grep-style raw text discovery when the next step is likely a tedit edit.",
+      "Use history_trace before risky edits when you need to know when a line or string last changed.",
+      "Use templates before file_write mode=template when project-local conventions matter.",
       "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
       "Use jsx_select for structural target discovery, then pass returned ids/selectors to mutating tools.",
       "Use scan_strings for hardcoded user-facing text inventory across JSX text/attrs and JS/TS string literals.",
@@ -1098,17 +1187,29 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       default_surface: "Agent profile exposes facade tools by default; set TEDIT_MCP_PROFILE=all to expose legacy fine-grained tools.",
       safety_boundary: "create_file and analyze_state stay standalone because no-overwrite creation and read-only diagnosis should not be mixed with write/refactor actions.",
     },
+    tool_priorities: [
+      "search_text or inspect_range for target discovery",
+      "history_trace when edit risk depends on code history",
+      "edit for one localized change",
+      "multiedit for repeated or cross-file changes",
+      "jsx_select plus jsx_attr/jsx_node/jsx_content for structural JSX edits",
+      "scan_strings plus ast_edit for JS/TS string edits outside JSX selectors",
+      "templates plus file_write mode=template for convention-heavy new files",
+      "patch only when the change is already a diff",
+    ],
     edit_loop: [
       { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },
       { intent: "several coordinated text edits", tool: "multiedit", reason: "atomic application across files and same-file sequential edits" },
       { intent: "already generated diff", tool: "patch", reason: "atomic unified diff/apply-patch input with verification" },
       { intent: "line range context before editing", tool: "inspect_range", reason: "sed-style context plus parser status and edit findLines suggestion" },
-      { intent: "raw text search before editing", tool: "search_text", reason: "grep-style candidates with inspect/edit follow-ups" },
+      { intent: "raw text search before editing", tool: "search_text", reason: "grep-style candidates with inspect/edit/multiedit follow-ups" },
+      { intent: "who changed this or when", tool: "history_trace", reason: "git blame/log history without hand-assembling commands" },
       { intent: "must-be-new full file", tool: "create_file", reason: "no-overwrite creation is a safety boundary" },
       { intent: "whole-file generation or scaffold/template", tool: "file_write", required: ["mode"], reason: "write/scaffold/template facade with parser guardrails" },
+      { intent: "available project templates", tool: "templates", reason: "lists built-in and .tedit/templates before file_write mode=template" },
       { intent: "structural JSX/markup mutation", tool: "jsx_select, then jsx_node/jsx_attr/jsx_content/imports", reason: "selector/id based edits avoid brittle text spans" },
       { intent: "hardcoded text audit", tool: "scan_strings", reason: "AST scan covers JSX text/attrs plus JS/TS string literals; find remains structural" },
-      { intent: "code AST discovery or one safe string replacement", tool: "ast_select, then ast_edit", reason: "AST selectors target calls/object values/string literals outside JSX structure" },
+      { intent: "code AST discovery or one safe string replacement", tool: "ast_select, then ast_edit", reason: "AST shortcuts target common string/object/JSX text replacements" },
     ],
     refactor_loop: [
       { intent: "small confident JSX component extraction", tool: "extract_component", required: ["mode=direct", "from", "selector", "to", "name"], reason: "direct dry-run/write extraction with prop inference and parser guardrails" },
@@ -1123,10 +1224,12 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       apply_plan: { plan: ".tedit/plans/extract-card.json", write: true },
       jsx_attr: { action: "prop_set", file: "src/Page.tsx", selector: "Card", name: "data-extracted", value: true, write: true },
       inspect_range: { file: "src/Page.tsx", lines: "120:140", context: 3 },
-      search_text: { query: "삭제", paths: ["src"], glob: "**/*.tsx", context: 2 },
+      search_text: { query: "삭제", paths: ["src"], glob: "**/*.tsx", context: 2, multieditSpec: true, replace: "Delete" },
+      history_trace: { file: "src/Page.tsx", lines: "120:140", limit: 5 },
+      templates: { cwd: "." },
       scan_strings: { file: "src/Page.tsx", contains: "삭제" },
       ast_select: { file: "src/Page.tsx", selector: "ObjectProperty[key.name=\"label\"] > StringLiteral" },
-      ast_edit: { file: "src/Page.tsx", selector: "StringLiteral[value=\"삭제\"]", replace: "Delete", write: true },
+      ast_edit: { file: "src/Page.tsx", string: "삭제", replace: "Delete", write: true },
       chain_workspace: {
         steps: [
           { action: "extract", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard" },

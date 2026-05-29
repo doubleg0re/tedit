@@ -38,11 +38,13 @@ tedit multiedit ./edits.json --write
 tedit verify ./edits.json --diff-out ./edits.diff
 tedit patch ./change.patch --dry-run --quiet --diff-out ./patch.diff
 tedit actions src/Page.tsx --json
-tedit search-text "삭제" src --glob "**/*.tsx" --context 2 --json
+tedit search-text "삭제" src --glob "**/*.tsx" --context 2 --multiedit-spec --replace "Delete" --json
 tedit inspect-range src/Page.tsx --lines 42:42 --context 3 --json
+tedit history-trace src/Page.tsx --lines 42:60 --json
 tedit scan-strings src/Page.tsx --contains "삭제" --json
 tedit ast-select src/Page.tsx 'ObjectProperty[key.name="label"] > StringLiteral' --json
-tedit ast-edit src/Page.tsx 'StringLiteral[value="삭제"]' --replace "Delete" --dry-run
+tedit ast-edit src/Page.tsx --string "삭제" --replace "Delete" --dry-run
+tedit templates --json
 tedit analyze-state src/Page.tsx --json
 tedit refactor-state src/Page.tsx --cluster crewImport --to src/useCrewImport.ts --name useCrewImport --external-deps params --write
 tedit find src/Page.tsx 'main' --json
@@ -134,13 +136,14 @@ and intent-oriented:
 
 `edit`, `multiedit`, `patch`, `file_write`, `create_file`, `actions`,
 `analyze_state`, `verify_file`, `refactor_state`, `apply_plan`,
-`chain_workspace`, `inspect_range`, `search_text`, `scan_strings`,
-`ast_select`, `ast_edit`, `jsx_select`, `jsx_node`, `jsx_attr`,
+`chain_workspace`, `templates`, `inspect_range`, `search_text`,
+`history_trace`, `scan_strings`, `ast_select`, `ast_edit`, `jsx_select`, `jsx_node`, `jsx_attr`,
 `jsx_content`, `imports`, and `extract_component`.
 
 `inspect_range` and `search_text` bridge `sed`/`rg` style workflows into
-tedit's edit-ready structured results. The AST-oriented tools cover code text
-that is not represented as a JSX structural node.
+tedit's edit-ready structured results, and `history_trace` adds git blame/log
+context before risky edits. The AST-oriented tools cover code text that is not
+represented as a JSX structural node.
 
 Use `file_write` with a required `mode` for whole-file writes:
 `mode: "write"` for complete source replacement, `mode: "scaffold"` for
@@ -197,7 +200,7 @@ For one-off local edits, a normal editor or patch is usually faster.
 returning structured follow-ups for tedit edits:
 
 ```bash
-tedit search-text "삭제" src --glob "**/*.tsx" --context 2 --json
+tedit search-text "삭제" src --glob "**/*.tsx" --context 2 --multiedit-spec --replace "Delete" --json
 tedit search-text --query 'alert\\(".*"\\)' src --regex --json
 tedit inspect-range src/Page.tsx --lines 42:42 --context 3 --json
 printf '  const label = "Delete";\n' | tedit edit src/Page.tsx --find-lines 42 --replace-stdin --write
@@ -211,10 +214,36 @@ candidates with `file`, `line`, `column`, `preview`, `context`, `suggested`, and
 `next` fields. Use `rg` for broad exploratory search, and use `search-text` when
 the next step is likely a tedit edit.
 
+Pass `--multiedit-spec` to include a file-grouped `multiedit` draft. With
+`--replace`, each searched file gets one `findExact` or `findRegex` edit with
+`replaceAll` and `expectCount` filled from the search result count:
+
+```bash
+tedit search-text "삭제" src --glob "**/*.tsx" --multiedit-spec --replace "Delete" --json \
+  | jq '.multiedit' \
+  | tedit multiedit --from-stdin --dry-run
+```
+
 `inspect-range` shows line context, byte range, parser status, and a suggested
-`edit --find-lines` follow-up for the requested range. Because `find-lines`
-replaces whole lines, include the trailing newline when replacing a non-final
-line; piping through `--replace-stdin` is the least ambiguous CLI form.
+`edit --find-lines` follow-up for the requested range. `find-lines` replaces
+whole lines; when a non-final line replacement omits the trailing newline, tedit
+preserves the original line ending so the following line does not join onto it.
+
+## History Trace
+
+`history-trace` wraps the git commands agents usually hand-assemble before
+risky edits:
+
+```bash
+tedit history-trace src/Page.tsx --lines 120:160 --json
+tedit history-trace src/Page.tsx --contains "삭제" --json
+tedit history-trace src/Page.tsx --regex 't\\(".*"\\)' --json
+```
+
+Line ranges use `git blame` plus `git log -L`. Literal text uses `git log -S`,
+and regex uses `git log -G`. Results include the target, latest event, commit
+list, blame groups for line ranges, and the exact git commands for deeper
+manual inspection.
 
 ## AST String Scan
 
@@ -229,6 +258,8 @@ tedit ast-select src/Page.tsx 'StringLiteral[value*="삭제"]' --json
 tedit ast-select src/Page.tsx 'CallExpression[callee.name="alert"]' --json
 tedit ast-select src/Page.tsx 'ObjectProperty[key.name="label"] > StringLiteral' --json
 tedit ast-edit src/Page.tsx 'ObjectProperty[key.name="label"]' --replace "Delete" --write
+tedit ast-edit src/Page.tsx --string "삭제" --replace "Delete" --write
+tedit ast-edit src/Page.tsx --object-key label --replace "Delete" --write
 ```
 
 `scan-strings` covers JSX text, string JSX attributes, JS/TS string literals,
@@ -237,10 +268,11 @@ obvious technical strings by default, including import/export module paths,
 `className`/`class`, ids/test ids, URLs, and file paths. Pass
 `--include-excluded` to audit those skipped candidates with an `excludeReason`.
 
-`ast-edit` is deliberately narrow: the selector must match exactly one editable
-string target, and writes still run through the same dry-run/write policy,
-backup, diff, parse verification, and quality warnings as other tedit
-mutations.
+`ast-edit` is deliberately narrow: the selector or shortcut must match exactly
+one editable string target, and writes still run through the same dry-run/write
+policy, backup, diff, parse verification, and quality warnings as other tedit
+mutations. Shortcuts include `--string`, `--contains`, `--jsx-text`, and
+`--object-key`.
 
 Flow files use a compact `action`/`out` shape:
 
@@ -822,7 +854,7 @@ tedit scaffold src/Button.tsx \
   --write
 ```
 
-`new` resolves templates from `./.tedit/templates`, `~/.tedit/templates`, then built-in starters. Templates are scaffold specs with `{{param}}` substitution. It is most useful for boilerplate-heavy shells where the skeleton is most of the file: create the convention-correct shell, fill the body with a normal edit/write step, then add imports with `imports add` or `imports_add`.
+`new` resolves templates from `./.tedit/templates`, `~/.tedit/templates`, then built-in starters. Templates are scaffold specs with `{{param}}` substitution. Use `tedit templates --json` or the MCP `templates` tool to list built-in, global, and project-local templates before generating a file. It is most useful for boilerplate-heavy shells where the skeleton is most of the file: create the convention-correct shell, fill the body with a normal edit/write step, then add imports with `imports add` or `imports_add`.
 
 ```bash
 tedit new react-component src/Card.tsx --param name=Card --write

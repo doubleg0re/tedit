@@ -159,6 +159,8 @@ function compactMutationResult(record: JsonRecord, files: AgentFileSummary[], op
   }
   const warnings = collectWarnings(record, files);
   if (warnings.length > 0) compact.warnings = warnings;
+  const guardrails = collectGuardrails(record);
+  if (guardrails.length > 0) compact.guardrails = guardrails;
   if (typeof record.plan === "string") compact.plan = record.plan;
   if (next.length > 0) compact.next = next;
   if (effectiveDiffMode(options) === "full" && options.includeDiffs) compact.diffs = collectDiffs(record);
@@ -196,7 +198,16 @@ function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
     return compact;
   }
   if (kind === "search-text") {
-    copyKeys(record, compact, ["query", "regex", "paths", "glob", "context", "results", "count", "truncated"]);
+    copyKeys(record, compact, ["query", "regex", "paths", "glob", "context", "multiedit", "results", "count", "truncated"]);
+    return compact;
+  }
+  if (kind === "history-trace") {
+    copyKeys(record, compact, ["file", "target", "git", "latest", "commits", "blame", "commands", "next"]);
+    if (typeof record.file === "string") compact.path = record.file;
+    return compact;
+  }
+  if (kind === "templates") {
+    copyKeys(record, compact, ["cwd", "templates", "count"]);
     return compact;
   }
   if (kind === "inspect" && record.node !== undefined) {
@@ -250,6 +261,19 @@ function collectWarnings(record: JsonRecord, files: AgentFileSummary[]): unknown
     if (Array.isArray(file.warnings)) warnings.push(...file.warnings);
   }
   return dedupeWarnings(warnings);
+}
+
+function collectGuardrails(record: JsonRecord): unknown[] {
+  const guardrails: unknown[] = [];
+  if (Array.isArray(record.guardrails)) guardrails.push(...record.guardrails);
+  if (Array.isArray(record.results)) {
+    for (const result of record.results) {
+      if (result && typeof result === "object" && !Array.isArray(result) && Array.isArray((result as JsonRecord).guardrails)) {
+        guardrails.push(...(result as { guardrails: unknown[] }).guardrails);
+      }
+    }
+  }
+  return dedupeWarnings(guardrails);
 }
 
 function dedupeWarnings(warnings: unknown[]): unknown[] {
@@ -402,6 +426,8 @@ function payloadSummary(record: JsonRecord, kind: string): string {
   if (kind === "find" && Array.isArray(record.matches)) return String(record.matches.length) + " " + plural("match", record.matches.length);
   if (kind === "inspect-range" && Array.isArray(record.lines)) return String(record.lines.length) + " " + plural("line", record.lines.length);
   if (kind === "search-text" && Array.isArray(record.results)) return String(record.results.length) + " text " + plural("match", record.results.length);
+  if (kind === "history-trace" && Array.isArray(record.commits)) return String(record.commits.length) + " history " + plural("commit", record.commits.length);
+  if (kind === "templates" && Array.isArray(record.templates)) return String(record.templates.length) + " " + plural("template", record.templates.length);
   if (kind === "scan-strings" && Array.isArray(record.strings)) return String(record.strings.length) + " string " + plural("candidate", record.strings.length);
   if (kind === "ast-select" && Array.isArray(record.matches)) return String(record.matches.length) + " AST " + plural("match", record.matches.length);
   if (kind === "inspect") return "node inspected";

@@ -15,6 +15,7 @@ import type { ImportEditSpec, TextMatchSpec, TextValueSpec, TreeNodeSpec, ValueS
 import { getOptionalAdapterForFile, listRules, openDocumentForFile } from "./core/registry.js";
 import { runAstEdit, runAstSelect, runScanStrings } from "./ast-tools.js";
 import { inspectRange, searchText } from "./search-tools.js";
+import { historyTrace } from "./history-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { toErrorResult } from "./errors.js";
 import { formatAgentResult, outputOptionsFromConfig, parseDiffMode, parseOutputMode, type OutputMode, type OutputOptions } from "./output.js";
@@ -27,6 +28,7 @@ import { analyzeState, formatQualityWarnings, loadQualityConfig, qualityWarnings
 import { loadParams, parseFlowInput, runFlow } from "./flow.js";
 import {
   buildScaffoldSource,
+  listTemplates,
   loadScaffoldSpec,
   loadTemplateSpec,
   parseParams,
@@ -101,6 +103,10 @@ async function main(): Promise<void> {
     case "search-text":
     case "search_text":
       commandSearchText(args);
+      return;
+    case "history-trace":
+    case "history_trace":
+      commandHistoryTrace(args);
       return;
     case "scan-strings":
     case "scan_strings":
@@ -179,6 +185,9 @@ async function main(): Promise<void> {
     case "new":
       commandNew(args);
       return;
+    case "templates":
+      commandTemplates(args);
+      return;
     case "flow":
       commandFlow(args);
       return;
@@ -243,6 +252,7 @@ function commandEdit(args: ParsedArgs): void {
     written: shouldWrite && plan.changed,
     ...parseVerificationFields(plan.parseVerification),
     matches: plan.matches,
+    guardrails: plan.guardrails,
     warnings,
     write_policy: writePolicyReport(policy, backup),
     ...(plan.diff ? { diff: plan.diff } : {}),
@@ -280,6 +290,7 @@ function commandActions(args: ParsedArgs): void {
     ...BASE_ACTIONS,
     "inspect-range",
     "search-text",
+    "history-trace",
     "scan-strings",
     "ast-select",
     "ast-edit",
@@ -319,10 +330,23 @@ function commandSearchText(args: ParsedArgs): void {
     glob: stringFlag(args, "glob"),
     maxResults: positiveIntegerFlag(args, "max-results") ?? positiveIntegerFlag(args, "maxResults"),
     context: nonnegativeIntegerFlag(args, "context"),
+    multieditSpec: booleanFlag(args, "multiedit-spec") || booleanFlag(args, "multieditSpec"),
+    replace: stringFlag(args, "replace"),
     caseSensitive: booleanFlag(args, "case-sensitive") || booleanFlag(args, "caseSensitive"),
     includeHidden: booleanFlag(args, "include-hidden") || booleanFlag(args, "includeHidden"),
   });
   output(args, result, formatSearchResults(result.results as unknown[]));
+}
+
+function commandHistoryTrace(args: ParsedArgs): void {
+  const [filePath] = requirePositionals(args, 1, "history-trace <file> [--lines N:M|--contains text|--regex pattern] [--limit N] [--json]");
+  const result = historyTrace(filePath, {
+    lines: stringFlag(args, "lines"),
+    contains: stringFlag(args, "contains"),
+    regex: stringFlag(args, "regex"),
+    limit: positiveIntegerFlag(args, "limit"),
+  });
+  output(args, result, formatHistoryTrace(result));
 }
 
 function commandScanStrings(args: ParsedArgs): void {
@@ -342,7 +366,8 @@ function commandAstSelect(args: ParsedArgs): void {
 }
 
 function commandAstEdit(args: ParsedArgs): void {
-  const [filePath, selector] = requirePositionals(args, 2, "ast-edit <file> <selector> --replace <text> [--dry-run|--write]");
+  const [filePath] = requirePositionals(args, 1, "ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--object-key key] [--dry-run|--write]");
+  const selector = resolveAstEditSelector(args);
   const result = runAstEdit(filePath, {
     selector,
     replace: requiredStringFlag(args, "replace", "ast-edit requires --replace <text>."),
@@ -351,6 +376,29 @@ function commandAstEdit(args: ParsedArgs): void {
   writeDiffOut(args, result);
   if (quietRequested(args)) return;
   output(args, result, typeof result.diff === "string" && result.diff.length > 0 ? result.diff : "No changes");
+}
+
+function resolveAstEditSelector(args: ParsedArgs): string {
+  const positional = args.positionals[1];
+  const stringValue = stringFlag(args, "string");
+  const contains = stringFlag(args, "contains");
+  const jsxText = stringFlag(args, "jsx-text") ?? stringFlag(args, "jsxText");
+  const objectKey = stringFlag(args, "object-key") ?? stringFlag(args, "objectKey");
+  const shortcutCount = [stringValue, contains, jsxText, objectKey].filter((value) => value !== undefined).length;
+  if (positional && shortcutCount > 0) throw new Error("ast-edit accepts either a selector or one shortcut flag.");
+  if (shortcutCount > 1) throw new Error("ast-edit accepts only one shortcut flag.");
+  if (positional) return positional;
+  if (stringValue !== undefined) return `StringLiteral[value=${astSelectorValue(stringValue)}]`;
+  if (contains !== undefined) return `StringLiteral[value*=${astSelectorValue(contains)}]`;
+  if (jsxText !== undefined) return `JSXText[value*=${astSelectorValue(jsxText)}]`;
+  if (objectKey !== undefined) return `ObjectProperty[key.name=${astSelectorValue(objectKey)}]`;
+  throw new Error("ast-edit requires a selector or one of --string, --contains, --jsx-text, or --object-key.");
+}
+
+function astSelectorValue(value: string): string {
+  if (!value.includes("\"")) return JSON.stringify(value);
+  if (!value.includes("'")) return `'${value}'`;
+  throw new Error("AST shortcut values cannot contain both single and double quotes yet; pass an explicit selector.");
 }
 
 function commandAnalyzeState(args: ParsedArgs): void {
@@ -726,9 +774,17 @@ function commandScaffold(args: ParsedArgs): void {
 function commandNew(args: ParsedArgs): void {
   const [templateName, filePath] = requirePositionals(args, 2, "new <template> <file>");
   const params = parseParams(stringFlags(args, "param"));
-  const spec = loadTemplateSpec(templateName, params);
+  const spec = loadTemplateSpec(templateName, params, stringFlag(args, "cwd") ?? process.cwd());
   const source = buildScaffoldSource(spec);
   finishCreation(args, filePath, source, { kind: "new", template: templateName, spec });
+}
+
+function commandTemplates(args: ParsedArgs): void {
+  const cwd = stringFlag(args, "cwd") ?? process.cwd();
+  const templates = listTemplates(cwd);
+  output(args, { success: true, kind: "templates", cwd, templates, count: templates.length }, templates.map((template) => {
+    return `${template.name} (${template.source})${template.path ? ` ${template.path}` : ""}`;
+  }).join("\n"));
 }
 
 function commandFlow(args: ParsedArgs): void {
@@ -1370,6 +1426,7 @@ type EditSummaryResult = {
   written: boolean;
   diff?: string;
   matches: unknown[];
+  guardrails?: unknown[];
   parse_verified: boolean;
   parse_skipped?: boolean;
   parse_skip_reason?: string;
@@ -1412,6 +1469,7 @@ function formatEditSummary(result: EditSummaryResult): string {
   if (result.diff && result.diff.length > 0) {
     lines.push("next: full diff omitted; use --diff-out <file> to save it or --output detailed to print it");
   }
+  if (result.guardrails?.length) lines.push("guardrails: " + result.guardrails.length);
   return lines.join("\n");
 }
 
@@ -1707,6 +1765,19 @@ function formatSearchResults(results: unknown[]): string {
   }).join("\n");
 }
 
+function formatHistoryTrace(result: unknown): string {
+  const record = result as { target?: { type?: string; path?: string; lines?: string; contains?: string; regex?: string }; latest?: { commit?: string; date?: string; subject?: string }; commits?: unknown[]; blame?: unknown[] };
+  const target = record.target ?? {};
+  const targetLabel = [target.path, target.lines ? `lines ${target.lines}` : target.contains ? `contains ${JSON.stringify(target.contains)}` : target.regex ? `regex ${JSON.stringify(target.regex)}` : target.type].filter(Boolean).join(" ");
+  const lines = [`history: ${targetLabel}`];
+  if (record.latest?.commit) {
+    lines.push(`latest: ${record.latest.commit.slice(0, 12)} ${record.latest.date ?? ""} ${record.latest.subject ?? ""}`.trim());
+  }
+  lines.push(`commits: ${Array.isArray(record.commits) ? record.commits.length : 0}`);
+  if (Array.isArray(record.blame) && record.blame.length > 0) lines.push(`blame: ${record.blame.length} commit(s)`);
+  return lines.join("\n");
+}
+
 function formatAstStrings(strings: unknown[]): string {
   if (strings.length === 0) return "No strings";
   return strings.map((value) => {
@@ -1905,10 +1976,11 @@ Usage:
   tedit patch --stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit actions [file] [--json]
   tedit inspect-range <file> --lines N:M [--context N] [--json]
-  tedit search-text <query> [path...] [--regex] [--glob <glob>] [--context N] [--max-results N] [--json]
+  tedit search-text <query> [path...] [--regex] [--glob <glob>] [--context N] [--multiedit-spec --replace <text>] [--max-results N] [--json]
+  tedit history-trace <file> [--lines N:M|--contains <text>|--regex <pattern>] [--limit N] [--json]
   tedit scan-strings <file> [--contains <text>] [--include-excluded] [--json]
   tedit ast-select <file> <selector> [--json]
-  tedit ast-edit <file> <selector> --replace <text> [--dry-run|--write]
+  tedit ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--object-key key] [--dry-run|--write]
   tedit analyze-state <file> [--json]
   tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--plan-out <plan-json>|--dry-run|--write]
   tedit find <file> <selector> [--json]
@@ -1950,6 +2022,7 @@ Usage:
   tedit scaffold <file> --spec <json-or-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
   tedit scaffold <file> --directives "use client" --imports "@/lib/utils:cn" --export "function:Button(props)" --body 'button.children="Save"' [--write]
   tedit new <template> <file> --param name=Button [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
+  tedit templates [--cwd <dir>] [--json]
   tedit flow <file> <flow-json> [--params <json-or-file>] [--dry-run|--write]
   tedit workspace-flow <flow-json> [--params <json-or-file>] [--dry-run|--write]
   tedit chain <file> find <selector> as body :: append '@body' PageHead :: append '$ret.id' LeftPanel [--write]
@@ -2030,7 +2103,10 @@ function shortHelp(command: string): string | null {
       return "tedit inspect-range\nUsage:\n  tedit inspect-range <file> --lines N:M [--context N] [--json]\n\nShows line context, byte range, parser status, and edit-ready suggestions.";
     case "search-text":
     case "search_text":
-      return "tedit search-text\nUsage:\n  tedit search-text <query> [path...] [--regex] [--glob <glob>] [--context N] [--max-results N] [--json]\n\nSearches text and returns edit-ready candidates with optional context and inspect/edit follow-ups.";
+      return "tedit search-text\nUsage:\n  tedit search-text <query> [path...] [--regex] [--glob <glob>] [--context N] [--multiedit-spec --replace <text>] [--max-results N] [--json]\n\nSearches text and returns edit-ready candidates with optional context, multiedit specs, and inspect/edit follow-ups.";
+    case "history-trace":
+    case "history_trace":
+      return "tedit history-trace\nUsage:\n  tedit history-trace <file> [--lines N:M|--contains <text>|--regex <pattern>] [--limit N] [--json]\n\nTraces git history with blame/log -L for lines or log -S/-G for text.";
     case "scan-strings":
     case "scan_strings":
       return "tedit scan-strings\nUsage:\n  tedit scan-strings <file> [--contains <text>] [--include-excluded] [--json]\n\nScans JS/TS/JSX AST string candidates for hardcoded user-facing text.";
@@ -2039,7 +2115,7 @@ function shortHelp(command: string): string | null {
       return "tedit ast-select\nUsage:\n  tedit ast-select <file> <selector> [--json]\n\nFinds JS/TS/JSX AST nodes using a small selector language, e.g. StringLiteral[value*=\"삭제\"].";
     case "ast-edit":
     case "ast_edit":
-      return "tedit ast-edit\nUsage:\n  tedit ast-edit <file> <selector> --replace <text> [--dry-run|--write]\n\nSafely replaces one editable AST string target matched by ast-select.";
+      return "tedit ast-edit\nUsage:\n  tedit ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--object-key key] [--dry-run|--write]\n\nSafely replaces one editable AST string target matched by ast-select or a shortcut.";
     case "analyze-state":
       return "tedit analyze-state\nUsage:\n  tedit analyze-state <file> [--json]\n\nReports useState clusters, handler usage, and refactor guidance.";
     case "find":
@@ -2073,6 +2149,8 @@ function shortHelp(command: string): string | null {
       return "tedit scaffold\nUsage:\n  tedit scaffold <file> --spec <json-or-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]\n  tedit scaffold <file> --directives \"use client\" --imports \"@/lib/utils:cn\" --export \"function:Button(props)\" --body 'button.children=\"Save\"' [--write]";
     case "new":
       return "tedit new\nUsage:\n  tedit new <template> <file> --param name=Button [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]";
+    case "templates":
+      return "tedit templates\nUsage:\n  tedit templates [--cwd <dir>] [--json]\n\nLists built-in, global, and project-local .tedit/templates.";
     case "flow":
       return "tedit flow\nUsage:\n  tedit flow <file> <flow-json> [--params <json-or-file>] [--dry-run|--write]";
     case "workspace-flow":
