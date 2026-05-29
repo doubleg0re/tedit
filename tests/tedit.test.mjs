@@ -1858,25 +1858,30 @@ test("mcp server lists tools and runs universal edit", async () => {
     await client.connect(transport);
     const tools = await client.listTools();
     const toolNames = tools.tools.map((tool) => tool.name);
+    assert.deepEqual(toolNames.sort(), [
+      "actions",
+      "edit",
+      "file_write",
+      "inspect_range",
+      "multiedit",
+      "patch",
+      "search_text",
+      "verify_file",
+    ].sort());
     assert.ok(tools.tools.some((tool) => tool.name === "edit"));
     assert.ok(tools.tools.some((tool) => tool.name === "file_write"));
-    assert.ok(tools.tools.some((tool) => tool.name === "chain_workspace"));
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
-    assert.ok(tools.tools.some((tool) => tool.name === "apply_plan"));
-    assert.ok(tools.tools.some((tool) => tool.name === "create_file"));
-    assert.ok(tools.tools.some((tool) => tool.name === "templates"));
     assert.ok(tools.tools.some((tool) => tool.name === "inspect_range"));
     assert.ok(tools.tools.some((tool) => tool.name === "search_text"));
-    assert.ok(tools.tools.some((tool) => tool.name === "history_trace"));
-    assert.ok(tools.tools.some((tool) => tool.name === "scan_strings"));
-    assert.ok(tools.tools.some((tool) => tool.name === "ast_select"));
-    assert.ok(tools.tools.some((tool) => tool.name === "ast_edit"));
-    assert.ok(tools.tools.some((tool) => tool.name === "jsx_select"));
-    assert.ok(tools.tools.some((tool) => tool.name === "jsx_node"));
-    assert.ok(tools.tools.some((tool) => tool.name === "jsx_attr"));
-    assert.ok(tools.tools.some((tool) => tool.name === "jsx_content"));
-    assert.ok(tools.tools.some((tool) => tool.name === "imports"));
-    assert.ok(tools.tools.some((tool) => tool.name === "extract_component"));
+    assert.equal(toolNames.includes("chain_workspace"), false);
+    assert.equal(toolNames.includes("apply_plan"), false);
+    assert.equal(toolNames.includes("create_file"), false);
+    assert.equal(toolNames.includes("templates"), false);
+    assert.equal(toolNames.includes("history_trace"), false);
+    assert.equal(toolNames.includes("scan_strings"), false);
+    assert.equal(toolNames.includes("ast_select"), false);
+    assert.equal(toolNames.includes("ast_edit"), false);
+    assert.equal(toolNames.includes("jsx_node"), false);
     assert.equal(toolNames.includes("write_file"), false);
     assert.equal(toolNames.includes("scaffold_file"), false);
     assert.equal(toolNames.includes("new_file"), false);
@@ -1897,44 +1902,58 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.actions.includes("multiedit"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("file_write"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("create_file"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("templates"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("inspect_range"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("search_text"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("history_trace"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("scan_strings"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("ast_select"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("ast_edit"));
-    assert.equal(actionsDiscovery.structuredContent.actions.includes("refactor_state_plan"), false);
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("class.add"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("verify_file"));
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("create_file"), false);
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("templates"), false);
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("history_trace"), false);
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("scan_strings"), false);
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("ast_select"), false);
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("ast_edit"), false);
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("refactor_state_plan"), false);
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("class.add"), false);
     assert.ok(actionsDiscovery.structuredContent.tools.some((tool) => tool.name === "multiedit"));
     const editToolMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "edit");
-    const jsxAttrMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "jsx_attr");
-    const templatesMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "templates");
+    const verifyMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "verify_file");
     const searchTextMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "search_text");
-    const scanStringsMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "scan_strings");
+    const templatesMeta = actionsDiscovery.structuredContent.advanced_tools.find((tool) => tool.name === "templates");
+    const scanStringsMeta = actionsDiscovery.structuredContent.advanced_tools.find((tool) => tool.name === "scan_strings");
+    const jsxAttrMeta = actionsDiscovery.structuredContent.advanced_tools.find((tool) => tool.name === "jsx_attr");
     const propSetMeta = actionsDiscovery.structuredContent.advanced_tools.find((tool) => tool.name === "prop_set");
     assert.equal(editToolMeta.category, "edit");
     assert.ok(editToolMeta.best_for.includes("single localized text/code edit"));
-    assert.equal(jsxAttrMeta.exposure, "default");
-    assert.equal(jsxAttrMeta.registered, true);
+    assert.equal(verifyMeta.readOnly, true);
+    assert.equal(jsxAttrMeta.exposure, "advanced");
+    assert.equal(jsxAttrMeta.registered, false);
     assert.equal(templatesMeta.category, "discover");
     assert.equal(templatesMeta.readOnly, true);
+    assert.equal(templatesMeta.registered, false);
     assert.equal(searchTextMeta.category, "discover");
     assert.equal(searchTextMeta.readOnly, true);
     assert.equal(scanStringsMeta.category, "ast");
     assert.equal(scanStringsMeta.readOnly, true);
+    assert.equal(scanStringsMeta.registered, false);
     assert.equal(propSetMeta.action, "prop.set");
     assert.ok(propSetMeta.aliases.includes("prop.set"));
     assert.equal(propSetMeta.exposure, "advanced");
     assert.equal(propSetMeta.registered, false);
     assert.equal(actionsDiscovery.structuredContent.profiles.current, "agent");
-    assert.ok(actionsDiscovery.structuredContent.profiles.agent.includes("jsx_attr"));
+    assert.deepEqual(actionsDiscovery.structuredContent.profiles.agent.sort(), [
+      "actions",
+      "edit",
+      "file_write",
+      "inspect_range",
+      "multiedit",
+      "patch",
+      "search_text",
+      "verify_file",
+    ].sort());
+    assert.equal(actionsDiscovery.structuredContent.profiles.agent.includes("jsx_attr"), false);
     assert.equal(actionsDiscovery.structuredContent.profiles.agent.includes("prop_set"), false);
     assert.ok(actionsDiscovery.structuredContent.profiles.all.includes("prop_set"));
     assert.match(actionsDiscovery.structuredContent.guidance.read_path[0], /native Read/);
-    assert.ok(actionsDiscovery.structuredContent.guidance.tool_priorities.some((item) => item.includes("history_trace")));
+    assert.ok(actionsDiscovery.structuredContent.guidance.tool_priorities.some((item) => item.includes("TEDIT_MCP_PROFILE=all")));
     assert.match(actionsDiscovery.structuredContent.guidance.no_read_file_tool, /less useful than native Read/);
 
     const jsxActionsDiscovery = await client.callTool({
@@ -1943,6 +1962,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(jsxActionsDiscovery.isError, undefined);
     assert.deepEqual(jsxActionsDiscovery.structuredContent.guidance.file_rules, ["jsx"]);
+    assert.ok(jsxActionsDiscovery.structuredContent.actions.includes("class.add"));
 
     const result = await client.callTool({
       name: "edit",
@@ -2071,41 +2091,6 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(inspectRangeResult.structuredContent.suggested.findLines, "2:2");
     assert.match(inspectRangeResult.structuredContent.suggested.replaceHint, /trailing newline/);
 
-    const templatesResult = await client.callTool({
-      name: "templates",
-      arguments: {},
-    });
-    assert.equal(templatesResult.isError, undefined);
-    assert.equal(templatesResult.structuredContent.kind, "templates");
-    assert.ok(templatesResult.structuredContent.templates.some((template) => template.name === "react-client-component"));
-
-    const scanStringsResult = await client.callTool({
-      name: "scan_strings",
-      arguments: { file: mcpAstFile },
-    });
-    assert.equal(scanStringsResult.isError, undefined);
-    assert.equal(scanStringsResult.structuredContent.kind, "scan-strings");
-    assert.ok(scanStringsResult.structuredContent.strings.some((item) => item.value === "삭제"));
-    assert.ok(scanStringsResult.structuredContent.strings.some((item) => item.value === "검색"));
-
-    const astSelectResult = await client.callTool({
-      name: "ast_select",
-      arguments: { file: mcpAstFile, selector: 'CallExpression[callee.name="alert"]' },
-    });
-    assert.equal(astSelectResult.isError, undefined);
-    assert.equal(astSelectResult.structuredContent.kind, "ast-select");
-    assert.equal(astSelectResult.structuredContent.matches.length, 1);
-
-    const astEditResult = await client.callTool({
-      name: "ast_edit",
-      arguments: { file: mcpAstFile, objectKey: "label", replace: "Delete", write: true },
-    });
-    assert.equal(astEditResult.isError, undefined);
-    assert.equal(astEditResult.structuredContent.ok, true);
-    assert.equal(astEditResult.structuredContent.kind, "mutation");
-    assert.equal(astEditResult.structuredContent.writtenCount, 1);
-    assert.match(readFileSync(mcpAstFile, "utf8"), /label: "Delete"/);
-
     const writeFileResult = await client.callTool({
       name: "file_write",
       arguments: { mode: "write", file: mcpWriteFile, source: "{\"ok\":true}\n", write: true },
@@ -2116,16 +2101,6 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(writeFileResult.structuredContent.files[0].persisted, true);
     assert.match(writeFileResult.structuredContent.summary, /1 file written; parse verified with json/);
     assert.equal(readFileSync(mcpWriteFile, "utf8"), "{\"ok\":true}\n");
-
-    const createFileResult = await client.callTool({
-      name: "create_file",
-      arguments: { file: mcpCreateFile, source: "# Created\n", write: true },
-    });
-    assert.equal(createFileResult.isError, undefined);
-    assert.equal(createFileResult.structuredContent.parser, "markdown-lite");
-    assert.equal(createFileResult.structuredContent.files[0].change, "created");
-    assert.equal(createFileResult.structuredContent.files[0].persisted, true);
-    assert.equal(readFileSync(mcpCreateFile, "utf8"), "# Created\n");
 
     const scaffoldResult = await client.callTool({
       name: "file_write",
@@ -2147,18 +2122,6 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(newFileResult.isError, undefined);
     assert.equal(newFileResult.structuredContent.parser, "jsx");
     assert.match(readFileSync(mcpNewFile, "utf8"), /export function ClientCard/);
-
-    const wrapResult = await client.callTool({
-      name: "jsx_node",
-      arguments: { action: "wrap", file: jsxFile, selector: "DailyPlanBody", with: 'div.flex.gap-4', write: true },
-    });
-
-    assert.equal(wrapResult.isError, undefined);
-    assert.equal(wrapResult.structuredContent.success, undefined);
-    assert.equal(wrapResult.structuredContent.ok, true);
-    assert.equal(wrapResult.structuredContent.kind, "mutation");
-    assert.equal(wrapResult.structuredContent.writtenCount, 1);
-    assert.match(readFileSync(jsxFile, "utf8"), /<div className="flex gap-4"><DailyPlanBody \/><\/div>/);
 
     const verifyResult = await client.callTool({
       name: "verify_file",
@@ -2185,27 +2148,19 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(textVerifyResult.structuredContent.parse_skipped, true);
     assert.equal(textVerifyResult.structuredContent.parse_skip_reason, "unsupported_extension");
 
-    const planResult = await client.callTool({
-      name: "extract_component",
-      arguments: { mode: "plan", from: extractFile, selector: "Card", to: extractOut, name: "PageCard", planOut: extractPlan },
-    });
-    assert.equal(planResult.isError, undefined);
-    assert.equal(planResult.structuredContent.kind, "extract-component-plan");
-    assert.equal(existsSync(extractOut), false);
-
-    const applyResult = await client.callTool({
-      name: "apply_plan",
-      arguments: { plan: extractPlan, write: true },
-    });
-    assert.equal(applyResult.isError, undefined);
-    assert.ok(applyResult.structuredContent.writtenCount > 0);
-    assert.match(readFileSync(extractOut, "utf8"), /export function PageCard/);
   } finally {
     await client.close();
   }
 });
 
 test("mcp server exposes advanced tools when profile is all", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-mcp-all-"));
+  const jsxFile = join(dir, "Advanced.tsx");
+  const astFile = join(dir, "strings.tsx");
+  const createdFile = join(dir, "created.md");
+  writeFileSync(jsxFile, "export function Advanced() {\n  return <DailyPlanBody />;\n}\n");
+  writeFileSync(astFile, "const item = { label: \"삭제\" };\nexport function Strings() { return <input placeholder=\"검색\" />; }\n");
+
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [mcp],
@@ -2221,8 +2176,16 @@ test("mcp server exposes advanced tools when profile is all", async () => {
     assert.ok(names.includes("write_file"));
     assert.ok(names.includes("scaffold_file"));
     assert.ok(names.includes("new_file"));
+    assert.ok(names.includes("create_file"));
+    assert.ok(names.includes("templates"));
+    assert.ok(names.includes("history_trace"));
+    assert.ok(names.includes("scan_strings"));
+    assert.ok(names.includes("ast_select"));
+    assert.ok(names.includes("ast_edit"));
+    assert.ok(names.includes("jsx_node"));
     assert.ok(names.includes("wrap"));
     assert.ok(names.includes("prop_set"));
+    assert.ok(names.includes("apply_plan"));
     assert.ok(names.includes("extract_plan"));
     assert.ok(names.includes("refactor_state_plan"));
 
@@ -2235,6 +2198,51 @@ test("mcp server exposes advanced tools when profile is all", async () => {
     const writeMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "write_file");
     assert.equal(writeMeta.exposure, "advanced");
     assert.equal(writeMeta.registered, true);
+
+    const templatesResult = await client.callTool({
+      name: "templates",
+      arguments: {},
+    });
+    assert.equal(templatesResult.isError, undefined);
+    assert.equal(templatesResult.structuredContent.kind, "templates");
+    assert.ok(templatesResult.structuredContent.templates.some((template) => template.name === "react-client-component"));
+
+    const scanStringsResult = await client.callTool({
+      name: "scan_strings",
+      arguments: { file: astFile },
+    });
+    assert.equal(scanStringsResult.isError, undefined);
+    assert.equal(scanStringsResult.structuredContent.kind, "scan-strings");
+    assert.ok(scanStringsResult.structuredContent.strings.some((item) => item.value === "삭제"));
+    assert.ok(scanStringsResult.structuredContent.strings.some((item) => item.value === "검색"));
+
+    const astEditResult = await client.callTool({
+      name: "ast_edit",
+      arguments: { file: astFile, objectKey: "label", replace: "Delete", write: true },
+    });
+    assert.equal(astEditResult.isError, undefined);
+    assert.equal(astEditResult.structuredContent.ok, true);
+    assert.equal(astEditResult.structuredContent.kind, "mutation");
+    assert.equal(astEditResult.structuredContent.writtenCount, 1);
+    assert.match(readFileSync(astFile, "utf8"), /label: "Delete"/);
+
+    const wrapResult = await client.callTool({
+      name: "jsx_node",
+      arguments: { action: "wrap", file: jsxFile, selector: "DailyPlanBody", with: "div.flex.gap-4", write: true },
+    });
+    assert.equal(wrapResult.isError, undefined);
+    assert.equal(wrapResult.structuredContent.ok, true);
+    assert.equal(wrapResult.structuredContent.kind, "mutation");
+    assert.match(readFileSync(jsxFile, "utf8"), /<div className="flex gap-4"><DailyPlanBody \/><\/div>/);
+
+    const createFileResult = await client.callTool({
+      name: "create_file",
+      arguments: { file: createdFile, source: "# Created\n", write: true },
+    });
+    assert.equal(createFileResult.isError, undefined);
+    assert.equal(createFileResult.structuredContent.parser, "markdown-lite");
+    assert.equal(createFileResult.structuredContent.files[0].change, "created");
+    assert.equal(readFileSync(createdFile, "utf8"), "# Created\n");
   } finally {
     await client.close();
   }

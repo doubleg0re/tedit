@@ -134,16 +134,12 @@ than raw text.
 The default MCP profile is `agent`, which keeps the callable tool list small
 and intent-oriented:
 
-`edit`, `multiedit`, `patch`, `file_write`, `create_file`, `actions`,
-`analyze_state`, `verify_file`, `refactor_state`, `apply_plan`,
-`chain_workspace`, `templates`, `inspect_range`, `search_text`,
-`history_trace`, `scan_strings`, `ast_select`, `ast_edit`, `jsx_select`, `jsx_node`, `jsx_attr`,
-`jsx_content`, `imports`, and `extract_component`.
+`actions`, `edit`, `multiedit`, `patch`, `file_write`, `inspect_range`,
+`search_text`, and `verify_file`.
 
 `inspect_range` and `search_text` bridge `sed`/`rg` style workflows into
-tedit's edit-ready structured results, and `history_trace` adds git blame/log
-context before risky edits. The AST-oriented tools cover code text that is not
-represented as a JSX structural node.
+tedit's edit-ready structured results. `verify_file` gives parser coverage and
+validity checks without trying to replace native Read.
 
 Use `file_write` with a required `mode` for whole-file writes:
 `mode: "write"` for complete source replacement, `mode: "scaffold"` for
@@ -155,14 +151,17 @@ Use `scan_strings` for hardcoded text audits before i18n work, then narrow
 with `ast_select` and apply one safe string replacement with `ast_edit`.
 
 Set `TEDIT_MCP_PROFILE=all` (or `TEDIT_MCP_EXPOSE_ADVANCED=true`) to expose
-the legacy fine-grained tools as MCP tools too, including `write_file`,
-`scaffold_file`, `new_file`, `find`, `inspect`, `append`, `prepend`, `wrap`,
-`unwrap`, `remove`, `rename`, `prop_set`, `prop_remove`, `class_add`,
-`class_remove`, `class_replace`, `text_set`, `text_replace`,
-`insert_comment`, `imports_add`, `imports_remove`, `imports_rename`,
-`imports_move`, `expr_replace`, `expr_wrap`, `expr_unwrap`,
-`expr_to_ternary`, `expr_to_short_circuit`, `extract`, `extract_plan`, and
-`refactor_state_plan`.
+the advanced and legacy fine-grained tools as MCP tools too, including
+`create_file`, `templates`, `history_trace`, `scan_strings`, `ast_select`,
+`ast_edit`, `jsx_select`, `jsx_node`, `jsx_attr`, `jsx_content`, `imports`,
+`extract_component`, `analyze_state`, `refactor_state`, `apply_plan`,
+`chain_workspace`, `write_file`, `scaffold_file`, `new_file`, `find`,
+`inspect`, `append`, `prepend`, `wrap`, `unwrap`, `remove`, `rename`,
+`prop_set`, `prop_remove`, `class_add`, `class_remove`, `class_replace`,
+`text_set`, `text_replace`, `insert_comment`, `imports_add`,
+`imports_remove`, `imports_rename`, `imports_move`, `expr_replace`,
+`expr_wrap`, `expr_unwrap`, `expr_to_ternary`, `expr_to_short_circuit`,
+`extract`, `extract_plan`, and `refactor_state_plan`.
 
 Mutating MCP tools are described as safer replacements for routine Edit, Write,
 MultiEdit, and Patch calls when parser guardrails, dry-runs, git-aware write

@@ -11,7 +11,7 @@ import {
   type BaseFindStrategy,
 } from "./base-edit.js";
 import { parseElementShorthand } from "./chain.js";
-import { getOptionalAdapterForFile, listRules } from "./core/registry.js";
+import { getOptionalAdapterForFile } from "./core/registry.js";
 import { runAstEdit as runAstEditEngine, runAstSelect, runScanStrings } from "./ast-tools.js";
 import { inspectRange, searchText } from "./search-tools.js";
 import { historyTrace } from "./history-tools.js";
@@ -874,12 +874,23 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
 
 export type TeditMcpProfile = "agent" | "all";
 
+const AGENT_MCP_TOOL_NAMES = new Set([
+  "actions",
+  "edit",
+  "multiedit",
+  "patch",
+  "file_write",
+  "inspect_range",
+  "search_text",
+  "verify_file",
+]);
+
 export function teditMcpProfileFromEnv(env: NodeJS.ProcessEnv = process.env): TeditMcpProfile {
   return env.TEDIT_MCP_PROFILE === "all" || env.TEDIT_MCP_EXPOSE_ADVANCED === "true" ? "all" : "agent";
 }
 
 export function toolsForMcpProfile(profile: TeditMcpProfile = teditMcpProfileFromEnv()): readonly TeditMcpTool[] {
-  return profile === "all" ? TEDIT_MCP_ALL_TOOLS : TEDIT_MCP_ALL_TOOLS.filter((tool) => tool.exposure !== "advanced");
+  return profile === "all" ? TEDIT_MCP_ALL_TOOLS : TEDIT_MCP_ALL_TOOLS.filter((tool) => toolExposure(tool) === "default");
 }
 
 export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = toolsForMcpProfile();
@@ -1028,7 +1039,7 @@ function runActionsTool(args: unknown): unknown {
   const input = optionalRecordInput(args, "actions");
   const filePath = optionalString(input.file);
   const adapter = filePath ? getOptionalAdapterForFile(filePath) : null;
-  const languageRules = adapter ? [adapter.rule] : filePath ? [] : listRules();
+  const languageRules = adapter ? [adapter.rule] : [];
   const registeredTools = toolsForMcpProfile(teditMcpProfileFromEnv());
   const registeredToolNames = new Set(registeredTools.map((tool) => tool.name));
   const allTools = TEDIT_MCP_ALL_TOOLS.map((tool) => ({
@@ -1036,7 +1047,7 @@ function runActionsTool(args: unknown): unknown {
     title: tool.title,
     description: tool.description,
     readOnly: tool.annotations?.readOnlyHint === true,
-    exposure: tool.exposure ?? "default",
+    exposure: toolExposure(tool),
     registered: registeredToolNames.has(tool.name),
     ...(tool.category ? { category: tool.category } : {}),
     ...(tool.action ? { action: tool.action } : {}),
@@ -1167,35 +1178,35 @@ function astSelectorValue(value: string): string {
   fail("INVALID_MCP_INPUT", "AST shortcut values cannot contain both single and double quotes yet; pass an explicit selector.");
 }
 
+function toolExposure(tool: TeditMcpTool): "default" | "advanced" {
+  return AGENT_MCP_TOOL_NAMES.has(tool.name) ? "default" : "advanced";
+}
+
 function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[]): JsonRecord {
   return {
     default_profile: "agent",
     read_path: [
       "Use the host/native Read tool for full file contents; tedit does not duplicate plain file reading yet.",
-      "Use actions first when unsure; it returns the current profile, tool priorities, and examples.",
+      "Use actions first when unsure; it returns the current profile, default tools, advanced tools, and examples.",
       "Use inspect_range for sed-style line context plus parse status and edit-ready findLines suggestions.",
       "Use search_text for rg/grep-style raw text discovery when the next step is likely a tedit edit.",
-      "Use history_trace before risky edits when you need to know when a line or string last changed.",
-      "Use templates before file_write mode=template when project-local conventions matter.",
       "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
-      "Use jsx_select for structural target discovery, then pass returned ids/selectors to mutating tools.",
-      "Use scan_strings for hardcoded user-facing text inventory across JSX text/attrs and JS/TS string literals.",
+      "Set TEDIT_MCP_PROFILE=all for JSX, AST, history, template, and refactor helpers.",
     ],
     no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
     profile: {
       current: teditMcpProfileFromEnv(),
-      default_surface: "Agent profile exposes facade tools by default; set TEDIT_MCP_PROFILE=all to expose legacy fine-grained tools.",
-      safety_boundary: "create_file and analyze_state stay standalone because no-overwrite creation and read-only diagnosis should not be mixed with write/refactor actions.",
+      default_surface: "Agent profile exposes only actions, edit, multiedit, patch, file_write, inspect_range, search_text, and verify_file.",
+      advanced_surface: "Set TEDIT_MCP_PROFILE=all to expose JSX, AST, history, template, extract, plan, and legacy fine-grained tools.",
     },
     tool_priorities: [
       "search_text or inspect_range for target discovery",
-      "history_trace when edit risk depends on code history",
       "edit for one localized change",
       "multiedit for repeated or cross-file changes",
-      "jsx_select plus jsx_attr/jsx_node/jsx_content for structural JSX edits",
-      "scan_strings plus ast_edit for JS/TS string edits outside JSX selectors",
-      "templates plus file_write mode=template for convention-heavy new files",
+      "file_write for whole-file generation, scaffold mode, or template mode",
+      "verify_file before or after edits when parser coverage matters",
       "patch only when the change is already a diff",
+      "TEDIT_MCP_PROFILE=all for JSX/AST/history/refactor/template helpers",
     ],
     edit_loop: [
       { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },

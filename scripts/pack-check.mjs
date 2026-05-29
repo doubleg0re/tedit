@@ -101,7 +101,7 @@ async function smokeMcp(command) {
     await client.connect(transport);
     const result = await client.listTools();
     const toolNames = result.tools.map((tool) => tool.name);
-    for (const required of ["edit", "multiedit", "patch", "create_file", "verify_file"]) {
+    for (const required of ["actions", "edit", "multiedit", "patch", "file_write", "inspect_range", "search_text", "verify_file"]) {
       if (!toolNames.includes(required)) failures.push({ check: "packed-mcp-tools", missing: required });
     }
   } finally {
