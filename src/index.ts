@@ -5,6 +5,8 @@ export type { AttrSelector, ParsedSelector, PseudoSelector, SelectorCombinator, 
 export { openDocumentForFile, parseDocumentForFile, getAdapterForFile, getOptionalAdapterForFile, hasAdapterForFile, listRules } from "./core/registry.js";
 export { BASE_ACTIONS, parseLineRange, parseVerificationFields, planBaseEdit, verifyParseForFile } from "./base-edit.js";
 export type { BaseEditMutation, BaseEditOptions, BaseEditPlan, BaseFindStrategy, BaseMatch, BaseParseVerification, ParseSkipReason, ParseVerificationFields } from "./base-edit.js";
+export { runAstEdit, runAstSelect, runScanStrings } from "./ast-tools.js";
+export type { AstNodeMatch, AstStringCandidate } from "./ast-tools.js";
 export type {
   CommentPosition,
   DocumentAdapter,

@@ -371,6 +371,7 @@ function parseFields(file: AgentFileSummary): Partial<AgentFileSummary> {
 
 function compactResultKind(record: JsonRecord, files: AgentFileSummary[]): string {
   if (isMutationResult(record, files)) return "mutation";
+  if (typeof record.kind === "string") return record.kind;
   if (Array.isArray(record.matches)) return "find";
   if (record.node !== undefined) return "inspect";
   if (typeof record.parse_verified === "boolean" && typeof record.file === "string") return "verify-file";
@@ -378,7 +379,6 @@ function compactResultKind(record: JsonRecord, files: AgentFileSummary[]): strin
   if (Array.isArray(record.actions) && Array.isArray(record.rules)) return "actions";
   if (Array.isArray(record.rules)) return "rules";
   if (Array.isArray(record.results) && record.vars && typeof record.vars === "object") return "workflow";
-  if (typeof record.kind === "string") return record.kind;
   return "result";
 }
 
@@ -391,6 +391,8 @@ function isMutationResult(record: JsonRecord, files: AgentFileSummary[]): boolea
 function payloadSummary(record: JsonRecord, kind: string): string {
   if (typeof record.summary === "string") return record.summary;
   if (kind === "find" && Array.isArray(record.matches)) return String(record.matches.length) + " " + plural("match", record.matches.length);
+  if (kind === "scan-strings" && Array.isArray(record.strings)) return String(record.strings.length) + " string " + plural("candidate", record.strings.length);
+  if (kind === "ast-select" && Array.isArray(record.matches)) return String(record.matches.length) + " AST " + plural("match", record.matches.length);
   if (kind === "inspect") return "node inspected";
   if (kind === "verify-file") return parseResultSummary(record);
   if (kind === "actions" && Array.isArray(record.actions)) return String(record.actions.length) + " " + plural("action", record.actions.length) + " available";

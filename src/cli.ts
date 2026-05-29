@@ -13,6 +13,7 @@ import {
 import { chainToFlow, fileChainToWorkspaceFlow, parseChainSegments, parseChainText, workspaceChainToFlow } from "./chain.js";
 import type { ImportEditSpec, TextMatchSpec, TextValueSpec, TreeNodeSpec, ValueSpec } from "./core/document.js";
 import { getOptionalAdapterForFile, listRules, openDocumentForFile } from "./core/registry.js";
+import { runAstEdit, runAstSelect, runScanStrings } from "./ast-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { toErrorResult } from "./errors.js";
 import { formatAgentResult, outputOptionsFromConfig, parseDiffMode, parseOutputMode, type OutputMode, type OutputOptions } from "./output.js";
@@ -91,6 +92,18 @@ async function main(): Promise<void> {
       return;
     case "actions":
       commandActions(args);
+      return;
+    case "scan-strings":
+    case "scan_strings":
+      commandScanStrings(args);
+      return;
+    case "ast-select":
+    case "ast_select":
+      commandAstSelect(args);
+      return;
+    case "ast-edit":
+    case "ast_edit":
+      commandAstEdit(args);
       return;
     case "analyze-state":
       commandAnalyzeState(args);
@@ -256,6 +269,9 @@ function commandActions(args: ParsedArgs): void {
   const languageRules = adapter ? [adapter.rule] : filePath ? [] : listRules();
   const actions = [
     ...BASE_ACTIONS,
+    "scan-strings",
+    "ast-select",
+    "ast-edit",
     ...languageRules.flatMap((rule) => rule.actions),
   ];
   const result = {
@@ -269,6 +285,34 @@ function commandActions(args: ParsedArgs): void {
   };
 
   output(args, result, actions.join("\n"));
+}
+
+function commandScanStrings(args: ParsedArgs): void {
+  const [filePath] = requirePositionals(args, 1, "scan-strings <file> [--contains <text>] [--include-excluded] [--json]");
+  const result = runScanStrings(filePath, {
+    contains: stringFlag(args, "contains"),
+    includeExcluded: booleanFlag(args, "include-excluded") || booleanFlag(args, "includeExcluded"),
+    minLength: positiveIntegerFlag(args, "min-length") ?? positiveIntegerFlag(args, "minLength"),
+  });
+  output(args, result, formatAstStrings(result.strings as unknown[]));
+}
+
+function commandAstSelect(args: ParsedArgs): void {
+  const [filePath, selector] = requirePositionals(args, 2, "ast-select <file> <selector> [--json]");
+  const result = runAstSelect(filePath, selector);
+  output(args, result, formatAstMatches(result.matches as unknown[]));
+}
+
+function commandAstEdit(args: ParsedArgs): void {
+  const [filePath, selector] = requirePositionals(args, 2, "ast-edit <file> <selector> --replace <text> [--dry-run|--write]");
+  const result = runAstEdit(filePath, {
+    selector,
+    replace: requiredStringFlag(args, "replace", "ast-edit requires --replace <text>."),
+    ...writeFlags(args),
+  });
+  writeDiffOut(args, result);
+  if (quietRequested(args)) return;
+  output(args, result, typeof result.diff === "string" && result.diff.length > 0 ? result.diff : "No changes");
 }
 
 function commandAnalyzeState(args: ParsedArgs): void {
@@ -1595,6 +1639,25 @@ function formatMatches(matches: unknown[]): string {
   }).join("\n");
 }
 
+function formatAstStrings(strings: unknown[]): string {
+  if (strings.length === 0) return "No strings";
+  return strings.map((value) => {
+    const item = value as { id: string; kind: string; value: string; range: { line: number; column: number }; context: string; excluded?: boolean; excludeReason?: string };
+    const excluded = item.excluded ? ` excluded=${item.excludeReason ?? "true"}` : "";
+    return `${item.id} ${item.kind}:${item.range.line}:${item.range.column} ${JSON.stringify(item.value)} (${item.context})${excluded}`;
+  }).join("\n");
+}
+
+function formatAstMatches(matches: unknown[]): string {
+  if (matches.length === 0) return "No AST matches";
+  return matches.map((value) => {
+    const item = value as { id: string; type: string; value?: unknown; range: { line: number; column: number }; preview: string; editable?: boolean };
+    const valueText = item.value === undefined ? "" : ` value=${JSON.stringify(item.value)}`;
+    const editable = item.editable ? " editable" : "";
+    return `${item.id} ${item.type}:${item.range.line}:${item.range.column}${valueText}${editable} ${item.preview}`;
+  }).join("\n");
+}
+
 function requirePositionals(args: ParsedArgs, count: number, usage: string): string[] {
   if (args.positionals.length < count) throw new Error(`Usage: tedit ${usage}`);
   return args.positionals;
@@ -1773,6 +1836,9 @@ Usage:
   tedit patch --from-stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit patch --stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit actions [file] [--json]
+  tedit scan-strings <file> [--contains <text>] [--include-excluded] [--json]
+  tedit ast-select <file> <selector> [--json]
+  tedit ast-edit <file> <selector> --replace <text> [--dry-run|--write]
   tedit analyze-state <file> [--json]
   tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--plan-out <plan-json>|--dry-run|--write]
   tedit find <file> <selector> [--json]
@@ -1889,6 +1955,15 @@ function shortHelp(command: string): string | null {
       return "tedit refactor-state\nUsage:\n  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--plan-out <plan-json>|--dry-run|--write]";
     case "actions":
       return "tedit actions\nUsage:\n  tedit actions [file] [--json]\n\nLists universal base actions and file-specific language actions.";
+    case "scan-strings":
+    case "scan_strings":
+      return "tedit scan-strings\nUsage:\n  tedit scan-strings <file> [--contains <text>] [--include-excluded] [--json]\n\nScans JS/TS/JSX AST string candidates for hardcoded user-facing text.";
+    case "ast-select":
+    case "ast_select":
+      return "tedit ast-select\nUsage:\n  tedit ast-select <file> <selector> [--json]\n\nFinds JS/TS/JSX AST nodes using a small selector language, e.g. StringLiteral[value*=\"삭제\"].";
+    case "ast-edit":
+    case "ast_edit":
+      return "tedit ast-edit\nUsage:\n  tedit ast-edit <file> <selector> --replace <text> [--dry-run|--write]\n\nSafely replaces one editable AST string target matched by ast-select.";
     case "analyze-state":
       return "tedit analyze-state\nUsage:\n  tedit analyze-state <file> [--json]\n\nReports useState clusters, handler usage, and refactor guidance.";
     case "find":

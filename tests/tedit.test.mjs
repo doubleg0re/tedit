@@ -71,6 +71,51 @@ test("compact discovery output preserves payloads", () => {
   assert.ok(state.analysis_summary);
 });
 
+test("ast string scan selects and edits hardcoded strings", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  writeFileSync(file, [
+    "import x from \"./x\";",
+    "const msg = \"실패\";",
+    "const item = { label: \"삭제\", path: \"/api/users\" };",
+    "alert(\"오류\");",
+    "export function Page() {",
+    "  return <button className=\"px-2\" placeholder=\"검색\">저장</button>;",
+    "}",
+    "",
+  ].join("\n"));
+
+  const scan = JSON.parse(run(["scan-strings", file, "--json"]));
+  const values = scan.strings.map((item) => item.value);
+  assert.deepEqual(scan.strings.map((item) => item.id), ["str_1", "str_2", "str_3", "str_4", "str_5"]);
+  assert.ok(values.includes("실패"));
+  assert.ok(values.includes("삭제"));
+  assert.ok(values.includes("오류"));
+  assert.ok(values.includes("검색"));
+  assert.ok(values.includes("저장"));
+  assert.equal(values.includes("./x"), false);
+  assert.equal(values.includes("/api/users"), false);
+  assert.equal(values.includes("px-2"), false);
+  assert.ok(scan.excludedCount >= 3);
+
+  const label = JSON.parse(run(["ast-select", file, 'ObjectProperty[key.name="label"] > StringLiteral', "--json"]));
+  assert.equal(label.kind, "ast-select");
+  assert.equal(label.matches.length, 1);
+  assert.equal(label.matches[0].value, "삭제");
+  assert.equal(label.matches[0].editable, true);
+
+  const alertCall = JSON.parse(run(["ast-select", file, 'CallExpression[callee.name="alert"]', "--json"]));
+  assert.equal(alertCall.matches.length, 1);
+  assert.equal(alertCall.matches[0].type, "CallExpression");
+
+  const edit = JSON.parse(run(["ast-edit", file, 'ObjectProperty[key.name="label"]', "--replace", "Delete", "--write", "--json"]));
+  assert.equal(edit.success, true);
+  assert.equal(edit.changed, true);
+  assert.equal(edit.written, true);
+  assert.equal(edit.parse_verified, true);
+  assert.match(readFileSync(file, "utf8"), /label: "Delete"/);
+});
+
 test("append dry-run prints a diff and does not write", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "Page.tsx");
@@ -1679,12 +1724,14 @@ test("mcp server lists tools and runs universal edit", async () => {
   const mcpNewFile = join(dir, "ClientCard.tsx");
   const mcpLoopFile = join(dir, "loop.ts");
   const mcpWarnFile = join(dir, "Warn.tsx");
+  const mcpAstFile = join(dir, "Ast.tsx");
   writeFileSync(file, "# Title\nold value\n");
   writeFileSync(jsxFile, chainFixture());
   writeFileSync(jsonFile, "{\"enabled\":true}\n");
   writeFileSync(extractFile, extractFixture());
   writeFileSync(mcpLoopFile, "function save(\n  value\n) {\n  return value;\n}\n");
   writeFileSync(mcpWarnFile, "export function Warn() {\n  return <div className=\"w-full w-9\" />;\n}\n");
+  writeFileSync(mcpAstFile, "const item = { label: \"삭제\" };\nalert(\"오류\");\nexport function Ast() { return <input placeholder=\"검색\" />; }\n");
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -1696,16 +1743,29 @@ test("mcp server lists tools and runs universal edit", async () => {
   try {
     await client.connect(transport);
     const tools = await client.listTools();
+    const toolNames = tools.tools.map((tool) => tool.name);
     assert.ok(tools.tools.some((tool) => tool.name === "edit"));
+    assert.ok(tools.tools.some((tool) => tool.name === "file_write"));
     assert.ok(tools.tools.some((tool) => tool.name === "chain_workspace"));
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
-    assert.ok(tools.tools.some((tool) => tool.name === "refactor_state_plan"));
-    assert.ok(tools.tools.some((tool) => tool.name === "extract_plan"));
     assert.ok(tools.tools.some((tool) => tool.name === "apply_plan"));
-    assert.ok(tools.tools.some((tool) => tool.name === "write_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "create_file"));
-    assert.ok(tools.tools.some((tool) => tool.name === "scaffold_file"));
-    assert.ok(tools.tools.some((tool) => tool.name === "new_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "scan_strings"));
+    assert.ok(tools.tools.some((tool) => tool.name === "ast_select"));
+    assert.ok(tools.tools.some((tool) => tool.name === "ast_edit"));
+    assert.ok(tools.tools.some((tool) => tool.name === "jsx_select"));
+    assert.ok(tools.tools.some((tool) => tool.name === "jsx_node"));
+    assert.ok(tools.tools.some((tool) => tool.name === "jsx_attr"));
+    assert.ok(tools.tools.some((tool) => tool.name === "jsx_content"));
+    assert.ok(tools.tools.some((tool) => tool.name === "imports"));
+    assert.ok(tools.tools.some((tool) => tool.name === "extract_component"));
+    assert.equal(toolNames.includes("write_file"), false);
+    assert.equal(toolNames.includes("scaffold_file"), false);
+    assert.equal(toolNames.includes("new_file"), false);
+    assert.equal(toolNames.includes("refactor_state_plan"), false);
+    assert.equal(toolNames.includes("extract_plan"), false);
+    assert.equal(toolNames.includes("wrap"), false);
+    assert.equal(toolNames.includes("prop_set"), false);
     const listedEdit = tools.tools.find((tool) => tool.name === "edit");
     const listedActions = tools.tools.find((tool) => tool.name === "actions");
     assert.match(listedEdit.description, /Safer replacement for routine Edit/);
@@ -1718,17 +1778,33 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(actionsDiscovery.isError, undefined);
     assert.ok(actionsDiscovery.structuredContent.actions.includes("multiedit"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("file_write"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("create_file"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("refactor_state_plan"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("scan_strings"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("ast_select"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("ast_edit"));
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("refactor_state_plan"), false);
     assert.ok(actionsDiscovery.structuredContent.actions.includes("class.add"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("verify_file"));
     assert.ok(actionsDiscovery.structuredContent.tools.some((tool) => tool.name === "multiedit"));
     const editToolMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "edit");
-    const propSetMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "prop_set");
+    const jsxAttrMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "jsx_attr");
+    const scanStringsMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "scan_strings");
+    const propSetMeta = actionsDiscovery.structuredContent.advanced_tools.find((tool) => tool.name === "prop_set");
     assert.equal(editToolMeta.category, "edit");
     assert.ok(editToolMeta.best_for.includes("single localized text/code edit"));
+    assert.equal(jsxAttrMeta.exposure, "default");
+    assert.equal(jsxAttrMeta.registered, true);
+    assert.equal(scanStringsMeta.category, "ast");
+    assert.equal(scanStringsMeta.readOnly, true);
     assert.equal(propSetMeta.action, "prop.set");
     assert.ok(propSetMeta.aliases.includes("prop.set"));
+    assert.equal(propSetMeta.exposure, "advanced");
+    assert.equal(propSetMeta.registered, false);
+    assert.equal(actionsDiscovery.structuredContent.profiles.current, "agent");
+    assert.ok(actionsDiscovery.structuredContent.profiles.agent.includes("jsx_attr"));
+    assert.equal(actionsDiscovery.structuredContent.profiles.agent.includes("prop_set"), false);
+    assert.ok(actionsDiscovery.structuredContent.profiles.all.includes("prop_set"));
     assert.match(actionsDiscovery.structuredContent.guidance.read_path[0], /native Read/);
     assert.match(actionsDiscovery.structuredContent.guidance.no_read_file_tool, /less useful than native Read/);
 
@@ -1842,9 +1918,36 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(fuzzyRetry.structuredContent.files[0].persisted, true);
     assert.ok(readFileSync(mcpLoopFile, "utf8").includes("function save(value)"));
 
+    const scanStringsResult = await client.callTool({
+      name: "scan_strings",
+      arguments: { file: mcpAstFile },
+    });
+    assert.equal(scanStringsResult.isError, undefined);
+    assert.equal(scanStringsResult.structuredContent.kind, "scan-strings");
+    assert.ok(scanStringsResult.structuredContent.strings.some((item) => item.value === "삭제"));
+    assert.ok(scanStringsResult.structuredContent.strings.some((item) => item.value === "검색"));
+
+    const astSelectResult = await client.callTool({
+      name: "ast_select",
+      arguments: { file: mcpAstFile, selector: 'CallExpression[callee.name="alert"]' },
+    });
+    assert.equal(astSelectResult.isError, undefined);
+    assert.equal(astSelectResult.structuredContent.kind, "ast-select");
+    assert.equal(astSelectResult.structuredContent.matches.length, 1);
+
+    const astEditResult = await client.callTool({
+      name: "ast_edit",
+      arguments: { file: mcpAstFile, selector: 'ObjectProperty[key.name="label"]', replace: "Delete", write: true },
+    });
+    assert.equal(astEditResult.isError, undefined);
+    assert.equal(astEditResult.structuredContent.ok, true);
+    assert.equal(astEditResult.structuredContent.kind, "mutation");
+    assert.equal(astEditResult.structuredContent.writtenCount, 1);
+    assert.match(readFileSync(mcpAstFile, "utf8"), /label: "Delete"/);
+
     const writeFileResult = await client.callTool({
-      name: "write_file",
-      arguments: { file: mcpWriteFile, source: "{\"ok\":true}\n", write: true },
+      name: "file_write",
+      arguments: { mode: "write", file: mcpWriteFile, source: "{\"ok\":true}\n", write: true },
     });
     assert.equal(writeFileResult.isError, undefined);
     assert.equal(writeFileResult.structuredContent.parser, "json");
@@ -1864,8 +1967,9 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(readFileSync(mcpCreateFile, "utf8"), "# Created\n");
 
     const scaffoldResult = await client.callTool({
-      name: "scaffold_file",
+      name: "file_write",
       arguments: {
+        mode: "scaffold",
         file: mcpScaffoldFile,
         spec: { exports: [{ kind: "function", name: "Scaffolded", body: { tag: "section" } }] },
         write: true,
@@ -1876,16 +1980,16 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.match(readFileSync(mcpScaffoldFile, "utf8"), /export function Scaffolded/);
 
     const newFileResult = await client.callTool({
-      name: "new_file",
-      arguments: { file: mcpNewFile, template: "react-client-component", params: { name: "ClientCard" }, write: true },
+      name: "file_write",
+      arguments: { mode: "template", file: mcpNewFile, template: "react-client-component", params: { name: "ClientCard" }, write: true },
     });
     assert.equal(newFileResult.isError, undefined);
     assert.equal(newFileResult.structuredContent.parser, "jsx");
     assert.match(readFileSync(mcpNewFile, "utf8"), /export function ClientCard/);
 
     const wrapResult = await client.callTool({
-      name: "wrap",
-      arguments: { file: jsxFile, selector: "DailyPlanBody", with: 'div.flex.gap-4', write: true },
+      name: "jsx_node",
+      arguments: { action: "wrap", file: jsxFile, selector: "DailyPlanBody", with: 'div.flex.gap-4', write: true },
     });
 
     assert.equal(wrapResult.isError, undefined);
@@ -1921,8 +2025,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(textVerifyResult.structuredContent.parse_skip_reason, "unsupported_extension");
 
     const planResult = await client.callTool({
-      name: "extract_plan",
-      arguments: { from: extractFile, selector: "Card", to: extractOut, name: "PageCard", planOut: extractPlan },
+      name: "extract_component",
+      arguments: { mode: "plan", from: extractFile, selector: "Card", to: extractOut, name: "PageCard", planOut: extractPlan },
     });
     assert.equal(planResult.isError, undefined);
     assert.equal(planResult.structuredContent.kind, "extract-component-plan");
@@ -1935,6 +2039,41 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(applyResult.isError, undefined);
     assert.ok(applyResult.structuredContent.writtenCount > 0);
     assert.match(readFileSync(extractOut, "utf8"), /export function PageCard/);
+  } finally {
+    await client.close();
+  }
+});
+
+test("mcp server exposes advanced tools when profile is all", async () => {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [mcp],
+    stderr: "pipe",
+    env: { ...process.env, TEDIT_MCP_PROFILE: "all" },
+  });
+  const client = new Client({ name: "tedit-test", version: "0.1.0" });
+
+  try {
+    await client.connect(transport);
+    const tools = await client.listTools();
+    const names = tools.tools.map((tool) => tool.name);
+    assert.ok(names.includes("write_file"));
+    assert.ok(names.includes("scaffold_file"));
+    assert.ok(names.includes("new_file"));
+    assert.ok(names.includes("wrap"));
+    assert.ok(names.includes("prop_set"));
+    assert.ok(names.includes("extract_plan"));
+    assert.ok(names.includes("refactor_state_plan"));
+
+    const actionsDiscovery = await client.callTool({
+      name: "actions",
+      arguments: {},
+    });
+    assert.equal(actionsDiscovery.isError, undefined);
+    assert.equal(actionsDiscovery.structuredContent.profiles.current, "all");
+    const writeMeta = actionsDiscovery.structuredContent.tools.find((tool) => tool.name === "write_file");
+    assert.equal(writeMeta.exposure, "advanced");
+    assert.equal(writeMeta.registered, true);
   } finally {
     await client.close();
   }
@@ -2500,7 +2639,7 @@ test("CLI version and subcommand help are concise", () => {
   assert.doesNotMatch(help, /tedit scaffold/);
 
   const topics = [
-    "edit", "multiedit", "verify", "verify-file", "patch", "actions", "analyze-state",
+    "edit", "multiedit", "verify", "verify-file", "patch", "actions", "scan-strings", "ast-select", "ast-edit", "analyze-state",
     "refactor-state", "find", "inspect", "append", "prepend", "wrap",
     "unwrap", "remove", "rename", "insertComment", "text", "prop",
     "imports", "expr", "extract", "apply-plan", "plan", "create", "write", "scaffold", "new",

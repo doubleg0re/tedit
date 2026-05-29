@@ -12,6 +12,7 @@ import {
 } from "./base-edit.js";
 import { parseElementShorthand } from "./chain.js";
 import { getOptionalAdapterForFile, listRules } from "./core/registry.js";
+import { runAstEdit as runAstEditEngine, runAstSelect, runScanStrings } from "./ast-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { formatAgentResult, outputOptionsFromRecord } from "./output.js";
@@ -30,7 +31,8 @@ export type TeditMcpTool = {
   title: string;
   description: string;
   inputSchema: z.ZodRawShape;
-  category?: "edit" | "generate" | "discover" | "jsx" | "refactor" | "workflow";
+  category?: "edit" | "generate" | "discover" | "jsx" | "ast" | "refactor" | "workflow";
+  exposure?: "default" | "advanced";
   action?: string;
   aliases?: readonly string[];
   bestFor?: readonly string[];
@@ -53,6 +55,7 @@ type SingleStepConfig = {
   inputSchema: z.ZodRawShape;
   readOnly?: boolean;
   category?: TeditMcpTool["category"];
+  exposure?: TeditMcpTool["exposure"];
   aliases?: readonly string[];
   bestFor?: readonly string[];
   buildStep: (input: JsonRecord) => WorkspaceFlowStep;
@@ -79,7 +82,7 @@ const selectorSchema = z.string().min(1).describe("Structural selector.");
 const valueSchema = z.unknown().describe("Literal value or tedit value spec.");
 const elementSchema = z.unknown().describe("Element shorthand string or tree node spec.");
 
-export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
+export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "edit",
     title: "Universal Edit",
@@ -140,6 +143,7 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     title: "Write File",
     description: "Safer replacement for Write on complete file contents: create or overwrite through tedit write policy and parse verification.",
     category: "generate",
+    exposure: "advanced",
     aliases: ["write", "overwrite_file"],
     bestFor: ["full-file generation", "overwrite with parser guardrails", "agent-authored source strings"],
     inputSchema: {
@@ -170,6 +174,7 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     title: "Scaffold File",
     description: "Generate a file from a tedit scaffold spec, then apply write policy and parse verification.",
     category: "generate",
+    exposure: "advanced",
     aliases: ["scaffold"],
     bestFor: ["structured TSX/JSX generation", "spec-driven boilerplate", "repeatable component skeletons"],
     inputSchema: {
@@ -186,6 +191,7 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     title: "New File From Template",
     description: "Generate a file from a built-in or local tedit template, then apply write policy and parse verification.",
     category: "generate",
+    exposure: "advanced",
     aliases: ["new", "template_file"],
     bestFor: ["known templates", "repeatable project-local file generation", "component/action starters"],
     inputSchema: {
@@ -199,6 +205,26 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     handler: runNewFileTool,
   },
   {
+    name: "file_write",
+    title: "File Write",
+    description: "Whole-file generation facade. Required mode: write for complete source writes, scaffold for scaffold specs, or template for project templates. create_file stays separate because no-overwrite creation is a safety boundary.",
+    category: "generate",
+    aliases: ["write_file", "scaffold_file", "new_file"],
+    bestFor: ["whole-file generated content", "scaffolded component skeletons", "template-backed files"],
+    inputSchema: {
+      mode: z.enum(["write", "scaffold", "template"]).describe("Required. write=complete source, scaffold=tedit scaffold spec/source, template=built-in or local template. Use create_file for must-be-new files."),
+      file: fileSchema,
+      source: z.string().optional().describe("Required when mode=write, or accepted as scaffold source when mode=scaffold."),
+      spec: z.record(z.string(), z.unknown()).optional().describe("Required when mode=scaffold unless source is provided."),
+      template: z.string().optional().describe("Required when mode=template."),
+      params: z.union([z.record(z.string(), z.unknown()), z.array(z.string())]).optional().describe("Template params for mode=template."),
+      cwd: z.string().optional().describe("Template search cwd for mode=template."),
+      overwrite: z.boolean().optional().describe("Explicitly allow overwriting an existing file."),
+      ...writeFlagSchema,
+    },
+    handler: runFileWriteTool,
+  },
+  {
     name: "actions",
     title: "Actions",
     description: "List tedit tools/actions plus agent guidance for choosing between native read/edit/write/patch and tedit.",
@@ -210,6 +236,51 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runActionsTool,
+  },
+  {
+    name: "scan_strings",
+    title: "Scan Strings",
+    description: "Read-only JS/TS/JSX AST string scanner for hardcoded user-facing text. Covers JSX text/attrs, string literals, object values, and simple template literals while excluding obvious technical strings by default.",
+    category: "ast",
+    aliases: ["scan-strings", "hardcoded_text", "i18n_scan"],
+    bestFor: ["hardcoded text inventory", "i18n preparation", "finding JS/TS strings beyond JSX selectors"],
+    inputSchema: {
+      file: fileSchema,
+      contains: z.string().optional().describe("Only return strings containing this text."),
+      includeExcluded: z.boolean().optional().describe("Include technical strings that are normally excluded, with excludeReason."),
+      minLength: z.number().int().positive().optional().describe("Minimum string length. Defaults to 1."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runScanStringsTool,
+  },
+  {
+    name: "ast_select",
+    title: "AST Select",
+    description: "Read-only JS/TS/JSX AST selector. Examples: StringLiteral[value*=\"삭제\"], CallExpression[callee.name=\"alert\"], ObjectProperty[key.name=\"label\"] > StringLiteral.",
+    category: "ast",
+    aliases: ["ast-select", "code_select"],
+    bestFor: ["code AST discovery", "finding call expressions or object values", "narrowing ast_edit targets"],
+    inputSchema: {
+      file: fileSchema,
+      selector: z.string().min(1).describe("AST selector with node type and optional [path=value] filters; supports direct child > combinator."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runAstSelectTool,
+  },
+  {
+    name: "ast_edit",
+    title: "AST Edit",
+    description: "Safely replace one editable AST string target matched by ast_select. Supports StringLiteral, JSXText, string JSXAttribute/ObjectProperty values, and no-expression TemplateLiteral.",
+    category: "ast",
+    aliases: ["ast-edit", "string_literal_replace"],
+    bestFor: ["safe AST string replacement", "i18n prep edits after scan_strings", "call argument or object label text replacement"],
+    inputSchema: {
+      file: fileSchema,
+      selector: z.string().min(1).describe("AST selector that must match exactly one editable string target."),
+      replace: z.string().describe("Replacement text."),
+      ...writeFlagSchema,
+    },
+    handler: runAstEditTool,
   },
   {
     name: "analyze_state",
@@ -242,13 +313,17 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     title: "Refactor State",
     description: "Apply tedit's React state refactor helper, including custom hook extraction, with dry-run and write policy.",
     category: "refactor",
+    aliases: ["react_state_refactor"],
     bestFor: ["object-state grouping", "custom hook extraction", "React state refactors"],
     inputSchema: {
+      mode: z.enum(["apply", "plan"]).optional().describe("Prefer explicit mode. apply runs the refactor with dry-run/write policy; plan writes a reviewable plan and requires planOut."),
       file: fileSchema,
+      planOut: z.string().optional().describe("Required when mode=plan."),
       cluster: z.string().optional(),
       to: z.string().optional(),
       name: z.string().optional(),
       externalDeps: z.enum(["fail", "params"]).optional(),
+      overwrite: z.boolean().optional(),
       ...writeFlagSchema,
     },
     handler: runRefactorStateTool,
@@ -258,6 +333,7 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     title: "Refactor State Plan",
     description: "Generate a reviewable refactor-state plan file without changing source files.",
     category: "refactor",
+    exposure: "advanced",
     aliases: ["refactor-state --plan-out"],
     bestFor: ["review-before-apply state refactors", "custom hook extraction planning", "step-gated React state cleanup"],
     inputSchema: {
@@ -276,6 +352,7 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     title: "Extract Plan",
     description: "Plan a JSX component extraction without changing source files. Use before apply_plan for large/risky extracts, helper movement, or any extraction the agent/user should review before writes.",
     category: "refactor",
+    exposure: "advanced",
     aliases: ["extract --plan-out", "plan_extract"],
     bestFor: ["review-before-apply extract workflows", "large JSX component extraction", "helper movement decisions", "step-gated refactors"],
     inputSchema: {
@@ -334,6 +411,144 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
       ...writeFlagSchema,
     },
     handler: runWorkspaceTool,
+  },
+  {
+    name: "jsx_select",
+    title: "JSX Select",
+    description: "Read-only JSX selector facade. action=find returns matching node ids/previews; action=inspect returns one node's details. Both are safe discovery operations.",
+    category: "jsx",
+    aliases: ["find", "inspect"],
+    bestFor: ["selector discovery", "inspecting JSX nodes before mutation", "getting stable target ids"],
+    inputSchema: {
+      action: z.enum(["find", "inspect"]).describe("Required. find lists matching nodes; inspect returns details for one selector/id."),
+      file: fileSchema,
+      selector: selectorSchema.optional().describe("Required for action=find; accepted for action=inspect."),
+      target: targetSchema.optional().describe("Selector or returned id for action=inspect."),
+      id: targetSchema.optional().describe("Returned node id for action=inspect."),
+      all: z.boolean().optional().describe("For action=find, return all matches when supported."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runJsxSelectTool,
+  },
+  {
+    name: "jsx_node",
+    title: "JSX Node",
+    description: "JSX node mutation facade. Required action. append/prepend require element; wrap requires with/wrapper; rename requires to/name; insert_comment requires text.",
+    category: "jsx",
+    aliases: ["append", "prepend", "wrap", "unwrap", "remove", "rename", "insert_comment"],
+    bestFor: ["structural JSX node edits", "wrapping/removing/renaming JSX", "comment insertion"],
+    inputSchema: {
+      action: z.enum(["append", "prepend", "wrap", "unwrap", "remove", "rename", "insert_comment"]).describe("Required node operation."),
+      file: fileSchema,
+      selector: selectorSchema.optional(),
+      target: targetSchema.optional(),
+      id: targetSchema.optional(),
+      element: elementSchema.optional().describe("Required for action=append or action=prepend."),
+      with: elementSchema.optional().describe("Required for action=wrap; wrapper shorthand/object."),
+      wrapper: elementSchema.optional().describe("Alias for with when action=wrap."),
+      to: z.string().optional().describe("Required for action=rename unless name is supplied."),
+      name: z.string().optional().describe("Alias for to when action=rename."),
+      text: z.string().optional().describe("Required for action=insert_comment."),
+      position: z.string().optional().describe("Optional insert_comment position: inside-start, inside-end, before, or after."),
+      ...writeFlagSchema,
+    },
+    handler: runJsxNodeTool,
+  },
+  {
+    name: "jsx_attr",
+    title: "JSX Attr",
+    description: "JSX prop/class mutation facade. Required action. prop_set/remove use name/value/expr; class_add/remove use classes; class_replace uses from/to.",
+    category: "jsx",
+    aliases: ["prop_set", "prop_remove", "class_add", "class_remove", "class_replace"],
+    bestFor: ["JSX prop edits", "static className token edits", "attribute-level changes"],
+    inputSchema: {
+      action: z.enum(["prop_set", "prop_remove", "class_add", "class_remove", "class_replace"]).describe("Required attr/class operation."),
+      file: fileSchema,
+      selector: selectorSchema.optional(),
+      target: targetSchema.optional(),
+      id: targetSchema.optional(),
+      name: z.string().optional().describe("Required for prop_set and prop_remove."),
+      value: valueSchema.optional().describe("Optional prop_set value; defaults to true when expr is omitted."),
+      expr: z.string().optional().describe("Optional prop_set expression value."),
+      classes: z.union([z.string(), z.array(z.string())]).optional().describe("Required for class_add and class_remove."),
+      from: z.string().optional().describe("Required for class_replace."),
+      to: z.string().optional().describe("Required for class_replace."),
+      ...writeFlagSchema,
+    },
+    handler: runJsxAttrTool,
+  },
+  {
+    name: "jsx_content",
+    title: "JSX Content",
+    description: "JSX text/expression mutation facade. Required action. text_set needs value or expr; text_replace needs match/with fields; expr_replace/wrap need code.",
+    category: "jsx",
+    aliases: ["text_set", "text_replace", "expr_replace", "expr_wrap", "expr_unwrap", "expr_to_ternary", "expr_to_short_circuit"],
+    bestFor: ["text child replacement", "expression container edits", "ternary/short-circuit conversions"],
+    inputSchema: {
+      action: z.enum(["text_set", "text_replace", "expr_replace", "expr_wrap", "expr_unwrap", "expr_to_ternary", "expr_to_short_circuit"]).describe("Required content/expression operation."),
+      file: fileSchema,
+      selector: selectorSchema.optional(),
+      target: targetSchema.optional(),
+      id: targetSchema.optional(),
+      value: z.string().optional().describe("text_set value or expr_to_ternary alternate alias."),
+      expr: z.string().optional().describe("text_set expression value."),
+      match: z.unknown().optional().describe("text_replace match spec."),
+      matchText: z.string().optional(),
+      matchExpr: z.string().optional(),
+      matchAny: z.string().optional(),
+      with: z.unknown().optional().describe("text_replace replacement spec."),
+      withText: z.string().optional(),
+      withExpr: z.string().optional(),
+      code: z.string().optional().describe("Required for expr_replace and expr_wrap."),
+      alternate: z.string().optional().describe("Optional expr_to_ternary alternate."),
+      ...writeFlagSchema,
+    },
+    handler: runJsxContentTool,
+  },
+  {
+    name: "imports",
+    title: "Imports",
+    description: "Import declaration facade. Required action: add, remove, rename, or move. rename requires name and to; move requires to.",
+    category: "jsx",
+    aliases: ["imports_add", "imports_remove", "imports_rename", "imports_move"],
+    bestFor: ["adding imports", "removing imports", "renaming or moving import specifiers"],
+    inputSchema: {
+      action: z.enum(["add", "remove", "rename", "move"]).describe("Required import operation."),
+      ...importsSchema(),
+    },
+    handler: runImportsTool,
+  },
+  {
+    name: "extract_component",
+    title: "Extract Component",
+    description: "JSX component extraction facade. mode=plan writes a reviewable plan and requires planOut; mode=direct runs the extraction through workspace-flow dry-run/write policy.",
+    category: "refactor",
+    aliases: ["extract", "extract_plan", "component_extract"],
+    bestFor: ["component extraction", "reviewable extract plans", "small direct extract dry-runs"],
+    inputSchema: {
+      mode: z.enum(["plan", "direct"]).describe("Required. plan writes a reviewable plan; direct runs extraction with dry-run/write policy."),
+      from: fileSchema.describe("Source JSX/TSX file containing the subtree to extract."),
+      selector: selectorSchema.describe("CSS-like selector for the JSX subtree to extract."),
+      to: z.string().min(1).describe("Destination component file."),
+      name: z.string().min(1).describe("New component name."),
+      planOut: z.string().optional().describe("Required when mode=plan."),
+      export: z.enum(["named", "default"]).optional(),
+      exportKind: z.enum(["named", "default"]).optional(),
+      slots: z.unknown().optional(),
+      slot: z.unknown().optional(),
+      depth: z.number().int().optional(),
+      autoSlot: z.boolean().optional(),
+      helpers: z.string().optional(),
+      helpersPolicy: z.string().optional(),
+      helper: z.unknown().optional(),
+      helperOverrides: z.unknown().optional(),
+      overwrite: z.boolean().optional(),
+      typecheck: z.boolean().optional(),
+      maxProps: z.number().int().optional(),
+      acceptLargeProps: z.boolean().optional(),
+      ...writeFlagSchema,
+    },
+    handler: runExtractComponentTool,
   },
   singleStepTool({
     name: "find",
@@ -555,6 +770,7 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
     title: "Extract JSX Component",
     description: "Directly extract a JSX subtree into a new component file. Required: from, selector, to, name. Dry-run by default; pass write:true to persist. For large/risky extracts use extract_plan then apply_plan; for extract plus follow-up edits use chain_workspace.",
     category: "refactor",
+    exposure: "advanced",
     aliases: ["extract_component", "component_extract"],
     bestFor: ["small confident JSX component extraction", "single-step component extraction", "dry-run extraction preview"],
     inputSchema: {
@@ -582,10 +798,21 @@ export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = [
   },
 ];
 
-export const TEDIT_MCP_TOOL_NAMES = TEDIT_MCP_TOOLS.map((tool) => tool.name);
+export type TeditMcpProfile = "agent" | "all";
+
+export function teditMcpProfileFromEnv(env: NodeJS.ProcessEnv = process.env): TeditMcpProfile {
+  return env.TEDIT_MCP_PROFILE === "all" || env.TEDIT_MCP_EXPOSE_ADVANCED === "true" ? "all" : "agent";
+}
+
+export function toolsForMcpProfile(profile: TeditMcpProfile = teditMcpProfileFromEnv()): readonly TeditMcpTool[] {
+  return profile === "all" ? TEDIT_MCP_ALL_TOOLS : TEDIT_MCP_ALL_TOOLS.filter((tool) => tool.exposure !== "advanced");
+}
+
+export const TEDIT_MCP_TOOLS: readonly TeditMcpTool[] = toolsForMcpProfile();
+export const TEDIT_MCP_TOOL_NAMES = TEDIT_MCP_ALL_TOOLS.map((tool) => tool.name);
 
 export function runMcpTool(name: string, args: unknown): unknown {
-  const tool = TEDIT_MCP_TOOLS.find((candidate) => candidate.name === name);
+  const tool = TEDIT_MCP_ALL_TOOLS.find((candidate) => candidate.name === name);
   if (!tool) fail("UNKNOWN_MCP_TOOL", `Unknown tedit MCP tool: ${name}`, { tools: TEDIT_MCP_TOOL_NAMES });
   return tool.handler(args);
 }
@@ -611,6 +838,24 @@ function runNewFileTool(args: unknown): unknown {
   const template = requiredString(input.template, "new_file requires template.");
   const spec = loadTemplateSpec(template, templateParamsFromInput(input.params), optionalString(input.cwd) ?? process.cwd());
   return runWholeFileTool(input, "new_file", "new", buildScaffoldSource(spec), { template, spec });
+}
+
+function runFileWriteTool(args: unknown): unknown {
+  const input = recordInput(args, "file_write");
+  const mode = requiredString(input.mode, "file_write requires mode: write, scaffold, or template.");
+  if (mode === "write") {
+    return runWholeFileTool(input, "file_write", "write", requiredString(input.source, "file_write mode=write requires source."));
+  }
+  if (mode === "scaffold") {
+    const spec = scaffoldSpecFromInput(input, "file_write mode=scaffold");
+    return runWholeFileTool(input, "file_write", "scaffold", buildScaffoldSource(spec), { spec });
+  }
+  if (mode === "template") {
+    const template = requiredString(input.template, "file_write mode=template requires template.");
+    const spec = loadTemplateSpec(template, templateParamsFromInput(input.params), optionalString(input.cwd) ?? process.cwd());
+    return runWholeFileTool(input, "file_write", "new", buildScaffoldSource(spec), { template, spec });
+  }
+  fail("INVALID_MCP_INPUT", "file_write mode must be write, scaffold, or template.");
 }
 
 function runWholeFileTool(input: JsonRecord, label: string, kind: string, source: string, extraResult: Record<string, unknown> = {}): unknown {
@@ -709,16 +954,22 @@ function runActionsTool(args: unknown): unknown {
   const filePath = optionalString(input.file);
   const adapter = filePath ? getOptionalAdapterForFile(filePath) : null;
   const languageRules = adapter ? [adapter.rule] : filePath ? [] : listRules();
-  const tools = TEDIT_MCP_TOOLS.map((tool) => ({
+  const registeredTools = toolsForMcpProfile(teditMcpProfileFromEnv());
+  const registeredToolNames = new Set(registeredTools.map((tool) => tool.name));
+  const allTools = TEDIT_MCP_ALL_TOOLS.map((tool) => ({
     name: tool.name,
     title: tool.title,
     description: tool.description,
     readOnly: tool.annotations?.readOnlyHint === true,
+    exposure: tool.exposure ?? "default",
+    registered: registeredToolNames.has(tool.name),
     ...(tool.category ? { category: tool.category } : {}),
     ...(tool.action ? { action: tool.action } : {}),
     ...(tool.aliases && tool.aliases.length > 0 ? { aliases: tool.aliases } : {}),
     ...(tool.bestFor && tool.bestFor.length > 0 ? { best_for: tool.bestFor } : {}),
   }));
+  const tools = allTools.filter((tool) => tool.registered);
+  const advancedTools = allTools.filter((tool) => tool.exposure === "advanced");
   const actions = [...new Set([
     ...tools.map((tool) => tool.name),
     ...BASE_ACTIONS,
@@ -728,6 +979,12 @@ function runActionsTool(args: unknown): unknown {
     success: true,
     ...(filePath ? { file: filePath } : {}),
     tools,
+    advanced_tools: advancedTools,
+    profiles: {
+      current: teditMcpProfileFromEnv(),
+      agent: toolsForMcpProfile("agent").map((tool) => tool.name),
+      all: TEDIT_MCP_ALL_TOOLS.map((tool) => tool.name),
+    },
     rules: [
       { name: "base", extensions: ["*"], actions: BASE_ACTIONS },
       ...languageRules,
@@ -737,32 +994,70 @@ function runActionsTool(args: unknown): unknown {
   };
 }
 
+function runScanStringsTool(args: unknown): unknown {
+  const input = recordInput(args, "scan_strings");
+  const minLength = pick(input, "minLength", "min_length", "min-length");
+  return runScanStrings(requiredString(input.file, "scan_strings requires file."), {
+    contains: optionalString(input.contains),
+    includeExcluded: booleanValue(pick(input, "includeExcluded", "include_excluded", "include-excluded")),
+    ...(minLength === undefined ? {} : { minLength: optionalInteger(minLength, "minLength") }),
+  });
+}
+
+function runAstSelectTool(args: unknown): unknown {
+  const input = recordInput(args, "ast_select");
+  return runAstSelect(requiredString(input.file, "ast_select requires file."), requiredString(input.selector, "ast_select requires selector."));
+}
+
+function runAstEditTool(args: unknown): unknown {
+  const input = recordInput(args, "ast_edit");
+  return withAgentFields(runAstEditEngine(requiredString(input.file, "ast_edit requires file."), {
+    selector: requiredString(input.selector, "ast_edit requires selector."),
+    replace: requiredString(input.replace, "ast_edit requires replace."),
+    ...writeFlagsFromInput(input),
+  }), input);
+}
+
 function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[]): JsonRecord {
   return {
     default_profile: "agent",
     read_path: [
       "Use the host/native Read tool for full file contents; tedit does not duplicate plain file reading yet.",
       "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
-      "Use find/inspect for structural target discovery, then pass returned ids/selectors to mutating tools.",
+      "Use jsx_select for structural target discovery, then pass returned ids/selectors to mutating tools.",
+      "Use scan_strings for hardcoded user-facing text inventory across JSX text/attrs and JS/TS string literals.",
     ],
     no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
+    profile: {
+      current: teditMcpProfileFromEnv(),
+      default_surface: "Agent profile exposes facade tools by default; set TEDIT_MCP_PROFILE=all to expose legacy fine-grained tools.",
+      safety_boundary: "create_file and analyze_state stay standalone because no-overwrite creation and read-only diagnosis should not be mixed with write/refactor actions.",
+    },
     edit_loop: [
       { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },
       { intent: "several coordinated text edits", tool: "multiedit", reason: "atomic application across files and same-file sequential edits" },
       { intent: "already generated diff", tool: "patch", reason: "atomic unified diff/apply-patch input with verification" },
-      { intent: "whole-file generation", tool: "write_file", reason: "write policy plus parser guardrails for generated content" },
-      { intent: "structural JSX/markup mutation", tool: "find or inspect, then prop_set/wrap/text_replace/etc.", reason: "selector/id based edits avoid brittle text spans" },
+      { intent: "must-be-new full file", tool: "create_file", reason: "no-overwrite creation is a safety boundary" },
+      { intent: "whole-file generation or scaffold/template", tool: "file_write", required: ["mode"], reason: "write/scaffold/template facade with parser guardrails" },
+      { intent: "structural JSX/markup mutation", tool: "jsx_select, then jsx_node/jsx_attr/jsx_content/imports", reason: "selector/id based edits avoid brittle text spans" },
+      { intent: "hardcoded text audit", tool: "scan_strings", reason: "AST scan covers JSX text/attrs plus JS/TS string literals; find remains structural" },
+      { intent: "code AST discovery or one safe string replacement", tool: "ast_select, then ast_edit", reason: "AST selectors target calls/object values/string literals outside JSX structure" },
     ],
     refactor_loop: [
-      { intent: "small confident JSX component extraction", tool: "extract", required: ["from", "selector", "to", "name"], reason: "direct dry-run/write extraction with prop inference and parser guardrails" },
-      { intent: "large or risky JSX component extraction", tool: "extract_plan then apply_plan", required: ["from", "selector", "to", "name", "planOut"], reason: "reviewable plan file before applying file creation, call-site replacement, and helper movement" },
+      { intent: "small confident JSX component extraction", tool: "extract_component", required: ["mode=direct", "from", "selector", "to", "name"], reason: "direct dry-run/write extraction with prop inference and parser guardrails" },
+      { intent: "large or risky JSX component extraction", tool: "extract_component then apply_plan", required: ["mode=plan", "from", "selector", "to", "name", "planOut"], reason: "reviewable plan file before applying file creation, call-site replacement, and helper movement" },
       { intent: "extract and then mutate the created component in one transaction", tool: "chain_workspace", reason: "workspace-flow can run extract plus follow-up per-file structural steps atomically" },
-      { intent: "React state cluster cleanup or hook extraction", tool: "analyze_state then refactor_state or refactor_state_plan", reason: "inspect clusters first, then apply directly or through a plan" },
+      { intent: "React state cluster diagnosis", tool: "analyze_state", reason: "read-only state structure insight; not a code review substitute" },
+      { intent: "React state cluster cleanup or hook extraction", tool: "analyze_state then refactor_state", reason: "inspect clusters first, then apply directly or request mode=plan" },
     ],
     examples: {
-      extract: { from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", write: true },
-      extract_plan: { from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", planOut: ".tedit/plans/extract-card.json" },
+      extract_component: { mode: "direct", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", write: true },
+      extract_component_plan: { mode: "plan", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", planOut: ".tedit/plans/extract-card.json" },
       apply_plan: { plan: ".tedit/plans/extract-card.json", write: true },
+      jsx_attr: { action: "prop_set", file: "src/Page.tsx", selector: "Card", name: "data-extracted", value: true, write: true },
+      scan_strings: { file: "src/Page.tsx", contains: "삭제" },
+      ast_select: { file: "src/Page.tsx", selector: "ObjectProperty[key.name=\"label\"] > StringLiteral" },
+      ast_edit: { file: "src/Page.tsx", selector: "StringLiteral[value=\"삭제\"]", replace: "Delete", write: true },
       chain_workspace: {
         steps: [
           { action: "extract", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard" },
@@ -795,6 +1090,11 @@ function runVerifyFileTool(args: unknown): unknown {
 
 function runRefactorStateTool(args: unknown): unknown {
   const input = recordInput(args, "refactor_state");
+  const mode = optionalString(input.mode);
+  if (mode === "plan" || (mode === undefined && pick(input, "planOut", "plan_out", "plan-out") !== undefined)) {
+    return runRefactorStatePlanTool(input);
+  }
+  if (mode !== undefined && mode !== "apply") fail("INVALID_MCP_INPUT", "refactor_state mode must be apply or plan.");
   return runRefactorState(requiredString(input.file, "refactor_state requires file."), {
     cluster: optionalString(input.cluster),
     to: optionalString(input.to),
@@ -846,6 +1146,93 @@ function runWorkspaceTool(args: unknown): unknown {
     params: recordOrUndefined(input.params, "chain_workspace params"),
     ...writeFlagsFromInput(input),
   }), input);
+}
+
+function runJsxSelectTool(args: unknown): unknown {
+  const input = recordInput(args, "jsx_select");
+  return runWorkspaceFlow([jsxSelectStep(input)], writeFlagsFromInput(input));
+}
+
+function runJsxNodeTool(args: unknown): unknown {
+  const input = recordInput(args, "jsx_node");
+  return withAgentFields(runWorkspaceFlow([jsxNodeStep(input)], writeFlagsFromInput(input)), input);
+}
+
+function runJsxAttrTool(args: unknown): unknown {
+  const input = recordInput(args, "jsx_attr");
+  return withAgentFields(runWorkspaceFlow([jsxAttrStep(input)], writeFlagsFromInput(input)), input);
+}
+
+function runJsxContentTool(args: unknown): unknown {
+  const input = recordInput(args, "jsx_content");
+  return withAgentFields(runWorkspaceFlow([jsxContentStep(input)], writeFlagsFromInput(input)), input);
+}
+
+function runImportsTool(args: unknown): unknown {
+  const input = recordInput(args, "imports");
+  const action = requiredString(input.action, "imports requires action: add, remove, rename, or move.");
+  if (!["add", "remove", "rename", "move"].includes(action)) fail("INVALID_MCP_INPUT", "imports action must be add, remove, rename, or move.");
+  if (action === "rename" && (input.name === undefined || input.to === undefined)) fail("INVALID_MCP_INPUT", "imports action=rename requires name and to.");
+  if (action === "move" && input.to === undefined) fail("INVALID_MCP_INPUT", "imports action=move requires to.");
+  return withAgentFields(runWorkspaceFlow([{ action: `imports.${action}`, file: requiredString(input.file, "imports requires file."), ...importFields(input) }], writeFlagsFromInput(input)), input);
+}
+
+function runExtractComponentTool(args: unknown): unknown {
+  const input = recordInput(args, "extract_component");
+  const mode = requiredString(input.mode, "extract_component requires mode: plan or direct.");
+  if (mode === "plan") return runExtractPlanTool(input);
+  if (mode === "direct") return runExtractTool(input);
+  fail("INVALID_MCP_INPUT", "extract_component mode must be plan or direct.");
+}
+
+function jsxSelectStep(input: JsonRecord): WorkspaceFlowStep {
+  const action = requiredString(input.action, "jsx_select requires action: find or inspect.");
+  if (action === "find") {
+    return { action: "find", file: requiredString(input.file, "jsx_select action=find requires file."), selector: requiredString(input.selector, "jsx_select action=find requires selector."), all: booleanValue(input.all) };
+  }
+  if (action === "inspect") {
+    return { action: "inspect", file: requiredString(input.file, "jsx_select action=inspect requires file."), target: targetFromInput(input, "jsx_select action=inspect") };
+  }
+  fail("INVALID_MCP_INPUT", "jsx_select action must be find or inspect.");
+}
+
+function jsxNodeStep(input: JsonRecord): WorkspaceFlowStep {
+  const action = requiredString(input.action, "jsx_node requires action.");
+  const file = requiredString(input.file, "jsx_node requires file.");
+  if (action === "append") return { action: "append", file, target: targetFromInput(input, "jsx_node action=append"), element: normalizeElementInput(input.element, "jsx_node action=append requires element.") };
+  if (action === "prepend") return { action: "prepend", file, target: targetFromInput(input, "jsx_node action=prepend"), element: normalizeElementInput(input.element, "jsx_node action=prepend requires element.") };
+  if (action === "wrap") return { action: "wrap", file, target: targetFromInput(input, "jsx_node action=wrap"), with: normalizeElementInput(pick(input, "with", "wrapper"), "jsx_node action=wrap requires with or wrapper.") };
+  if (action === "unwrap") return { action: "unwrap", file, target: targetFromInput(input, "jsx_node action=unwrap") };
+  if (action === "remove") return { action: "remove", file, target: targetFromInput(input, "jsx_node action=remove") };
+  if (action === "rename") return { action: "rename", file, target: targetFromInput(input, "jsx_node action=rename"), name: requiredString(pick(input, "to", "name"), "jsx_node action=rename requires to or name.") };
+  if (action === "insert_comment") {
+    return { action: "insertComment", file, target: targetFromInput(input, "jsx_node action=insert_comment"), text: requiredString(input.text, "jsx_node action=insert_comment requires text."), ...(input.position === undefined ? {} : { position: String(input.position) as WorkspaceFlowStep["position"] }) };
+  }
+  fail("INVALID_MCP_INPUT", "jsx_node action must be append, prepend, wrap, unwrap, remove, rename, or insert_comment.");
+}
+
+function jsxAttrStep(input: JsonRecord): WorkspaceFlowStep {
+  const action = requiredString(input.action, "jsx_attr requires action.");
+  const file = requiredString(input.file, "jsx_attr requires file.");
+  if (action === "prop_set") return { action: "prop.set", file, target: targetFromInput(input, "jsx_attr action=prop_set"), name: requiredString(input.name, "jsx_attr action=prop_set requires name."), value: propValue(input) };
+  if (action === "prop_remove") return { action: "prop.remove", file, target: targetFromInput(input, "jsx_attr action=prop_remove"), name: requiredString(input.name, "jsx_attr action=prop_remove requires name.") };
+  if (action === "class_add") return { action: "class.add", file, target: targetFromInput(input, "jsx_attr action=class_add"), classes: classNamesInput(input, "jsx_attr action=class_add") };
+  if (action === "class_remove") return { action: "class.remove", file, target: targetFromInput(input, "jsx_attr action=class_remove"), classes: classNamesInput(input, "jsx_attr action=class_remove") };
+  if (action === "class_replace") return { action: "class.replace", file, target: targetFromInput(input, "jsx_attr action=class_replace"), from: requiredString(input.from, "jsx_attr action=class_replace requires from."), to: requiredString(input.to, "jsx_attr action=class_replace requires to.") };
+  fail("INVALID_MCP_INPUT", "jsx_attr action must be prop_set, prop_remove, class_add, class_remove, or class_replace.");
+}
+
+function jsxContentStep(input: JsonRecord): WorkspaceFlowStep {
+  const action = requiredString(input.action, "jsx_content requires action.");
+  const file = requiredString(input.file, "jsx_content requires file.");
+  if (action === "text_set") return { action: "text.set", file, target: targetFromInput(input, "jsx_content action=text_set"), ...textSetValue(input) };
+  if (action === "text_replace") return { action: "text.replace", file, target: targetFromInput(input, "jsx_content action=text_replace"), match: textMatch(input) as WorkspaceFlowStep["match"], with: textReplacement(input) as WorkspaceFlowStep["with"] };
+  if (action === "expr_replace") return { action: "expr.replace", file, target: targetFromInput(input, "jsx_content action=expr_replace"), code: requiredString(input.code, "jsx_content action=expr_replace requires code.") };
+  if (action === "expr_wrap") return { action: "expr.wrap", file, target: targetFromInput(input, "jsx_content action=expr_wrap"), code: requiredString(input.code, "jsx_content action=expr_wrap requires code.") };
+  if (action === "expr_unwrap") return { action: "expr.unwrap", file, target: targetFromInput(input, "jsx_content action=expr_unwrap") };
+  if (action === "expr_to_ternary") return { action: "expr.toTernary", file, target: targetFromInput(input, "jsx_content action=expr_to_ternary"), ...(pick(input, "alternate", "value") === undefined ? {} : { value: String(pick(input, "alternate", "value")) }) };
+  if (action === "expr_to_short_circuit") return { action: "expr.toShortCircuit", file, target: targetFromInput(input, "jsx_content action=expr_to_short_circuit") };
+  fail("INVALID_MCP_INPUT", "jsx_content action must be text_set, text_replace, expr_replace, expr_wrap, expr_unwrap, expr_to_ternary, or expr_to_short_circuit.");
 }
 
 function extractOptionsFromInput(input: JsonRecord): ExtractOptions {
@@ -906,6 +1293,7 @@ function singleStepTool(config: SingleStepConfig): TeditMcpTool {
     description: config.description,
     inputSchema: config.inputSchema,
     category: config.category ?? "jsx",
+    exposure: config.exposure ?? "advanced",
     action: config.action,
     aliases: config.aliases ?? (config.action === config.name ? [] : [config.action]),
     bestFor: config.bestFor,
@@ -918,14 +1306,14 @@ function singleStepTool(config: SingleStepConfig): TeditMcpTool {
   };
 }
 
-function scaffoldSpecFromInput(input: JsonRecord): ScaffoldSpec {
+function scaffoldSpecFromInput(input: JsonRecord, label = "scaffold_file"): ScaffoldSpec {
   if (input.spec !== undefined) {
-    const spec = recordOrUndefined(input.spec, "scaffold_file spec");
-    if (!spec) fail("INVALID_MCP_INPUT", "scaffold_file spec must be an object.");
+    const spec = recordOrUndefined(input.spec, label + " spec");
+    if (!spec) fail("INVALID_MCP_INPUT", label + " spec must be an object.");
     return spec as ScaffoldSpec;
   }
-  if (input.source !== undefined) return { source: requiredString(input.source, "scaffold_file source must be a string.") };
-  fail("INVALID_MCP_INPUT", "scaffold_file requires spec or source.");
+  if (input.source !== undefined) return { source: requiredString(input.source, label + " source must be a string.") };
+  fail("INVALID_MCP_INPUT", label + " requires spec or source.");
 }
 
 function templateParamsFromInput(value: unknown): Record<string, string> {

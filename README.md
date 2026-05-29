@@ -38,6 +38,9 @@ tedit multiedit ./edits.json --write
 tedit verify ./edits.json --diff-out ./edits.diff
 tedit patch ./change.patch --dry-run --quiet --diff-out ./patch.diff
 tedit actions src/Page.tsx --json
+tedit scan-strings src/Page.tsx --contains "삭제" --json
+tedit ast-select src/Page.tsx 'ObjectProperty[key.name="label"] > StringLiteral' --json
+tedit ast-edit src/Page.tsx 'StringLiteral[value="삭제"]' --replace "Delete" --dry-run
 tedit analyze-state src/Page.tsx --json
 tedit refactor-state src/Page.tsx --cluster crewImport --to src/useCrewImport.ts --name useCrewImport --external-deps params --write
 tedit find src/Page.tsx 'main' --json
@@ -116,23 +119,43 @@ patch/output behavior on the next MCP call without reconnecting. Tool name or
 input-schema changes still require the client to reconnect or refresh tools.
 
 Start with the MCP `actions` tool when an agent needs to choose an edit
-strategy. It returns available tools, file-specific rules, normalized
-`action` names for flow-style aliases, and an agent-oriented `guidance`
-section. `tedit` intentionally does not expose a plain `read_file` MCP tool
-yet: host/native Read remains better for full file contents. Use `verify_file`
-for parser coverage and validity, and use `find`/`inspect` when a structural
-target id or selector is more useful than raw text.
+strategy. It returns the current MCP profile, registered default tools,
+advanced tools, file-specific rules, normalized `action` names for flow-style
+aliases, and an agent-oriented `guidance` section. `tedit` intentionally does
+not expose a plain `read_file` MCP tool yet: host/native Read remains better
+for full file contents. Use `verify_file` for parser coverage and validity,
+and use `jsx_select` when a structural target id or selector is more useful
+than raw text.
 
-The MCP tool names are underscore-style equivalents of the CLI and flow
-actions: `edit`, `multiedit`, `patch`, `write_file`, `create_file`,
-`scaffold_file`, `new_file`, `actions`, `analyze_state`, `verify_file`,
-`refactor_state`, `refactor_state_plan`, `extract_plan`, `apply_plan`, `chain_workspace`, `find`,
-`inspect`, `append`,
-`prepend`, `wrap`, `unwrap`, `remove`, `rename`, `prop_set`,
-`prop_remove`, `text_set`, `text_replace`, `insert_comment`,
-`imports_add`, `imports_remove`, `imports_rename`, `imports_move`,
-`expr_replace`, `expr_wrap`, `expr_unwrap`, `expr_to_ternary`,
-`expr_to_short_circuit`, and `extract`.
+The default MCP profile is `agent`, which keeps the callable tool list small
+and intent-oriented:
+
+`edit`, `multiedit`, `patch`, `file_write`, `create_file`, `actions`,
+`analyze_state`, `verify_file`, `refactor_state`, `apply_plan`,
+`chain_workspace`, `scan_strings`, `ast_select`, `ast_edit`, `jsx_select`,
+`jsx_node`, `jsx_attr`, `jsx_content`, `imports`, and `extract_component`.
+
+The AST-oriented tools cover code text that is not represented as a JSX
+structural node.
+
+Use `file_write` with a required `mode` for whole-file writes:
+`mode: "write"` for complete source replacement, `mode: "scaffold"` for
+scaffold specs, and `mode: "template"` for built-in or project templates.
+`create_file` stays separate because no-overwrite creation is a safety
+boundary. Use `extract_component` with `mode: "direct"` for small confident
+extracts or `mode: "plan"` plus `apply_plan` for reviewable refactors.
+Use `scan_strings` for hardcoded text audits before i18n work, then narrow
+with `ast_select` and apply one safe string replacement with `ast_edit`.
+
+Set `TEDIT_MCP_PROFILE=all` (or `TEDIT_MCP_EXPOSE_ADVANCED=true`) to expose
+the legacy fine-grained tools as MCP tools too, including `write_file`,
+`scaffold_file`, `new_file`, `find`, `inspect`, `append`, `prepend`, `wrap`,
+`unwrap`, `remove`, `rename`, `prop_set`, `prop_remove`, `class_add`,
+`class_remove`, `class_replace`, `text_set`, `text_replace`,
+`insert_comment`, `imports_add`, `imports_remove`, `imports_rename`,
+`imports_move`, `expr_replace`, `expr_wrap`, `expr_unwrap`,
+`expr_to_ternary`, `expr_to_short_circuit`, `extract`, `extract_plan`, and
+`refactor_state_plan`.
 
 Mutating MCP tools are described as safer replacements for routine Edit, Write,
 MultiEdit, and Patch calls when parser guardrails, dry-runs, git-aware write
@@ -163,6 +186,32 @@ Use `tedit` when the edit is structural or repetitive enough that line-based edi
 - Multi-step AI-agent edits where selectors, actions, and diffs are easier to validate than raw generated code.
 
 For one-off local edits, a normal editor or patch is usually faster.
+
+## AST String Scan
+
+`tedit find` stays a JSX/markup structural selector. It is intentionally not a
+project-wide string scanner. For hardcoded user-facing text in code, use the
+AST tools:
+
+```bash
+tedit scan-strings src/Page.tsx --json
+tedit scan-strings src/Page.tsx --contains "삭제" --json
+tedit ast-select src/Page.tsx 'StringLiteral[value*="삭제"]' --json
+tedit ast-select src/Page.tsx 'CallExpression[callee.name="alert"]' --json
+tedit ast-select src/Page.tsx 'ObjectProperty[key.name="label"] > StringLiteral' --json
+tedit ast-edit src/Page.tsx 'ObjectProperty[key.name="label"]' --replace "Delete" --write
+```
+
+`scan-strings` covers JSX text, string JSX attributes, JS/TS string literals,
+object values, call arguments, and no-expression template literals. It excludes
+obvious technical strings by default, including import/export module paths,
+`className`/`class`, ids/test ids, URLs, and file paths. Pass
+`--include-excluded` to audit those skipped candidates with an `excludeReason`.
+
+`ast-edit` is deliberately narrow: the selector must match exactly one editable
+string target, and writes still run through the same dry-run/write policy,
+backup, diff, parse verification, and quality warnings as other tedit
+mutations.
 
 Flow files use a compact `action`/`out` shape:
 
