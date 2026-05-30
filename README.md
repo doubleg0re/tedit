@@ -144,8 +144,9 @@ and intent-oriented:
 `search_text`, and `verify_file`.
 
 `inspect_range` and `search_text` bridge `sed`/`rg` style workflows into
-tedit's edit-ready structured results. `verify_file` gives parser coverage and
-validity checks without trying to replace native Read.
+tedit's edit-ready structured results. `verify_file` accepts either `file` or
+`files` and gives parser coverage plus validity checks without trying to
+replace native Read.
 
 Use `file_write` with a required `mode` for whole-file writes:
 `mode: "write"` for complete source replacement, `mode: "scaffold"` for
@@ -163,7 +164,8 @@ loop is:
   envelope.
 - `file_write` for whole-file generation through `mode: "write"`,
   `mode: "scaffold"`, or `mode: "template"`.
-- `verify_file` before or after edits when parser coverage matters.
+- `verify_file` before or after edits when parser coverage matters; pass
+  `files` to check several related files in one call.
 - `TEDIT_MCP_PROFILE=all` for AST, JSX/markup structural actions, templates,
   history, extract, and refactor helpers.
 
@@ -453,6 +455,7 @@ coverage against the current file without planning an edit.
 ```bash
 tedit verify-file src/config.json --json
 tedit verify-file README.md
+tedit verify-file src/config.json README.md
 ```
 
 ```bash
@@ -730,14 +733,14 @@ tedit extract src/Page.tsx DailyPlanBody \
 Every mutation result can include quality warnings. Warnings are passive:
 they do not block writes. File-length warnings fire only when an edit crosses
 a configured threshold. JSX/TSX className conflict warnings also surface from
-`verify-file`, edit/mutation results, and compact MCP output when static
-Tailwind-like utilities in the same element target the same configured class
-group or overlapping box axis, such as `w-full w-9`, `p-4 px-2`, or
-`inset-0 top-2`. Non-overlapping axes such as `px-2 py-3`, `gap-x-2 gap-y-4`,
-and `rounded-t rounded-b` are allowed. Text size and text color are split, so
-normal combinations like `text-[10px] text-primary` do not warn. Deliberate
-overrides can use Tailwind's `!` prefix, for example `w-full !w-9`, or project
-config can add or disable groups.
+single-file and multi-file `verify-file`, edit/mutation results, and compact
+MCP output when static Tailwind-like utilities in the same element target the
+same configured class group or overlapping box axis, such as `w-full w-9`,
+`p-4 px-2`, or `inset-0 top-2`. Non-overlapping axes such as `px-2 py-3`,
+`gap-x-2 gap-y-4`, and `rounded-t rounded-b` are allowed. Text size and text
+color are split, so normal combinations like `text-[10px] text-primary` do
+not warn. Deliberate overrides can use Tailwind's `!` prefix, for example
+`w-full !w-9`, or project config can add or disable groups.
 
 Project config lives at `.tedit/config.json` and is discovered by
 walking upward from the target/spec path, falling back to the current

@@ -61,6 +61,18 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(verify.parse_verified, true);
   assert.equal(verify.parser, "json");
 
+  const verifyMany = runMcpTool("verify_file", { files: [workspace.config, workspace.page] });
+  assert.equal(verifyMany.ok, true);
+  assert.equal(verifyMany.success, undefined);
+  assert.equal(verifyMany.kind, "verify-files");
+  assert.equal(verifyMany.count, 2);
+  assert.equal(verifyMany.verifiedCount, 2);
+  assert.equal(verifyMany.files.length, 2);
+  assert.equal(verifyMany.files[0].path, workspace.config);
+  assert.equal(verifyMany.files[0].file, undefined);
+  assert.equal(verifyMany.files[1].path, workspace.page);
+  assert.equal(verifyMany.files[1].parser, "jsx");
+
   const edit = runMcpTool("edit", {
     file: workspace.notes,
     find: "draft",

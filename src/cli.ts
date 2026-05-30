@@ -9,6 +9,7 @@ import {
   verifyParseForFile,
   type BaseEditMutation,
   type BaseFindStrategy,
+  type ParseVerificationFields,
 } from "./base-edit.js";
 import { chainToFlow, fileChainToWorkspaceFlow, parseChainSegments, parseChainText, workspaceChainToFlow } from "./chain.js";
 import type { ImportEditSpec, TextMatchSpec, TextValueSpec, TreeNodeSpec, ValueSpec } from "./core/document.js";
@@ -48,6 +49,8 @@ type ParsedArgs = {
 };
 
 type EditSpec = Record<string, unknown>;
+
+type VerifyFileEntry = { file: string } & ParseVerificationFields & { warnings: QualityWarning[] };
 
 let currentArgs: ParsedArgs | undefined;
 
@@ -877,18 +880,51 @@ function commandVerify(args: ParsedArgs): void {
 }
 
 function commandVerifyFile(args: ParsedArgs): void {
-  const [filePath] = requirePositionals(args, 1, "verify-file <file>");
+  const filePaths = requirePositionals(args, 1, "verify-file <file...>");
+  const result = verifyFilePaths(filePaths);
+  output(args, result, formatVerifyFileResult(result));
+}
+
+function verifyFilePaths(filePaths: string[]): Record<string, unknown> {
+  const files = filePaths.map(verifyFileEntry);
+  if (files.length === 1) {
+    return {
+      success: true,
+      ...files[0],
+    };
+  }
+  return {
+    success: true,
+    kind: "verify-files",
+    files,
+    count: files.length,
+    verifiedCount: files.filter((file) => file.parse_verified === true).length,
+    skippedCount: files.filter((file) => file.parse_skipped === true).length,
+    warningCount: files.reduce((count, file) => count + file.warnings.length, 0),
+  };
+}
+
+function verifyFileEntry(filePath: string): VerifyFileEntry {
   const source = readFileSync(filePath, "utf8");
   const verification = verifyParseForFile(filePath, source);
-  const result = {
-    success: true,
+  return {
     file: filePath,
     ...parseVerificationFields(verification),
     warnings: qualityWarnings(filePath, source, source),
   };
-  output(args, result, verification.verified
-    ? `${filePath}: parse verified (${verification.parser})`
-    : `${filePath}: no parser registered`);
+}
+
+function formatVerifyFileResult(result: Record<string, unknown>): string {
+  if (Array.isArray(result.files)) {
+    const verified = typeof result.verifiedCount === "number" ? result.verifiedCount : 0;
+    const skipped = typeof result.skippedCount === "number" ? result.skippedCount : 0;
+    const count = typeof result.count === "number" ? result.count : result.files.length;
+    const parts = [`${count} files checked`, `${verified} parse verified`];
+    if (skipped > 0) parts.push(`${skipped} skipped`);
+    return parts.join("; ");
+  }
+  if (result.parse_verified === true) return `${result.file}: parse verified (${result.parser})`;
+  return `${result.file}: no parser registered`;
 }
 
 function commandPatch(args: ParsedArgs): void {
@@ -1982,7 +2018,7 @@ Usage:
   tedit multiedit --from-stdin [--summary[=files|edits]|--quiet] [--diff-out <file>] [--dry-run|--write] < edits.json
   tedit verify <edits-json> [--summary[=files|edits]|--quiet] [--diff-out <file>]
   tedit verify --from-stdin [--summary[=files|edits]|--quiet] [--diff-out <file>] < edits.json
-  tedit verify-file <file> [--json]
+  tedit verify-file <file...> [--json]
   tedit patch <patch-file> [--quiet] [--diff-out <file>] [--dry-run|--write]
   tedit patch --from-stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit patch --stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
@@ -2087,9 +2123,9 @@ function shortHelp(command: string): string | null {
       return [
         "tedit verify-file",
         "Usage:",
-        "  tedit verify-file <file> [--json]",
+        "  tedit verify-file <file...> [--json]",
         "",
-        "Runs tedit parse verification for the current file without planning an edit.",
+        "Runs tedit parse verification for one or more current files without planning an edit.",
       ].join("\n");
     case "patch":
       return [

@@ -2583,6 +2583,23 @@ test("verify-file reports current parser coverage", () => {
   assert.equal(text.parse_skipped, true);
   assert.equal(text.parse_skip_reason, "unsupported_extension");
   assert.equal(text.parser, undefined);
+
+  const many = JSON.parse(run(["verify-file", jsonFile, markdownFile, textFile, "--json"]));
+  assert.equal(many.kind, "verify-files");
+  assert.equal(many.count, 3);
+  assert.equal(many.verifiedCount, 2);
+  assert.equal(many.skippedCount, 1);
+  assert.equal(many.files[2].file, textFile);
+  assert.equal(many.files[2].parse_skip_reason, "unsupported_extension");
+
+  const compactMany = JSON.parse(runRaw(["verify-file", jsonFile, markdownFile, textFile]));
+  assert.equal(compactMany.kind, "verify-files");
+  assert.equal(compactMany.count, 3);
+  assert.equal(compactMany.verifiedCount, 2);
+  assert.equal(compactMany.skippedCount, 1);
+  assert.equal(compactMany.files[0].file, undefined);
+  assert.equal(compactMany.files[0].path, jsonFile);
+  assert.equal(compactMany.files[2].parse_skip_reason, "unsupported_extension");
 });
 
 test("verify-file enforces Markdown and YAML lightweight boundaries", () => {

@@ -9,6 +9,7 @@ import {
   verifyParseForFile,
   type BaseEditMutation,
   type BaseFindStrategy,
+  type ParseVerificationFields,
 } from "./base-edit.js";
 import { parseElementShorthand } from "./chain.js";
 import { getOptionalAdapterForFile } from "./core/registry.js";
@@ -48,6 +49,8 @@ export type TeditMcpTool = {
 };
 
 type JsonRecord = Record<string, unknown>;
+
+type VerifyFileEntry = { file: string } & ParseVerificationFields & { warnings: unknown[] };
 
 type SingleStepConfig = {
   name: string;
@@ -373,12 +376,13 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "verify_file",
     title: "Verify File",
-    description: "Verify the current file after native Read or before/after edits; this is parser coverage, not a full-content read replacement.",
+    description: "Verify one or more current files after native Read or before/after edits; this is parser coverage, not a full-content read replacement.",
     category: "discover",
     aliases: ["parse_check", "verify"],
     bestFor: ["checking parser support", "post-edit validation", "distinguishing parse skips from parse failures"],
     inputSchema: {
-      file: fileSchema,
+      file: fileSchema.optional(),
+      files: z.array(fileSchema).optional().describe("Additional target file paths for one call."),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runVerifyFileTool,
@@ -1295,7 +1299,21 @@ function runAnalyzeStateTool(args: unknown): unknown {
 
 function runVerifyFileTool(args: unknown): unknown {
   const input = recordInput(args, "verify_file");
-  const filePath = requiredString(input.file, "verify_file requires file.");
+  const filePaths = verifyFilePathsFromInput(input);
+  if (filePaths.length > 1) {
+    const files = filePaths.map(verifyFileEntry);
+    return withAgentFields({
+      success: true,
+      kind: "verify-files",
+      files,
+      count: files.length,
+      verifiedCount: files.filter((file) => file.parse_verified === true).length,
+      skippedCount: files.filter((file) => file.parse_skipped === true).length,
+      warningCount: files.reduce((count, file) => count + file.warnings.length, 0),
+    }, input);
+  }
+
+  const filePath = filePaths[0];
   const source = readFileSync(filePath, "utf8");
   const verification = verifyParseForFile(filePath, source);
   return withAgentFields({
@@ -1304,6 +1322,23 @@ function runVerifyFileTool(args: unknown): unknown {
     ...parseVerificationFields(verification),
     warnings: qualityWarnings(filePath, source, source),
   }, input);
+}
+
+function verifyFilePathsFromInput(input: JsonRecord): string[] {
+  const filePaths = [...stringArray(input.file, "verify_file file"), ...stringArray(input.files, "verify_file files")];
+  const unique = [...new Set(filePaths)];
+  if (unique.length === 0) fail("INVALID_MCP_INPUT", "verify_file requires file or files.");
+  return unique;
+}
+
+function verifyFileEntry(filePath: string): VerifyFileEntry {
+  const source = readFileSync(filePath, "utf8");
+  const verification = verifyParseForFile(filePath, source);
+  return {
+    file: filePath,
+    ...parseVerificationFields(verification),
+    warnings: qualityWarnings(filePath, source, source),
+  };
 }
 
 function runRefactorStateTool(args: unknown): unknown {

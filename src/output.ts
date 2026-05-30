@@ -221,6 +221,11 @@ function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
     if (Array.isArray(record.warnings) && record.warnings.length > 0) compact.warnings = record.warnings;
     return compact;
   }
+  if (kind === "verify-files") {
+    copyKeys(record, compact, ["count", "verifiedCount", "skippedCount", "warningCount"]);
+    if (Array.isArray(record.files)) compact.files = record.files.map(compactVerifyFileEntry).filter(Boolean);
+    return compact;
+  }
   if (kind === "actions") {
     if (typeof record.file === "string") compact.path = record.file;
     copyKeys(record, compact, ["tools", "advanced_tools", "profiles", "rules", "actions", "guidance"]);
@@ -433,6 +438,7 @@ function payloadSummary(record: JsonRecord, kind: string): string {
   if (kind === "ast-select" && Array.isArray(record.matches)) return String(record.matches.length) + " AST " + plural("match", record.matches.length);
   if (kind === "inspect") return "node inspected";
   if (kind === "verify-file") return parseResultSummary(record);
+  if (kind === "verify-files") return verifyFilesSummary(record);
   if (kind === "actions" && Array.isArray(record.actions)) return String(record.actions.length) + " " + plural("action", record.actions.length) + " available";
   if (kind === "rules" && Array.isArray(record.rules)) return String(record.rules.length) + " " + plural("rule", record.rules.length) + " available";
   if (kind === "analyze-state") {
@@ -452,6 +458,25 @@ function parseResultSummary(record: JsonRecord): string {
     return typeof record.parse_skip_reason === "string" ? "parse skipped (" + record.parse_skip_reason + ")" : "parse skipped";
   }
   return "parse not verified";
+}
+
+function verifyFilesSummary(record: JsonRecord): string {
+  const count = typeof record.count === "number" ? record.count : Array.isArray(record.files) ? record.files.length : 0;
+  const verified = typeof record.verifiedCount === "number" ? record.verifiedCount : 0;
+  const skipped = typeof record.skippedCount === "number" ? record.skippedCount : 0;
+  const parts = [String(count) + " " + plural("file", count) + " checked", String(verified) + " parse verified"];
+  if (skipped > 0) parts.push(String(skipped) + " skipped");
+  return parts.join("; ");
+}
+
+function compactVerifyFileEntry(value: unknown): JsonRecord | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as JsonRecord;
+  if (typeof record.file !== "string") return undefined;
+  const output: JsonRecord = { path: record.file };
+  copyKeys(record, output, ["parse_verified", "parser", "parse_skipped", "parse_skip_reason"]);
+  if (Array.isArray(record.warnings) && record.warnings.length > 0) output.warnings = record.warnings;
+  return output;
 }
 
 function copyKeys(source: JsonRecord, target: JsonRecord, keys: string[]): void {

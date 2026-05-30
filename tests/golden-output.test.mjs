@@ -28,6 +28,53 @@ test("golden: verify-file compact and detailed output contracts", () => {
     parse_verified: true,
     parser: "json",
   });
+
+  const detailedMany = runJson(["verify-file", "config.json", "src/Page.tsx", "--json"], workspace);
+  assert.deepEqual(detailedMany, {
+    success: true,
+    kind: "verify-files",
+    files: [
+      {
+        file: "config.json",
+        parse_verified: true,
+        parser: "json",
+        warnings: [],
+      },
+      {
+        file: "src/Page.tsx",
+        parse_verified: true,
+        parser: "jsx",
+        warnings: [],
+      },
+    ],
+    count: 2,
+    verifiedCount: 2,
+    skippedCount: 0,
+    warningCount: 0,
+  });
+
+  const compactMany = runCompactJson(["verify-file", "config.json", "src/Page.tsx"], workspace);
+  assert.deepEqual(compactMany, {
+    ok: true,
+    kind: "verify-files",
+    summary: "2 files checked; 2 parse verified",
+    count: 2,
+    verifiedCount: 2,
+    skippedCount: 0,
+    warningCount: 0,
+    files: [
+      {
+        path: "config.json",
+        parse_verified: true,
+        parser: "json",
+      },
+      {
+        path: "src/Page.tsx",
+        parse_verified: true,
+        parser: "jsx",
+      },
+    ],
+  });
 });
 
 test("golden: inspect-range compact output contract", () => {
