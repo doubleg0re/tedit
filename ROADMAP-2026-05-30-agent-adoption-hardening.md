@@ -6,6 +6,8 @@ structured output matter.
 
 ## Phase 1. MCP UX And Output Contracts
 
+Status: completed in `tests/mcp-contract.test.mjs`.
+
 Scope:
 
 - Lock compact MCP/CLI output contracts for every default agent-profile tool.
@@ -93,5 +95,4 @@ Before marking a phase complete:
 
 ## Current Next Step
 
-Start with Phase 1 by adding golden coverage for the default agent-profile MCP
-surface and compact output schemas.
+Continue with Phase 2 AST select/edit v1 hardening.

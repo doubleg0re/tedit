@@ -1061,7 +1061,7 @@ function runActionsTool(args: unknown): unknown {
     ...BASE_ACTIONS,
     ...languageRules.flatMap((rule) => rule.actions),
   ])];
-  return {
+  return withAgentFields({
     success: true,
     ...(filePath ? { file: filePath } : {}),
     tools,
@@ -1077,28 +1077,28 @@ function runActionsTool(args: unknown): unknown {
     ],
     actions,
     guidance: mcpDiscoveryGuidance(filePath, languageRules.map((rule) => rule.name)),
-  };
+  }, input);
 }
 
 function runTemplatesTool(args: unknown): unknown {
   const input = optionalRecordInput(args, "templates");
   const cwd = optionalString(input.cwd) ?? process.cwd();
   const templates = listTemplates(cwd);
-  return {
+  return withAgentFields({
     success: true,
     kind: "templates",
     cwd,
     templates,
     count: templates.length,
-  };
+  }, input);
 }
 
 function runInspectRangeTool(args: unknown): unknown {
   const input = recordInput(args, "inspect_range");
-  return inspectRange(requiredString(input.file, "inspect_range requires file."), {
+  return withAgentFields(inspectRange(requiredString(input.file, "inspect_range requires file."), {
     lines: requiredString(input.lines, "inspect_range requires lines."),
     context: input.context === undefined ? 0 : optionalNonnegativeInteger(input.context, "context"),
-  });
+  }), input);
 }
 
 function runSearchTextTool(args: unknown): unknown {
@@ -1107,7 +1107,7 @@ function runSearchTextTool(args: unknown): unknown {
     ? (input.path === undefined ? undefined : [requiredString(input.path, "search_text path must be a string.")])
     : stringArray(input.paths, "paths");
   const maxResults = pick(input, "maxResults", "max_results", "max-results");
-  return searchText({
+  return withAgentFields(searchText({
     query: requiredString(input.query, "search_text requires query."),
     paths,
     regex: booleanValue(input.regex),
@@ -1118,32 +1118,32 @@ function runSearchTextTool(args: unknown): unknown {
     ...(maxResults === undefined ? {} : { maxResults: optionalInteger(maxResults, "maxResults") }),
     caseSensitive: booleanValue(pick(input, "caseSensitive", "case_sensitive", "case-sensitive")),
     includeHidden: booleanValue(pick(input, "includeHidden", "include_hidden", "include-hidden")),
-  });
+  }), input);
 }
 
 function runHistoryTraceTool(args: unknown): unknown {
   const input = recordInput(args, "history_trace");
-  return historyTrace(requiredString(input.file, "history_trace requires file."), {
+  return withAgentFields(historyTrace(requiredString(input.file, "history_trace requires file."), {
     lines: optionalString(input.lines),
     contains: optionalString(input.contains),
     regex: optionalString(input.regex),
     limit: optionalInteger(input.limit, "limit"),
-  });
+  }), input);
 }
 
 function runScanStringsTool(args: unknown): unknown {
   const input = recordInput(args, "scan_strings");
   const minLength = pick(input, "minLength", "min_length", "min-length");
-  return runScanStrings(requiredString(input.file, "scan_strings requires file."), {
+  return withAgentFields(runScanStrings(requiredString(input.file, "scan_strings requires file."), {
     contains: optionalString(input.contains),
     includeExcluded: booleanValue(pick(input, "includeExcluded", "include_excluded", "include-excluded")),
     ...(minLength === undefined ? {} : { minLength: optionalInteger(minLength, "minLength") }),
-  });
+  }), input);
 }
 
 function runAstSelectTool(args: unknown): unknown {
   const input = recordInput(args, "ast_select");
-  return runAstSelect(requiredString(input.file, "ast_select requires file."), requiredString(input.selector, "ast_select requires selector."));
+  return withAgentFields(runAstSelect(requiredString(input.file, "ast_select requires file."), requiredString(input.selector, "ast_select requires selector.")), input);
 }
 
 function runAstEditTool(args: unknown): unknown {
@@ -1255,7 +1255,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
 
 function runAnalyzeStateTool(args: unknown): unknown {
   const input = recordInput(args, "analyze_state");
-  return analyzeState(requiredString(input.file, "analyze_state requires file."));
+  return withAgentFields(analyzeState(requiredString(input.file, "analyze_state requires file.")), input);
 }
 
 function runVerifyFileTool(args: unknown): unknown {
@@ -1263,12 +1263,12 @@ function runVerifyFileTool(args: unknown): unknown {
   const filePath = requiredString(input.file, "verify_file requires file.");
   const source = readFileSync(filePath, "utf8");
   const verification = verifyParseForFile(filePath, source);
-  return {
+  return withAgentFields({
     success: true,
     file: filePath,
     ...parseVerificationFields(verification),
     warnings: qualityWarnings(filePath, source, source),
-  };
+  }, input);
 }
 
 function runRefactorStateTool(args: unknown): unknown {

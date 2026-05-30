@@ -216,13 +216,14 @@ function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
   }
   if (kind === "verify-file") {
     if (typeof record.file === "string") compact.path = record.file;
-    copyKeys(record, compact, ["parse_verified", "parser", "parse_skipped", "parse_skip_reason"]);
+    const { success: _success, file: _file, summary: _summary, warnings: _warnings, ...payload } = record;
+    Object.assign(compact, payload);
     if (Array.isArray(record.warnings) && record.warnings.length > 0) compact.warnings = record.warnings;
     return compact;
   }
   if (kind === "actions") {
     if (typeof record.file === "string") compact.path = record.file;
-    copyKeys(record, compact, ["tools", "rules", "actions", "guidance"]);
+    copyKeys(record, compact, ["tools", "advanced_tools", "profiles", "rules", "actions", "guidance"]);
     return compact;
   }
   if (kind === "rules") {
