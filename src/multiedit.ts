@@ -46,7 +46,7 @@ export function parseMultieditInput(input: string): unknown[] {
   } catch (error) {
     fail("INVALID_MULTIEDIT", "multiedit input must be valid JSON.", {
       parser_error: error instanceof Error ? error.message : String(error),
-      next: [
+      suggestions: [
         "Validate stdin as JSON before piping it to tedit multiedit.",
         "Pass an edits array or an object shaped like {\"edits\":[...]}.",
       ],
@@ -67,7 +67,7 @@ function multieditShapeDetails(root: unknown): Record<string, unknown> {
     if (nested && typeof nested === "object" && !Array.isArray(nested) && Array.isArray((nested as { edits?: unknown }).edits)) {
       return {
         detected: "search-text-result",
-        next: [
+        suggestions: [
           "Pass the nested multiedit object, e.g. jq '.multiedit' | tedit multiedit --from-stdin --dry-run.",
         ],
       };
@@ -75,7 +75,7 @@ function multieditShapeDetails(root: unknown): Record<string, unknown> {
   }
   return {
     expected: "array or object with edits array",
-    next: ["Pass an edits array or an object shaped like {\"edits\":[...]}."],
+    suggestions: ["Pass an edits array or an object shaped like {\"edits\":[...]}."],
   };
 }
 

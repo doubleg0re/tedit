@@ -57,8 +57,8 @@ test("ast edit failures return bounded retry guidance", () => {
   assert.equal(duplicate.status, 1);
   assert.equal(duplicate.body.code, "AST_MATCH_NOT_UNIQUE");
   assert.equal(duplicate.body.details.matches.length, 2);
-  assert.ok(duplicate.body.next.length <= 3);
-  assert.match(duplicate.body.next[0], /Narrow/);
+  assert.ok(duplicate.body.suggestions.length <= 3);
+  assert.match(duplicate.body.suggestions[0], /Narrow/);
 
   const jsxFile = join(dir, "jsx.tsx");
   writeFileSync(jsxFile, "export function Page() { return <button>저장</button>; }\n");
@@ -66,7 +66,7 @@ test("ast edit failures return bounded retry guidance", () => {
   assert.equal(none.status, 1);
   assert.equal(none.body.code, "AST_MATCH_NONE");
   assert.equal(none.body.details.candidates[0].kind, "jsx_text");
-  assert.match(none.body.next[0], /JSXText/);
+  assert.match(none.body.suggestions[0], /JSXText/);
 });
 
 function runJson(args) {

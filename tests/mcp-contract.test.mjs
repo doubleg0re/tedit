@@ -36,7 +36,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(inspect.file, workspace.page);
   assert.equal(inspect.lines.length, 3);
   assert.equal(inspect.parser, "jsx");
-  assert.equal(inspect.next[0].tool, "edit");
+  assert.equal(inspect.suggestions[0].tool, "edit");
 
   const search = runMcpTool("search_text", {
     query: "삭제",

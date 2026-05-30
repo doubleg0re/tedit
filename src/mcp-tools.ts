@@ -1237,11 +1237,11 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { when: "need change history before risky edit", first_tool: "history_trace", then: "inspect_range or edit", reason: "history_trace avoids hand-assembling blame/log commands" },
     ],
     failure_recovery: [
-      { code: "MATCH_NONE", next: "Use returned candidates, search_text, or inspect_range; retry with findLines/fuzzy/regex only after inspecting context." },
-      { code: "MATCH_NOT_UNIQUE", next: "Use returned candidate line ranges or add expectCount when replaceAll is intended." },
-      { code: "PARSE_BROKEN_AFTER_EDIT", next: "Do not force write; inspect the proposed replacement and keep syntax balanced before retrying." },
-      { code: "AST_MATCH_NONE", next: "Use scan_strings candidates or switch selector type, for example JSXText instead of StringLiteral." },
-      { code: "PATCH_HUNK_FAILED", next: "Inspect current file context and regenerate the hunk against the current source." },
+      { code: "MATCH_NONE", suggestion: "Use returned candidates, search_text, or inspect_range; retry with findLines/fuzzy/regex only after inspecting context." },
+      { code: "MATCH_NOT_UNIQUE", suggestion: "Use returned candidate line ranges or add expectCount when replaceAll is intended." },
+      { code: "PARSE_BROKEN_AFTER_EDIT", suggestion: "Do not force write; inspect the proposed replacement and keep syntax balanced before retrying." },
+      { code: "AST_MATCH_NONE", suggestion: "Use scan_strings candidates or switch selector type, for example JSXText instead of StringLiteral." },
+      { code: "PATCH_HUNK_FAILED", suggestion: "Inspect current file context and regenerate the hunk against the current source." },
     ],
     edit_loop: [
       { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },

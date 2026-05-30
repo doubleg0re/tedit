@@ -77,7 +77,7 @@ export abstract class BaseTreeDocument<TPath> {
         selector: target,
         matches: matches.map(({ id, name, loc, preview }) => ({ id, name, loc, preview })),
         selector_candidates: selectorCandidates,
-        ...(selectorCandidates.length > 0 ? { next: selectorCandidates.map((candidate) => "Retry with selector " + candidate.selector + ".") } : {}),
+        ...(selectorCandidates.length > 0 ? { suggestions: selectorCandidates.map((candidate) => "Retry with selector " + candidate.selector + ".") } : {}),
         next_step_hint: "Retry with a selector candidate or inspect matches by id before mutating.",
       });
     }

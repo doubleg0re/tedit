@@ -171,7 +171,7 @@ loop is:
 
 Failure responses are part of the workflow: `MATCH_NONE`,
 `MATCH_NOT_UNIQUE`, `PARSE_BROKEN_AFTER_EDIT`, `AST_MATCH_NONE`, and
-`PATCH_HUNK_FAILED` include bounded `next` hints so an agent can inspect,
+`PATCH_HUNK_FAILED` include bounded `suggestions` so an agent can inspect,
 narrow, or retry without guessing.
 
 Set `TEDIT_MCP_PROFILE=all` (or `TEDIT_MCP_EXPOSE_ADVANCED=true`) to expose
@@ -212,7 +212,7 @@ and return `files[].diff.path`. Pass `output: "detailed"` or
 `includeDetails: true` to retrieve legacy full results and write-policy
 diagnostics. Failures use the same structured tedit fields where possible,
 including `ok: false`, `kind: "error"`, `code`, `error`, and actionable
-`next` hints. Verbose failure details remain available through detailed output.
+`suggestions`. Verbose failure details remain available through detailed output.
 
 ## Best Fit
 
@@ -243,10 +243,11 @@ a simple `--glob` filter (`*`, `**`, `?`, and comma braces such as
 `**/*.{ts,tsx}`; spaces around brace alternatives are ignored), can include
 nearby lines with `--context`, and returns candidates with `file`, `path`,
 `match`, `range.line`, `range.column`, `preview`, `context`, `suggested`, and
-`next` fields. `next.tool` uses MCP tool names such as `inspect_range`; when the
-CLI spelling differs, `next.cliCommand` provides the matching CLI command such
-as `inspect-range`. Use `rg` for broad exploratory search, and use
-`search-text` when the next step is likely a tedit edit.
+`suggestions` fields. `suggestions[].tool` uses MCP tool names such as
+`inspect_range`; when the CLI spelling differs, `suggestions[].cliCommand`
+provides the matching CLI command such as `inspect-range`. Use `rg` for broad
+exploratory search, and use `search-text` when the next step is likely a tedit
+edit.
 
 Pass `--multiedit-spec` to include a file-grouped `multiedit` draft. With
 `--replace`, each searched file gets one `findExact` or `findRegex` edit with
@@ -482,7 +483,7 @@ tedit edit styles.css --find-regex '\bred\b' --replace blue --replace-all --expe
 When exact matching fails, `tedit` tries a whitespace-insensitive fuzzy
 fallback only for diagnostics. A single fuzzy candidate returns
 `MATCH_FUZZY_ONLY` instead of guessing; the JSON error includes structured
-`retry_hints` and top-level `next` entries such as `--find-fuzzy` or
+`retry_hints` and top-level `suggestions` such as `--find-fuzzy` or
 `--find-lines` so agents can retry deterministically. Opt in with
 `--find-fuzzy`:
 

@@ -156,8 +156,8 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   assert.equal(search.results[0].suggested.tool, "edit");
   assert.equal(search.results[0].suggested.findLines, "2");
   assert.match(search.results[0].suggested.replaceHint, /trailing newline/);
-  assert.equal(search.results[0].next[0].tool, "inspect_range");
-  assert.equal(search.results[0].next[0].cliCommand, "inspect-range");
+  assert.equal(search.results[0].suggestions[0].tool, "inspect_range");
+  assert.equal(search.results[0].suggestions[0].cliCommand, "inspect-range");
 
   const braceGlobSearch = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.{tsx, ts}", "--multiedit-spec", "--replace", "Delete", "--json"]));
   assert.equal(braceGlobSearch.count, 2);
@@ -421,7 +421,7 @@ test("ambiguous selector fails with a stable error code", () => {
   assert.equal(failed.body.code, "AMBIGUOUS_SELECTOR");
   assert.match(failed.body.error, /matched 3 nodes/);
   assert.deepEqual(failed.body.details.selector_candidates.map((candidate) => candidate.selector), ["#intro", "section.summary-card", 'section[data-testid="details"]']);
-  assert.deepEqual(failed.body.next, ["Retry with selector #intro.", "Retry with selector section.summary-card.", 'Retry with selector section[data-testid="details"].']);
+  assert.deepEqual(failed.body.suggestions, ["Retry with selector #intro.", "Retry with selector section.summary-card.", 'Retry with selector section[data-testid="details"].']);
 });
 
 test("selector failures include base literal candidates", () => {
@@ -617,7 +617,7 @@ test("unsupported selector pseudos fail with actionable diagnostics", () => {
   assert.match(pseudoElement.body.error, /Unsupported pseudo-element ::before/);
 });
 
-test("agent-facing diagnostics include rule hints next steps and snippets", () => {
+test("agent-facing diagnostics include rule hints suggestions and snippets", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const html = join(dir, "index.html");
   const yaml = join(dir, "config.yaml");
@@ -630,20 +630,20 @@ test("agent-facing diagnostics include rule hints next steps and snippets", () =
   assert.equal(missing.body.code, "NODE_NOT_FOUND");
   assert.equal(missing.body.details.rule, "markup");
   assert.match(missing.body.details.selector_hint, /:has/);
-  assert.match(missing.body.next[0], /tedit inspect/);
+  assert.match(missing.body.suggestions[0], /tedit inspect/);
 
   const unsupported = runFail(["class", "add", yaml, "root", "highlight", "--json"]);
   assert.equal(unsupported.body.code, "UNSUPPORTED_ACTION");
   assert.equal(unsupported.body.details.rule, "yaml");
   assert.match(unsupported.body.details.capability_hint, /yaml supports:/);
-  assert.match(unsupported.body.next[0], /tedit actions/);
+  assert.match(unsupported.body.suggestions[0], /tedit actions/);
 
   const parseFailure = runFail(["verify-file", badYaml, "--json"]);
   assert.equal(parseFailure.body.code, "PARSE_BROKEN_AFTER_EDIT");
   assert.equal(parseFailure.body.details.rule, "yaml-lite");
   assert.equal(parseFailure.body.details.line, 2);
   assert.equal(parseFailure.body.details.snippet, "name: two");
-  assert.match(parseFailure.body.next[0], /reported line/);
+  assert.match(parseFailure.body.suggestions[0], /reported line/);
 });
 
 test("class actions add remove and replace static className tokens", () => {
@@ -2046,8 +2046,8 @@ test("mcp server lists tools and runs universal edit", async () => {
       arguments: { file, find: "missing value", replace: "ignored" },
     });
     assert.equal(failedEdit.isError, true);
-    assert.ok(Array.isArray(failedEdit.structuredContent.next));
-    assert.ok(failedEdit.structuredContent.next.length > 0);
+    assert.ok(Array.isArray(failedEdit.structuredContent.suggestions));
+    assert.ok(failedEdit.structuredContent.suggestions.length > 0);
 
     const fuzzyMiss = await client.callTool({
       name: "edit",
@@ -2055,7 +2055,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(fuzzyMiss.isError, true);
     assert.equal(fuzzyMiss.structuredContent.code, "MATCH_FUZZY_ONLY");
-    assert.match(fuzzyMiss.structuredContent.next[0], /--find-fuzzy/);
+    assert.match(fuzzyMiss.structuredContent.suggestions[0], /--find-fuzzy/);
 
     const fuzzyRetry = await client.callTool({
       name: "edit",
@@ -2323,7 +2323,7 @@ test("base edit reports ambiguous exact matches with candidates", () => {
   assert.equal(failed.body.code, "MATCH_NOT_UNIQUE");
   assert.equal(failed.body.details.matches.length, 2);
   assert.deepEqual(failed.body.details.retry_hints.filter((hint) => hint.kind === "find-lines").map((hint) => hint.findLines), ["1", "3"]);
-  assert.deepEqual(failed.body.next.slice(0, 2), ["Retry candidate 1 with --find-lines 1.", "Retry candidate 2 with --find-lines 3."]);
+  assert.deepEqual(failed.body.suggestions.slice(0, 2), ["Retry candidate 1 with --find-lines 1.", "Retry candidate 2 with --find-lines 3."]);
   assert.match(readFileSync(file, "utf8"), /Button\nSpacer\nButton/);
 });
 
@@ -2343,7 +2343,7 @@ test("base edit exact failure surfaces a fuzzy-only diagnostic without writing",
   assert.equal(failed.body.details.retry_hints[0].kind, "find-fuzzy");
   assert.equal(failed.body.details.retry_hints[0].findFuzzy, "function save( value )");
   assert.equal(failed.body.details.retry_hints[1].findLines, "1:3");
-  assert.deepEqual(failed.body.next, [
+  assert.deepEqual(failed.body.suggestions, [
     'Retry with --find-fuzzy "function save( value )" using the same mutation.',
     "Retry candidate 1 with --find-lines 1:3."
   ]);
@@ -2364,7 +2364,7 @@ test("base edit exact miss surfaces near candidates and retry hints", () => {
   assert.match(failed.body.details.near_candidates[0].preview, /Hello world/);
   assert.equal(failed.body.details.retry_hints[0].kind, "find-lines");
   assert.equal(failed.body.details.retry_hints[0].findLines, "1");
-  assert.equal(failed.body.next[0], "Retry near candidate 1 with --find-lines 1.");
+  assert.equal(failed.body.suggestions[0], "Retry near candidate 1 with --find-lines 1.");
   assert.equal(readFileSync(file, "utf8"), "Hello world\nStatus: pending\n");
 });
 
@@ -2780,7 +2780,7 @@ test("edit summary mode omits dry-run diffs", () => {
   assert.equal(readFileSync(file, "utf8"), "old\n");
 });
 
-test("edit summary mode reports failures tersely with next hints", () => {
+test("edit summary mode reports failures tersely with suggestions", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "notes.txt");
   writeFileSync(file, "Hello world\n");
@@ -3045,7 +3045,7 @@ test("cli non-tty failures use compact error output", () => {
   assert.equal(body.code, "MATCH_NONE");
   assert.match(body.summary, /No match found/);
   assert.equal(body.details, undefined);
-  assert.equal(body.next[0], "Retry near candidate 1 with --find-lines 1.");
+  assert.equal(body.suggestions[0], "Retry near candidate 1 with --find-lines 1.");
 });
 
 test("edit quiet mode suppresses stdout while diff-out captures detail", () => {
@@ -3168,7 +3168,7 @@ test("multiedit expectCount and final TSX parse failures prevent writes", () => 
   }));
   assert.equal(countFailed.status, 1);
   assert.equal(countFailed.body.code, "MATCH_COUNT_MISMATCH");
-  assert.equal(countFailed.body.next[0], "If the observed 2 match(es) are intended, retry with --expect-count 2.");
+  assert.equal(countFailed.body.suggestions[0], "If the observed 2 match(es) are intended, retry with --expect-count 2.");
   assert.equal(readFileSync(textFile, "utf8"), "red red\n");
 
   const parseFailed = runFail(["multiedit", "--from-stdin", "--write"], JSON.stringify({

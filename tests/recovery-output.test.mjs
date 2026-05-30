@@ -16,14 +16,14 @@ test("recovery: compact match errors include bounded retry hints", () => {
   assert.equal(none.body.kind, "error");
   assert.equal(none.body.code, "MATCH_NONE");
   assert.equal(none.body.details, undefined);
-  assert.equal(none.body.next[0], "Retry near candidate 1 with --find-lines 1.");
-  assert.ok(none.body.next.length <= 3);
+  assert.equal(none.body.suggestions[0], "Retry near candidate 1 with --find-lines 1.");
+  assert.ok(none.body.suggestions.length <= 3);
 
   const ambiguous = runFail(["edit", "notes.txt", "--find", "Hello world", "--replace", "x", "--dry-run"], dir);
   assert.equal(ambiguous.status, 1);
   assert.equal(ambiguous.body.code, "MATCH_NOT_UNIQUE");
-  assert.equal(ambiguous.body.next[0], "Retry candidate 1 with --find-lines 1.");
-  assert.ok(ambiguous.body.next.length <= 3);
+  assert.equal(ambiguous.body.suggestions[0], "Retry candidate 1 with --find-lines 1.");
+  assert.ok(ambiguous.body.suggestions.length <= 3);
 });
 
 test("recovery: compact multiedit errors explain the expected input shape", () => {
@@ -33,7 +33,7 @@ test("recovery: compact multiedit errors explain the expected input shape", () =
   assert.equal(invalidJson.status, 1);
   assert.equal(invalidJson.body.ok, false);
   assert.equal(invalidJson.body.code, "INVALID_MULTIEDIT");
-  assert.deepEqual(invalidJson.body.next, [
+  assert.deepEqual(invalidJson.body.suggestions, [
     "Validate stdin as JSON before piping it to tedit multiedit.",
     "Pass an edits array or an object shaped like {\"edits\":[...]}.",
   ]);
@@ -44,7 +44,7 @@ test("recovery: compact multiedit errors explain the expected input shape", () =
   }));
   assert.equal(searchResultShape.status, 1);
   assert.equal(searchResultShape.body.code, "INVALID_MULTIEDIT");
-  assert.match(searchResultShape.body.next[0], /\.multiedit/);
+  assert.match(searchResultShape.body.suggestions[0], /\.multiedit/);
 });
 
 test("recovery: compact patch hunk failures point to current context", () => {
@@ -61,12 +61,12 @@ test("recovery: compact patch hunk failures point to current context", () => {
   assert.equal(failed.status, 1);
   assert.equal(failed.body.ok, false);
   assert.equal(failed.body.code, "PATCH_HUNK_FAILED");
-  assert.match(failed.body.next[0], /tedit inspect-range "notes\.txt" --lines 1:1 --context 3 --json/);
-  assert.ok(failed.body.next.length <= 3);
+  assert.match(failed.body.suggestions[0], /tedit inspect-range "notes\.txt" --lines 1:1 --context 3 --json/);
+  assert.ok(failed.body.suggestions.length <= 3);
   assert.equal(readFileSync(join(dir, "notes.txt"), "utf8"), "Hello world\nbeta\nHello world\n");
 });
 
-test("recovery: compact parse failures keep a concrete next step", () => {
+test("recovery: compact parse failures keep a concrete suggestion", () => {
   const dir = createWorkspace();
 
   const failed = runFail([
@@ -81,7 +81,7 @@ test("recovery: compact parse failures keep a concrete next step", () => {
   assert.equal(failed.status, 1);
   assert.equal(failed.body.ok, false);
   assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
-  assert.equal(failed.body.next[0], "Inspect the reported line, fix the syntax, then rerun the same tedit command.");
+  assert.equal(failed.body.suggestions[0], "Inspect the reported line, fix the syntax, then rerun the same tedit command.");
   assert.equal(failed.body.details, undefined);
 });
 

@@ -48,7 +48,7 @@ export function historyTrace(filePath: string, options: HistoryTraceOptions = {}
     commits,
     blame,
     commands,
-    next: [
+    suggestions: [
       ...(mode === "lines" ? [{ tool: "inspect_range", cliCommand: "inspect-range", arguments: { file, lines: options.lines, context: 3 } }] : []),
       { tool: "git", command: commands.log },
     ],

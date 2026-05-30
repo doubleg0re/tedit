@@ -353,7 +353,7 @@ function applyPatchToSource(source: string, patch: ParsedPatchFile): string {
           expected: line.text,
           actual: sourceLine === undefined ? null : stripEol(sourceLine),
           old_start: hunk.oldStart,
-          next: patchRecoveryNext(patch.file, hunk.oldStart),
+          suggestions: patchRecoveryNext(patch.file, hunk.oldStart),
         });
       }
 
@@ -396,7 +396,7 @@ function findContextualHunkStart(lines: string[], hunk: PatchHunk, patch: Parsed
       file: patch.file,
       hunk: hunkIndex,
       matches,
-      next: [
+      suggestions: [
         "Regenerate the patch with more surrounding context.",
         "For a small change, use tedit edit/multiedit with an exact current snippet.",
       ],
@@ -407,7 +407,7 @@ function findContextualHunkStart(lines: string[], hunk: PatchHunk, patch: Parsed
     hunk: hunkIndex,
     expected: expected[0],
     actual: null,
-    next: patchRecoveryNext(patch.file, hunk.oldStart),
+    suggestions: patchRecoveryNext(patch.file, hunk.oldStart),
   });
 }
 

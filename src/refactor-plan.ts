@@ -263,7 +263,7 @@ function applyRefactorStatePlan(planPath: string, plan: RefactorStatePlanFile, o
     fail("PLAN_PARTIAL_UNSUPPORTED", "refactor-state plans must be applied as a whole because source and hook changes are coupled.", {
       selected: [...selected],
       required_steps: plan.steps.map((step) => step.id),
-      next: ["Apply the plan without --only/--skip, or regenerate a narrower refactor-state plan."],
+      suggestions: ["Apply the plan without --only/--skip, or regenerate a narrower refactor-state plan."],
     });
   }
 

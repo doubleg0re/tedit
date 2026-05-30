@@ -1529,9 +1529,9 @@ function formatEditFailureSummary(result: ErrorResult, args: ParsedArgs): string
     "  " + file + "  FAIL - " + summarizeFailureReason(result),
     "result: failure - " + result.code + ": " + result.error,
   ];
-  if (result.next && result.next.length > 0) {
-    lines.push("next:");
-    lines.push(...result.next.map((hint) => "  - " + hint));
+  if (result.suggestions && result.suggestions.length > 0) {
+    lines.push("suggestions:");
+    lines.push(...result.suggestions.map((hint) => "  - " + hint));
   }
   return lines.join("\n");
 }

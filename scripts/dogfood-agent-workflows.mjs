@@ -25,7 +25,7 @@ const search = runJson([
 assert.equal(search.kind, "search-text");
 assert.equal(search.count, 4);
 assert.equal(search.multiedit.edits.length, 2);
-assert.equal(search.results[0].next[0].cliCommand, "inspect-range");
+assert.equal(search.results[0].suggestions[0].cliCommand, "inspect-range");
 
 const wrongMultieditInput = runFail(["multiedit", "--from-stdin", "--dry-run", "--json"], {
   input: JSON.stringify(search),
@@ -33,7 +33,7 @@ const wrongMultieditInput = runFail(["multiedit", "--from-stdin", "--dry-run", "
 assert.equal(wrongMultieditInput.status, 1);
 assert.equal(wrongMultieditInput.body.code, "INVALID_MULTIEDIT");
 assert.equal(wrongMultieditInput.body.details.detected, "search-text-result");
-assert.match(wrongMultieditInput.body.next[0], /\.multiedit/);
+assert.match(wrongMultieditInput.body.suggestions[0], /\.multiedit/);
 
 const dryRun = runCompactJson(["multiedit", "--from-stdin", "--dry-run"], {
   input: JSON.stringify(search.multiedit),
@@ -94,8 +94,8 @@ assert.ok(history.commits.some((commit) => commit.subject === "apply dogfood cha
 const missing = runFail(["edit", "src/Page.tsx", "--find", "does-not-exist", "--replace", "Nope", "--dry-run", "--json"]);
 assert.equal(missing.status, 1);
 assert.equal(missing.body.code, "MATCH_NONE");
-assert.ok(Array.isArray(missing.body.next));
-assert.ok(missing.body.next.length > 0);
+assert.ok(Array.isArray(missing.body.suggestions));
+assert.ok(missing.body.suggestions.length > 0);
 
 console.log(JSON.stringify({
   ok: true,

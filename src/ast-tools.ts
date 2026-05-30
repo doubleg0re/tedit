@@ -128,7 +128,7 @@ export function runAstEdit(filePath: string, options: AstEditOptions): JsonRecor
     fail("AST_MATCH_NONE", `No AST node matched "${selector}".`, {
       selector,
       ...(candidateHints.length > 0 ? { candidates: candidateHints } : {}),
-      next: [
+      suggestions: [
         ...(candidateHints[0]?.suggested?.selector ? [`Try selector ${JSON.stringify(String(candidateHints[0].suggested.selector))}.`] : []),
         "Run tedit ast-select with the same selector to inspect matches.",
         "Use tedit scan-strings to locate string candidates first.",
@@ -139,7 +139,7 @@ export function runAstEdit(filePath: string, options: AstEditOptions): JsonRecor
     fail("AST_MATCH_NOT_UNIQUE", `AST selector matched ${paths.length} nodes; ast-edit requires exactly one.`, {
       selector,
       matches: paths.slice(0, 10).map((path, index) => astMatchForPath(`ast_${index + 1}`, filePath, source, parsed, path)),
-      next: [
+      suggestions: [
         "Narrow the selector until ast-select returns one editable node.",
         "Add a [value=...] or [value*=...] filter when replacing string targets.",
       ],
@@ -153,7 +153,7 @@ export function runAstEdit(filePath: string, options: AstEditOptions): JsonRecor
       selector,
       match,
       supported: ["StringLiteral", "JSXText", "JSXAttribute with a string value", "ObjectProperty with a string value", "TemplateLiteral without expressions"],
-      next: [
+      suggestions: [
         "Select an editable child string node, for example CallExpression[...] > StringLiteral.",
         "Run scan-strings to find editable string candidates first.",
       ],

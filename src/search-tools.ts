@@ -56,7 +56,7 @@ type SearchCandidate = {
   preview: string;
   context?: SearchContext;
   suggested: JsonRecord;
-  next: JsonRecord[];
+  suggestions: JsonRecord[];
 };
 
 type MultieditSpec = {
@@ -100,7 +100,7 @@ export function inspectRange(filePath: string, options: InspectRangeOptions): Js
       findLines: `${requested.start}:${requested.end}`,
       replaceHint: "findLines replaces whole lines; include the trailing newline unless replacing the final line.",
     },
-    next: [
+    suggestions: [
       { tool: "edit", arguments: { file: filePath, findLines: `${requested.start}:${requested.end}`, replace: "<replacement including trailing newline>" } },
     ],
   };
@@ -257,7 +257,7 @@ function candidateForMatch(index: number, filePath: string, source: string, line
       findLines: range.lineRange,
       replaceHint: "findLines replaces whole lines; include the trailing newline unless replacing the final line.",
     },
-    next: [
+    suggestions: [
       { tool: "inspect_range", cliCommand: "inspect-range", arguments: { file: filePath, lines: range.lineRange, context: context > 0 ? context : 3 } },
       { tool: "edit", arguments: { file: filePath, findLines: range.lineRange, replace: "<replacement including trailing newline>" } },
     ],

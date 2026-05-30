@@ -135,7 +135,7 @@ export function planBaseEdit(options: BaseEditOptions): BaseEditPlan {
       matches: summarizeMatches(options.source, matches),
       retry_hints: retryHints,
       suggestions: countSuggestions(matches.length),
-      next: recoveryNext(retryHints),
+      recovery_suggestions: recoveryNext(retryHints),
       next_step_hint: "Adjust --expect-count, narrow the match, or use --replace-all intentionally.",
     });
   }
@@ -147,7 +147,7 @@ export function planBaseEdit(options: BaseEditOptions): BaseEditPlan {
       matches: summarizeMatches(options.source, matches),
       retry_hints: retryHints,
       suggestions: notUniqueSuggestions(matches.length),
-      next: recoveryNext(retryHints),
+      recovery_suggestions: recoveryNext(retryHints),
       next_step_hint: "Re-run with a narrower strategy or pass --replace-all if every match is intended.",
     });
   }
@@ -208,7 +208,7 @@ function failNoMatch(options: BaseEditOptions): never {
           "Re-run with --find-fuzzy to accept a whitespace-insensitive match.",
           "Use --find-lines N:M if the exact source range is already known.",
         ],
-        next: recoveryNext(retryHints),
+        recovery_suggestions: recoveryNext(retryHints),
         next_step_hint: "tedit refused to guess. Choose the fuzzy match explicitly or provide more context.",
       });
     }
@@ -221,7 +221,7 @@ function failNoMatch(options: BaseEditOptions): never {
         fuzzy_candidates: fuzzyCandidateHints(options.source, options.strategy.pattern, fuzzyMatches),
         retry_hints: retryHints,
         suggestions: notUniqueSuggestions(fuzzyMatches.length),
-        next: recoveryNext(retryHints),
+        recovery_suggestions: recoveryNext(retryHints),
         next_step_hint: "Use an anchor, a line range, or a more specific literal.",
       });
     }
@@ -233,7 +233,7 @@ function failNoMatch(options: BaseEditOptions): never {
     tried_strategy: describeStrategy(options.strategy),
     matches: [],
     ...(nearCandidates.length > 0 ? { near_candidates: nearCandidates } : {}),
-    ...(retryHints.length > 0 ? { retry_hints: retryHints, next: recoveryNext(retryHints) } : {}),
+    ...(retryHints.length > 0 ? { retry_hints: retryHints, recovery_suggestions: recoveryNext(retryHints) } : {}),
     suggestions: noMatchSuggestions(nearCandidates.length),
     next_step_hint: nearCandidates.length > 0
       ? "Inspect the near candidates, then retry with --find-lines or correct the find text."

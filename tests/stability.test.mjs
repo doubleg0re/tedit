@@ -31,8 +31,8 @@ test("stability: agent workflow keeps compact and detailed output contracts", ()
   assert.equal(detailedSearch.ok, undefined);
   assert.equal(detailedSearch.count, 3);
   assert.equal(detailedSearch.results[0].range.line, 2);
-  assert.equal(detailedSearch.results[0].next[0].tool, "inspect_range");
-  assert.equal(detailedSearch.results[0].next[0].cliCommand, "inspect-range");
+  assert.equal(detailedSearch.results[0].suggestions[0].tool, "inspect_range");
+  assert.equal(detailedSearch.results[0].suggestions[0].cliCommand, "inspect-range");
   assert.equal(detailedSearch.multiedit.edits.length, 2);
 
   const compactSearch = JSON.parse(runCompact(["search-text", "삭제", "src", "--glob", "src/{components, utils}/*.{tsx, ts}"], { cwd: dir }));
@@ -88,7 +88,7 @@ test("stability: search-text full result piped to multiedit gives recovery hint"
   assert.equal(failed.status, 1);
   assert.equal(failed.body.code, "INVALID_MULTIEDIT");
   assert.equal(failed.body.details.detected, "search-text-result");
-  assert.match(failed.body.next[0], /\.multiedit/);
+  assert.match(failed.body.suggestions[0], /\.multiedit/);
 });
 
 function fixtureWorkspace() {

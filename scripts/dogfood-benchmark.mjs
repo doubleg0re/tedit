@@ -129,13 +129,13 @@ function scenarioPatchAndFileWrite() {
 function scenarioRecoveryAndGuardrails() {
   const missing = runFailCompact(["edit", "src/Page.tsx", "--find", "does-not-exist", "--replace", "Nope"]);
   assert.equal(missing.body.code, "MATCH_NONE");
-  assert.ok(missing.body.next.length > 0);
-  metrics.retryHints += missing.body.next.length;
+  assert.ok(missing.body.suggestions.length > 0);
+  metrics.retryHints += missing.body.suggestions.length;
 
   const astMiss = runFailCompact(["ast-edit", "src/Ast.tsx", 'StringLiteral[value*="Save"]', "--replace", "Saved"]);
   assert.equal(astMiss.body.code, "AST_MATCH_NONE");
-  assert.ok(astMiss.body.next[0].includes("JSXText"));
-  metrics.retryHints += astMiss.body.next.length;
+  assert.ok(astMiss.body.suggestions[0].includes("JSXText"));
+  metrics.retryHints += astMiss.body.suggestions.length;
 
   const broken = join(workspace, "broken.md");
   const original = "# Broken\n\n```ts\nconst ok = true;\n```\n";

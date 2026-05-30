@@ -115,6 +115,7 @@ export function formatAgentResult(result: unknown, options: OutputOptions = {}):
 export function detailedAgentResult(record: JsonRecord, options: OutputOptions = {}): JsonRecord {
   const files = agentFilesFromRecord(record);
   const next = agentNextSteps(record, files, options);
+  const suggestions = agentSuggestions(record);
   const nextRecord: JsonRecord = {
     ...record,
     ok: record.success !== false,
@@ -124,6 +125,7 @@ export function detailedAgentResult(record: JsonRecord, options: OutputOptions =
   else if (files.length > 0) nextRecord.files = files;
   if (next.length > 0) nextRecord.next = next;
   else delete nextRecord.next;
+  if (suggestions.length > 0) nextRecord.suggestions = suggestions;
   if (options.includeDiffs) nextRecord.diffs = collectDiffs(record);
   return nextRecord;
 }
@@ -138,6 +140,7 @@ export function compactAgentResult(record: JsonRecord, options: OutputOptions = 
 
 function compactMutationResult(record: JsonRecord, files: AgentFileSummary[], options: OutputOptions): JsonRecord {
   const next = agentNextSteps(record, files, options);
+  const suggestions = agentSuggestions(record);
   const compact: JsonRecord = {
     ok: true,
     kind: "mutation",
@@ -163,12 +166,13 @@ function compactMutationResult(record: JsonRecord, files: AgentFileSummary[], op
   if (guardrails.length > 0) compact.guardrails = guardrails;
   if (typeof record.plan === "string") compact.plan = record.plan;
   if (next.length > 0) compact.next = next;
+  if (suggestions.length > 0) compact.suggestions = suggestions;
   if (effectiveDiffMode(options) === "full" && options.includeDiffs) compact.diffs = collectDiffs(record);
   return compact;
 }
 
 function compactErrorResult(record: JsonRecord, files: AgentFileSummary[], options: OutputOptions): JsonRecord {
-  const next = agentNextSteps(record, files, options);
+  const suggestions = agentSuggestions(record);
   const compact: JsonRecord = {
     ok: false,
     kind: "error",
@@ -177,7 +181,7 @@ function compactErrorResult(record: JsonRecord, files: AgentFileSummary[], optio
   if (typeof record.code === "string") compact.code = record.code;
   if (typeof record.error === "string") compact.error = record.error;
   if (options.includeDetails && record.details !== undefined) compact.details = record.details;
-  if (next.length > 0) compact.next = next;
+  if (suggestions.length > 0) compact.suggestions = suggestions;
   return compact;
 }
 
@@ -193,7 +197,7 @@ function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
     return compact;
   }
   if (kind === "inspect-range") {
-    copyKeys(record, compact, ["file", "requested", "expanded", "byteRange", "lines", "parse_verified", "parser", "parse_skipped", "parse_skip_reason", "suggested", "next"]);
+    copyKeys(record, compact, ["file", "requested", "expanded", "byteRange", "lines", "parse_verified", "parser", "parse_skipped", "parse_skip_reason", "suggested", "suggestions"]);
     if (typeof record.file === "string") compact.path = record.file;
     return compact;
   }
@@ -202,7 +206,7 @@ function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
     return compact;
   }
   if (kind === "history-trace") {
-    copyKeys(record, compact, ["file", "target", "git", "latest", "commits", "blame", "commands", "next"]);
+    copyKeys(record, compact, ["file", "target", "git", "latest", "commits", "blame", "commands", "suggestions"]);
     if (typeof record.file === "string") compact.path = record.file;
     return compact;
   }
@@ -633,10 +637,20 @@ function parseSummarySuffix(files: AgentFileSummary[]): string {
 }
 
 function agentNextSteps(record: JsonRecord, files: AgentFileSummary[], options: OutputOptions): string[] {
-  const explicit = Array.isArray(record.next) && record.next.every((item) => typeof item === "string")
+  const explicit = record.success !== false && Array.isArray(record.next) && record.next.every((item) => typeof item === "string")
     ? record.next as string[]
     : [];
   return [...new Set([...explicit, ...deterministicNextSteps(files, options)])].slice(0, 3);
+}
+
+function agentSuggestions(record: JsonRecord): string[] {
+  const explicit = Array.isArray(record.suggestions) && record.suggestions.every((item) => typeof item === "string")
+    ? record.suggestions as string[]
+    : [];
+  const legacyNext = record.success === false && Array.isArray(record.next) && record.next.every((item) => typeof item === "string")
+    ? record.next as string[]
+    : [];
+  return [...new Set([...explicit, ...legacyNext])].slice(0, 3);
 }
 
 function deterministicNextSteps(files: AgentFileSummary[], options: OutputOptions): string[] {

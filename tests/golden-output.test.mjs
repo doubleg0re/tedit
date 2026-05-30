@@ -103,7 +103,7 @@ test("golden: inspect-range compact output contract", () => {
       findLines: "2:3",
       replaceHint: "findLines replaces whole lines; include the trailing newline unless replacing the final line.",
     },
-    next: [{
+    suggestions: [{
       tool: "edit",
       arguments: {
         file: "src/Page.tsx",
@@ -153,7 +153,7 @@ test("golden: search-text detailed output contract", () => {
           findLines: "2",
           replaceHint: "findLines replaces whole lines; include the trailing newline unless replacing the final line.",
         },
-        next: [
+        suggestions: [
           {
             tool: "inspect_range",
             cliCommand: "inspect-range",
@@ -186,7 +186,7 @@ test("golden: search-text detailed output contract", () => {
           findLines: "3",
           replaceHint: "findLines replaces whole lines; include the trailing newline unless replacing the final line.",
         },
-        next: [
+        suggestions: [
           {
             tool: "inspect_range",
             cliCommand: "inspect-range",
