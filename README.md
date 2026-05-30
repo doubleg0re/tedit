@@ -117,6 +117,11 @@ startup:
 }
 ```
 
+For agent-adoption regression checks, `npm run dogfood:benchmark` runs a fixed
+set of local scenarios and emits compact JSON with scenario count, pass count,
+compact response count, retry-hint count, max compact-response bytes, and parse
+guardrail count.
+
 The MCP server keeps tool schemas stable for the life of the stdio connection,
 but each tool call runs through a small `mcp-runner` subprocess that imports
 the current `dist` files. Replacing `dist` therefore updates edit/multiedit/

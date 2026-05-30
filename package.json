@@ -21,6 +21,7 @@
     "lint": "npm run typecheck",
     "test": "npm run build && node --test tests/*.test.mjs",
     "dogfood:agent": "npm run build && node scripts/dogfood-agent-workflows.mjs",
+    "dogfood:benchmark": "npm run build && node scripts/dogfood-benchmark.mjs",
     "pack:check": "npm run build && node scripts/pack-check.mjs"
   },
   "dependencies": {

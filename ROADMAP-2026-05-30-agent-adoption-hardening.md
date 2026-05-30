@@ -78,6 +78,8 @@ Acceptance:
 
 ## Phase 5. Dogfood Benchmark
 
+Status: completed in `scripts/dogfood-benchmark.mjs` and `tests/dogfood-benchmark.test.mjs`.
+
 Scope:
 
 - Add a repeatable benchmark-style dogfood harness with fixed scenarios.
@@ -101,4 +103,6 @@ Before marking a phase complete:
 
 ## Current Next Step
 
-Continue with Phase 5 dogfood benchmark.
+All planned agent-adoption hardening phases are implemented. Keep this roadmap
+as the regression checklist for future MCP, AST, markup, guidance, and dogfood
+workflow changes.
