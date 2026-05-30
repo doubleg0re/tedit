@@ -46,6 +46,8 @@ Acceptance:
 
 ## Phase 3. HTML/XML/Markdown Editing Hardening
 
+Status: completed in `tests/markup-markdown-hardening.test.mjs`.
+
 Scope:
 
 - Expand corpus coverage for markup and markdown structural edits:
@@ -97,4 +99,4 @@ Before marking a phase complete:
 
 ## Current Next Step
 
-Continue with Phase 3 HTML/XML/Markdown editing hardening.
+Continue with Phase 4 built-in agent workflow guidance.
