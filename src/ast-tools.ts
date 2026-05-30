@@ -124,19 +124,25 @@ export function runAstEdit(filePath: string, options: AstEditOptions): JsonRecor
   const selector = options.selector;
   const paths = selectAstPaths(parsed.ast, selector);
   if (paths.length === 0) {
+    const candidateHints = astRetryCandidates(filePath, source, parsed, selector);
     fail("AST_MATCH_NONE", `No AST node matched "${selector}".`, {
       selector,
+      ...(candidateHints.length > 0 ? { candidates: candidateHints } : {}),
       next: [
+        ...(candidateHints[0]?.suggested?.selector ? [`Try selector ${JSON.stringify(String(candidateHints[0].suggested.selector))}.`] : []),
         "Run tedit ast-select with the same selector to inspect matches.",
         "Use tedit scan-strings to locate string candidates first.",
-      ],
+      ].slice(0, 3),
     });
   }
   if (paths.length > 1) {
     fail("AST_MATCH_NOT_UNIQUE", `AST selector matched ${paths.length} nodes; ast-edit requires exactly one.`, {
       selector,
       matches: paths.slice(0, 10).map((path, index) => astMatchForPath(`ast_${index + 1}`, filePath, source, parsed, path)),
-      next: ["Narrow the selector until ast-select returns one editable node."],
+      next: [
+        "Narrow the selector until ast-select returns one editable node.",
+        "Add a [value=...] or [value*=...] filter when replacing string targets.",
+      ],
     });
   }
 
@@ -147,6 +153,10 @@ export function runAstEdit(filePath: string, options: AstEditOptions): JsonRecor
       selector,
       match,
       supported: ["StringLiteral", "JSXText", "JSXAttribute with a string value", "ObjectProperty with a string value", "TemplateLiteral without expressions"],
+      next: [
+        "Select an editable child string node, for example CallExpression[...] > StringLiteral.",
+        "Run scan-strings to find editable string candidates first.",
+      ],
     });
   }
 
@@ -198,7 +208,7 @@ function scanStringCandidates(filePath: string, source: string, parsed: ParsedAs
         context: "jsx_text",
         editable: true,
         preview: preview(source, range.start, range.end),
-        suggested: { tool: "ast_edit", selector: "JSXText", replace: "<text>" },
+        suggested: { tool: "ast_edit", selector: `JSXText[value*="${escapeSelectorValue(value)}"]`, replace: "<text>" },
       }, options);
     },
     StringLiteral(path) {
@@ -481,6 +491,7 @@ function selectorHintForString(path: NodePath<t.StringLiteral>): string {
   const parent = path.parentPath;
   if (parent?.isJSXAttribute()) return `JSXAttribute[name="${jsxName(parent.node.name)}"]`;
   if (parent?.isObjectProperty()) return `ObjectProperty[key.name="${propertyKeyName(parent.node.key)}"]`;
+  if (parent?.isCallExpression()) return `${callExpressionSelector(calleeName(parent.node.callee))} > StringLiteral[value="${escapeSelectorValue(path.node.value)}"]`;
   return `StringLiteral[value="${escapeSelectorValue(path.node.value)}"]`;
 }
 
@@ -493,6 +504,32 @@ function nodeValue(node: t.Node): unknown {
   if (t.isJSXText(node)) return normalizeJsxText(node.value);
   if (t.isTemplateLiteral(node) && node.expressions.length === 0) return node.quasis[0]?.value.cooked ?? node.quasis[0]?.value.raw;
   return undefined;
+}
+
+function astRetryCandidates(filePath: string, source: string, parsed: ParsedAstSource, selector: string): Array<Pick<AstStringCandidate, "id" | "kind" | "value" | "range" | "context" | "parent" | "attr" | "excluded" | "excludeReason" | "suggested">> {
+  const needle = selectorNeedle(selector);
+  if (!needle) return [];
+  return scanStringCandidates(filePath, source, parsed, { contains: needle, includeExcluded: true })
+    .slice(0, 5)
+    .map((candidate) => ({
+      id: candidate.id,
+      kind: candidate.kind,
+      value: candidate.value,
+      range: candidate.range,
+      context: candidate.context,
+      ...(candidate.parent ? { parent: candidate.parent } : {}),
+      ...(candidate.attr ? { attr: candidate.attr } : {}),
+      ...(candidate.excluded ? { excluded: true } : {}),
+      ...(candidate.excludeReason ? { excludeReason: candidate.excludeReason } : {}),
+      suggested: candidate.suggested,
+    }));
+}
+
+function selectorNeedle(selector: string): string | undefined {
+  const quoted = selector.match(/\[[^\]=~*^$|]+[*^$|~]?=(["'])(.*?)\1\]/);
+  if (quoted?.[2]) return quoted[2];
+  const unquoted = selector.match(/\[[^\]=~*^$|]+[*^$|~]?=([^\]\s]+)\]/);
+  return unquoted?.[1];
 }
 
 function nodeName(node: t.Node): { name?: string } {
@@ -540,6 +577,14 @@ function calleeName(callee: t.CallExpression["callee"]): string {
     return `${objectName}.${propertyName}`;
   }
   return callee.type;
+}
+
+function callExpressionSelector(name: string): string {
+  const [objectName, propertyName, ...rest] = name.split(".");
+  if (objectName && propertyName && rest.length === 0) {
+    return `CallExpression[callee.object.name="${escapeSelectorValue(objectName)}"][callee.property.name="${escapeSelectorValue(propertyName)}"]`;
+  }
+  return `CallExpression[callee.name="${escapeSelectorValue(name)}"]`;
 }
 
 function splitTopLevel(input: string, separator: string): string[] {

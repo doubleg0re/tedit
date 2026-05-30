@@ -366,7 +366,7 @@ function commandAstSelect(args: ParsedArgs): void {
 }
 
 function commandAstEdit(args: ParsedArgs): void {
-  const [filePath] = requirePositionals(args, 1, "ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--object-key key] [--dry-run|--write]");
+  const [filePath] = requirePositionals(args, 1, "ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--jsx-attr name|--object-key key|--call callee] [--dry-run|--write]");
   const selector = resolveAstEditSelector(args);
   const result = runAstEdit(filePath, {
     selector,
@@ -383,22 +383,34 @@ function resolveAstEditSelector(args: ParsedArgs): string {
   const stringValue = stringFlag(args, "string");
   const contains = stringFlag(args, "contains");
   const jsxText = stringFlag(args, "jsx-text") ?? stringFlag(args, "jsxText");
+  const jsxAttr = stringFlag(args, "jsx-attr") ?? stringFlag(args, "jsxAttr");
   const objectKey = stringFlag(args, "object-key") ?? stringFlag(args, "objectKey");
-  const shortcutCount = [stringValue, contains, jsxText, objectKey].filter((value) => value !== undefined).length;
+  const call = stringFlag(args, "call");
+  const shortcutCount = [stringValue, contains, jsxText, jsxAttr, objectKey, call].filter((value) => value !== undefined).length;
   if (positional && shortcutCount > 0) throw new Error("ast-edit accepts either a selector or one shortcut flag.");
   if (shortcutCount > 1) throw new Error("ast-edit accepts only one shortcut flag.");
   if (positional) return positional;
   if (stringValue !== undefined) return `StringLiteral[value=${astSelectorValue(stringValue)}]`;
   if (contains !== undefined) return `StringLiteral[value*=${astSelectorValue(contains)}]`;
   if (jsxText !== undefined) return `JSXText[value*=${astSelectorValue(jsxText)}]`;
+  if (jsxAttr !== undefined) return `JSXAttribute[name=${astSelectorValue(jsxAttr)}]`;
   if (objectKey !== undefined) return `ObjectProperty[key.name=${astSelectorValue(objectKey)}]`;
-  throw new Error("ast-edit requires a selector or one of --string, --contains, --jsx-text, or --object-key.");
+  if (call !== undefined) return `${astCallSelector(call)} > StringLiteral`;
+  throw new Error("ast-edit requires a selector or one of --string, --contains, --jsx-text, --jsx-attr, --object-key, or --call.");
 }
 
 function astSelectorValue(value: string): string {
   if (!value.includes("\"")) return JSON.stringify(value);
   if (!value.includes("'")) return `'${value}'`;
   throw new Error("AST shortcut values cannot contain both single and double quotes yet; pass an explicit selector.");
+}
+
+function astCallSelector(value: string): string {
+  const parts = value.split(".");
+  if (parts.length === 2 && parts[0] && parts[1]) {
+    return `CallExpression[callee.object.name=${astSelectorValue(parts[0])}][callee.property.name=${astSelectorValue(parts[1])}]`;
+  }
+  return `CallExpression[callee.name=${astSelectorValue(value)}]`;
 }
 
 function commandAnalyzeState(args: ParsedArgs): void {
@@ -1980,7 +1992,7 @@ Usage:
   tedit history-trace <file> [--lines N:M|--contains <text>|--regex <pattern>] [--limit N] [--json]
   tedit scan-strings <file> [--contains <text>] [--include-excluded] [--json]
   tedit ast-select <file> <selector> [--json]
-  tedit ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--object-key key] [--dry-run|--write]
+  tedit ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--jsx-attr name|--object-key key|--call callee] [--dry-run|--write]
   tedit analyze-state <file> [--json]
   tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--plan-out <plan-json>|--dry-run|--write]
   tedit find <file> <selector> [--json]
@@ -2115,7 +2127,7 @@ function shortHelp(command: string): string | null {
       return "tedit ast-select\nUsage:\n  tedit ast-select <file> <selector> [--json]\n\nFinds JS/TS/JSX AST nodes using a small selector language, e.g. StringLiteral[value*=\"삭제\"].";
     case "ast-edit":
     case "ast_edit":
-      return "tedit ast-edit\nUsage:\n  tedit ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--object-key key] [--dry-run|--write]\n\nSafely replaces one editable AST string target matched by ast-select or a shortcut.";
+      return "tedit ast-edit\nUsage:\n  tedit ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--jsx-attr name|--object-key key|--call callee] [--dry-run|--write]\n\nSafely replaces one editable AST string target matched by ast-select or a shortcut.";
     case "analyze-state":
       return "tedit analyze-state\nUsage:\n  tedit analyze-state <file> [--json]\n\nReports useState clusters, handler usage, and refactor guidance.";
     case "find":

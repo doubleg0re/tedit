@@ -28,6 +28,8 @@ Acceptance:
 
 ## Phase 2. AST Select/Edit V1 Hardening
 
+Status: completed in `tests/ast-tools.test.mjs`.
+
 Scope:
 
 - Harden `scan_strings`, `ast_select`, and `ast_edit` around common agent tasks:
@@ -95,4 +97,4 @@ Before marking a phase complete:
 
 ## Current Next Step
 
-Continue with Phase 2 AST select/edit v1 hardening.
+Continue with Phase 3 HTML/XML/Markdown editing hardening.

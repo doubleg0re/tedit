@@ -350,7 +350,9 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       string: z.string().optional().describe("Shortcut for StringLiteral[value=...]."),
       contains: z.string().optional().describe("Shortcut for StringLiteral[value*=...]."),
       jsxText: z.string().optional().describe("Shortcut for JSXText[value*=...]."),
+      jsxAttr: z.string().optional().describe("Shortcut for JSXAttribute[name=...]."),
       objectKey: z.string().optional().describe("Shortcut for ObjectProperty[key.name=...]."),
+      call: z.string().optional().describe("Shortcut for CallExpression callee string arguments, e.g. alert or toast.error."),
       replace: z.string().describe("Replacement text."),
       ...writeFlagSchema,
     },
@@ -1160,22 +1162,34 @@ function astEditSelectorFromInput(input: JsonRecord): string {
   const stringValue = optionalString(input.string);
   const contains = optionalString(input.contains);
   const jsxText = optionalString(pick(input, "jsxText", "jsx_text", "jsx-text"));
+  const jsxAttr = optionalString(pick(input, "jsxAttr", "jsx_attr", "jsx-attr"));
   const objectKey = optionalString(pick(input, "objectKey", "object_key", "object-key"));
-  const shortcutCount = [stringValue, contains, jsxText, objectKey].filter((value) => value !== undefined).length;
+  const call = optionalString(input.call);
+  const shortcutCount = [stringValue, contains, jsxText, jsxAttr, objectKey, call].filter((value) => value !== undefined).length;
   if (selector && shortcutCount > 0) fail("INVALID_MCP_INPUT", "ast_edit accepts either selector or one shortcut field.");
   if (shortcutCount > 1) fail("INVALID_MCP_INPUT", "ast_edit accepts only one shortcut field.");
   if (selector) return selector;
   if (stringValue !== undefined) return `StringLiteral[value=${astSelectorValue(stringValue)}]`;
   if (contains !== undefined) return `StringLiteral[value*=${astSelectorValue(contains)}]`;
   if (jsxText !== undefined) return `JSXText[value*=${astSelectorValue(jsxText)}]`;
+  if (jsxAttr !== undefined) return `JSXAttribute[name=${astSelectorValue(jsxAttr)}]`;
   if (objectKey !== undefined) return `ObjectProperty[key.name=${astSelectorValue(objectKey)}]`;
-  fail("INVALID_MCP_INPUT", "ast_edit requires selector, string, contains, jsxText, or objectKey.");
+  if (call !== undefined) return `${astCallSelector(call)} > StringLiteral`;
+  fail("INVALID_MCP_INPUT", "ast_edit requires selector, string, contains, jsxText, jsxAttr, objectKey, or call.");
 }
 
 function astSelectorValue(value: string): string {
   if (!value.includes("\"")) return JSON.stringify(value);
   if (!value.includes("'")) return `'${value}'`;
   fail("INVALID_MCP_INPUT", "AST shortcut values cannot contain both single and double quotes yet; pass an explicit selector.");
+}
+
+function astCallSelector(value: string): string {
+  const parts = value.split(".");
+  if (parts.length === 2 && parts[0] && parts[1]) {
+    return `CallExpression[callee.object.name=${astSelectorValue(parts[0])}][callee.property.name=${astSelectorValue(parts[1])}]`;
+  }
+  return `CallExpression[callee.name=${astSelectorValue(value)}]`;
 }
 
 function toolExposure(tool: TeditMcpTool): "default" | "advanced" {

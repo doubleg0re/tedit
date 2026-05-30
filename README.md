@@ -44,6 +44,7 @@ tedit history-trace src/Page.tsx --lines 42:60 --json
 tedit scan-strings src/Page.tsx --contains "삭제" --json
 tedit ast-select src/Page.tsx 'ObjectProperty[key.name="label"] > StringLiteral' --json
 tedit ast-edit src/Page.tsx --string "삭제" --replace "Delete" --dry-run
+tedit ast-edit src/Page.tsx --call toast.error --replace "Failed" --dry-run
 tedit templates --json
 tedit analyze-state src/Page.tsx --json
 tedit refactor-state src/Page.tsx --cluster crewImport --to src/useCrewImport.ts --name useCrewImport --external-deps params --write
@@ -264,6 +265,9 @@ tedit ast-select src/Page.tsx 'CallExpression[callee.name="alert"]' --json
 tedit ast-select src/Page.tsx 'ObjectProperty[key.name="label"] > StringLiteral' --json
 tedit ast-edit src/Page.tsx 'ObjectProperty[key.name="label"]' --replace "Delete" --write
 tedit ast-edit src/Page.tsx --string "삭제" --replace "Delete" --write
+tedit ast-edit src/Page.tsx --call alert --replace "Error" --write
+tedit ast-edit src/Page.tsx --jsx-attr placeholder --replace "Search" --write
+tedit ast-edit src/Page.tsx --jsx-text "저장" --replace "Save" --write
 tedit ast-edit src/Page.tsx --object-key label --replace "Delete" --write
 ```
 
@@ -276,8 +280,9 @@ obvious technical strings by default, including import/export module paths,
 `ast-edit` is deliberately narrow: the selector or shortcut must match exactly
 one editable string target, and writes still run through the same dry-run/write
 policy, backup, diff, parse verification, and quality warnings as other tedit
-mutations. Shortcuts include `--string`, `--contains`, `--jsx-text`, and
-`--object-key`.
+mutations. Shortcuts include `--string`, `--contains`, `--jsx-text`,
+`--jsx-attr`, `--object-key`, and `--call`. Dotted calls such as
+`--call toast.error` target string arguments under that member call.
 
 Flow files use a compact `action`/`out` shape:
 
