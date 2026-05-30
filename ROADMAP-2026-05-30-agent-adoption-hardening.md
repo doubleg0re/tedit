@@ -62,6 +62,8 @@ Acceptance:
 
 ## Phase 4. Built-In Agent Workflow Guidance
 
+Status: completed in `tests/agent-guidance.test.mjs`.
+
 Scope:
 
 - Make `actions` a practical workflow guide, not just a capability dump.
@@ -99,4 +101,4 @@ Before marking a phase complete:
 
 ## Current Next Step
 
-Continue with Phase 4 built-in agent workflow guidance.
+Continue with Phase 5 dogfood benchmark.

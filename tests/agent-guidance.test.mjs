@@ -1,0 +1,60 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { runMcpTool } from "../dist/mcp-tools.js";
+
+test("actions guidance gives agents a stable workflow decision table", () => {
+  const actions = runMcpTool("actions", {});
+  const guide = actions.guidance;
+
+  assert.equal(actions.ok, true);
+  assert.ok(Array.isArray(guide.workflow_guide));
+  assert.ok(guide.workflow_guide.some((row) => row.when.includes("target context") && row.first_tool === "search_text"));
+  assert.ok(guide.workflow_guide.some((row) => row.when.includes("one localized") && row.first_tool === "edit"));
+  assert.ok(guide.workflow_guide.some((row) => row.when.includes("several places") && row.then === "multiedit"));
+  assert.ok(guide.workflow_guide.some((row) => row.when.includes("generated diff") && row.first_tool === "patch"));
+  assert.ok(guide.workflow_guide.some((row) => row.when.includes("whole file") && row.first_tool === "file_write"));
+  assert.ok(guide.workflow_guide.some((row) => row.when.includes("hardcoded") && row.first_tool === "scan_strings"));
+
+  const recoveryCodes = guide.failure_recovery.map((row) => row.code);
+  assert.deepEqual(recoveryCodes, [
+    "MATCH_NONE",
+    "MATCH_NOT_UNIQUE",
+    "PARSE_BROKEN_AFTER_EDIT",
+    "AST_MATCH_NONE",
+    "PATCH_HUNK_FAILED",
+  ]);
+
+  assert.deepEqual(Object.keys(guide.examples).filter((key) => [
+    "edit",
+    "multiedit",
+    "patch",
+    "file_write",
+    "scan_strings",
+    "ast_edit",
+  ].includes(key)).sort(), [
+    "ast_edit",
+    "edit",
+    "file_write",
+    "multiedit",
+    "patch",
+    "scan_strings",
+  ]);
+});
+
+test("README documents the same agent workflow pivots", () => {
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  for (const text of [
+    "The `actions` response includes an agent workflow guide.",
+    "`search_text` or `inspect_range`",
+    "`edit` for one localized",
+    "`multiedit` after `search_text`",
+    "`patch` only when the change already exists",
+    "`file_write` for whole-file generation",
+    "`TEDIT_MCP_PROFILE=all` for AST",
+    "`MATCH_NONE`",
+    "`PATCH_HUNK_FAILED`",
+  ]) {
+    assert.ok(readme.includes(text), `${text} missing from README`);
+  }
+});

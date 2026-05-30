@@ -1222,6 +1222,23 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "patch only when the change is already a diff",
       "TEDIT_MCP_PROFILE=all for JSX/AST/history/refactor/template helpers",
     ],
+    workflow_guide: [
+      { when: "need target context before editing", first_tool: "search_text", then: "inspect_range or edit", reason: "turn raw text matches into line ranges and edit-ready suggestions" },
+      { when: "one localized replacement/insertion/deletion", first_tool: "edit", then: "rerun with write=true after dry-run if needed", reason: "exact/fuzzy/regex/line strategies plus parser guardrails" },
+      { when: "same change across several places or files", first_tool: "search_text", then: "multiedit", reason: "search_text can emit a grouped multiedit spec; multiedit applies atomically" },
+      { when: "already have a generated diff", first_tool: "patch", then: "verify_file for important touched files", reason: "patch accepts unified diff and Codex apply-patch envelopes" },
+      { when: "create or overwrite a whole file", first_tool: "file_write", then: "verify_file", reason: "mode=write/scaffold/template keeps generation behind write policy and parse verification" },
+      { when: "hardcoded JS/TS/JSX strings", first_tool: "scan_strings", then: "ast_select or ast_edit", reason: "AST scanning covers code strings that structural find does not" },
+      { when: "structural JSX/markup mutation", first_tool: "actions with file", then: "TEDIT_MCP_PROFILE=all structural tools or CLI chain", reason: "agent profile stays small; advanced profile exposes fine-grained structural actions" },
+      { when: "need change history before risky edit", first_tool: "history_trace", then: "inspect_range or edit", reason: "history_trace avoids hand-assembling blame/log commands" },
+    ],
+    failure_recovery: [
+      { code: "MATCH_NONE", next: "Use returned candidates, search_text, or inspect_range; retry with findLines/fuzzy/regex only after inspecting context." },
+      { code: "MATCH_NOT_UNIQUE", next: "Use returned candidate line ranges or add expectCount when replaceAll is intended." },
+      { code: "PARSE_BROKEN_AFTER_EDIT", next: "Do not force write; inspect the proposed replacement and keep syntax balanced before retrying." },
+      { code: "AST_MATCH_NONE", next: "Use scan_strings candidates or switch selector type, for example JSXText instead of StringLiteral." },
+      { code: "PATCH_HUNK_FAILED", next: "Inspect current file context and regenerate the hunk against the current source." },
+    ],
     edit_loop: [
       { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },
       { intent: "several coordinated text edits", tool: "multiedit", reason: "atomic application across files and same-file sequential edits" },
@@ -1244,6 +1261,10 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "React state cluster cleanup or hook extraction", tool: "analyze_state then refactor_state", reason: "inspect clusters first, then apply directly or request mode=plan" },
     ],
     examples: {
+      edit: { file: "src/Page.tsx", find: "oldLabel", replace: "newLabel", dryRun: true },
+      multiedit: { edits: [{ file: "src/Page.tsx", find: "삭제", replace: "Delete", replaceAll: true, expectCount: 2 }], dryRun: true },
+      patch: { patch: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ ...", dryRun: true },
+      file_write: { mode: "write", file: "src/generated.json", source: "{\"ok\":true}\n", write: true },
       extract_component: { mode: "direct", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", write: true },
       extract_component_plan: { mode: "plan", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", planOut: ".tedit/plans/extract-card.json" },
       apply_plan: { plan: ".tedit/plans/extract-card.json", write: true },
@@ -1254,7 +1275,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       templates: { cwd: "." },
       scan_strings: { file: "src/Page.tsx", contains: "삭제" },
       ast_select: { file: "src/Page.tsx", selector: "ObjectProperty[key.name=\"label\"] > StringLiteral" },
-      ast_edit: { file: "src/Page.tsx", string: "삭제", replace: "Delete", write: true },
+      ast_edit: { file: "src/Page.tsx", call: "toast.error", replace: "Failed", write: true },
       chain_workspace: {
         steps: [
           { action: "extract", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard" },

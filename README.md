@@ -146,6 +146,27 @@ Use `file_write` with a required `mode` for whole-file writes:
 `mode: "write"` for complete source replacement, `mode: "scaffold"` for
 scaffold specs, and `mode: "template"` for built-in or project templates.
 
+The `actions` response includes an agent workflow guide. The intended default
+loop is:
+
+- `search_text` or `inspect_range` when the target is not certain yet.
+- `edit` for one localized replacement, insertion, deletion, regex, fuzzy, or
+  line-range change.
+- `multiedit` after `search_text` when the same change spans several places or
+  files.
+- `patch` only when the change already exists as a unified diff or apply-patch
+  envelope.
+- `file_write` for whole-file generation through `mode: "write"`,
+  `mode: "scaffold"`, or `mode: "template"`.
+- `verify_file` before or after edits when parser coverage matters.
+- `TEDIT_MCP_PROFILE=all` for AST, JSX/markup structural actions, templates,
+  history, extract, and refactor helpers.
+
+Failure responses are part of the workflow: `MATCH_NONE`,
+`MATCH_NOT_UNIQUE`, `PARSE_BROKEN_AFTER_EDIT`, `AST_MATCH_NONE`, and
+`PATCH_HUNK_FAILED` include bounded `next` hints so an agent can inspect,
+narrow, or retry without guessing.
+
 Set `TEDIT_MCP_PROFILE=all` (or `TEDIT_MCP_EXPOSE_ADVANCED=true`) to expose
 the advanced and legacy fine-grained tools as MCP tools too, including
 `create_file`, `templates`, `history_trace`, `scan_strings`, `ast_select`,
