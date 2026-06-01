@@ -101,11 +101,12 @@ and JSX mutation engines.
 ```
 
 The package bin also exposes `tedit-mcp`, so installed packages can use the
-server without a source checkout. `npm run pack:check` packs the artifact and
-smoke-checks the installed bins before publish: required `dist` files, bin
-shebang and executable mode, package size, backup/postinstall exclusions,
-`npx -y --package <tgz> tedit --version`, and packed `tedit-mcp` stdio
-startup:
+server without a source checkout. `npm run release:smoke` (also available as
+`npm run pack:check`) packs the artifact and smoke-checks the installed bins
+before publish: package metadata, required `dist` files, bin shebang and
+executable mode, package size, backup/postinstall exclusions,
+`npx -y --package <tgz> tedit --version`, installed `tedit actions --json`,
+and packed `tedit-mcp` stdio startup:
 
 ```json
 {

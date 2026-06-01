@@ -1,5 +1,5 @@
 # MCP server integration — first-class agent surface
-Status: Implemented initial MCP integration on 2026-05-28.
+Status: Implemented MCP integration and release smoke hardening on 2026-06-01.
 
 Implemented scope:
 - Added stdio MCP server entrypoint at `src/mcp.ts` and package bin `tedit-mcp`.
@@ -14,12 +14,18 @@ Distribution hardening:
 - Regression coverage runs `npm pack --dry-run --json` and asserts that the CLI/MCP dist files, README, and package metadata are included.
 - `npm run pack:check` now fails if backup artifacts such as `.bak` or `.tedit.bak` enter the package tarball.
 - MCP parity now includes `verify_file`, `extract_plan`, and `apply_plan`, with stdio client regression coverage for listing and calling the new tools.
+- `npm run release:smoke` is the named pre-publish gate. It builds, packs a
+  clean tarball, checks metadata/required files/bin shebang and executable
+  bits/package size/backup exclusions/forbidden install lifecycle scripts, runs
+  `npx -y --package <tgz> tedit --version`, installs the packed artifact, runs
+  installed `tedit actions --json`, and starts the packed `tedit-mcp` stdio
+  server through an MCP client.
 
-Remaining polish:
-- Publish smoke testing is higher priority than internal wrapper refactors:
-  verify `npx -y tedit@<version> --version`, CLI startup, MCP startup, bin
-  shebang/executable bit, package size, and no `postinstall` script from a
-  clean packed or published artifact.
+Remaining external release check:
+- After publishing to npm, run `npx -y tedit@<published-version> --version`
+  against the registry. The local pre-publish gate covers the equivalent
+  tarball path with `npx -y --package <tgz> tedit --version`; registry
+  propagation itself cannot be verified before publish.
 - The MCP tool layer is intentionally thin. Extract `cli.ts` command wrappers
   into shared command modules only if CLI/MCP behavior starts to diverge in a
   way tests cannot comfortably cover.
