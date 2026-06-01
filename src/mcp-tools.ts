@@ -289,6 +289,8 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       maxResults: z.number().int().positive().optional().describe("Maximum result count. Defaults to 100."),
       caseSensitive: z.boolean().optional().describe("Use case-sensitive matching. Literal and regex searches default to case-insensitive."),
       includeHidden: z.boolean().optional().describe("Include hidden files and directories except built-in excluded directories."),
+      output: z.enum(["compact", "detailed"]).optional().describe("Response shape. Defaults to compact; detailed includes full per-result context and suggestions."),
+      includeDetails: z.boolean().optional().describe("Return the detailed response shape."),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runSearchTextTool,

@@ -40,6 +40,9 @@ test("stability: agent workflow keeps compact and detailed output contracts", ()
   assert.equal(compactSearch.success, undefined);
   assert.equal(compactSearch.kind, "search-text");
   assert.equal(compactSearch.count, 3);
+  assert.equal(compactSearch.resultsShown, 3);
+  assert.equal(compactSearch.resultsTruncated, undefined);
+  assert.equal(compactSearch.results[0].suggested, undefined);
 
   const dryRun = JSON.parse(runCompact(["multiedit", "--from-stdin", "--dry-run"], {
     cwd: dir,

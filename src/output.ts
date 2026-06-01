@@ -64,6 +64,7 @@ const DEFAULT_INLINE_DIFF_MAX_BYTES = 8_000;
 const DEFAULT_INLINE_DIFF_MAX_HUNKS = 10;
 const DEFAULT_DIFF_ARTIFACT_DIR = ".tedit-cache/diffs";
 const ARTIFACT_PREVIEW_MAX_BYTES = 2_000;
+const DEFAULT_COMPACT_SEARCH_RESULT_LIMIT = 20;
 
 export function parseOutputMode(value: unknown, label = "output"): OutputMode | undefined {
   if (value === undefined || value === false) return undefined;
@@ -202,8 +203,7 @@ function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
     return compact;
   }
   if (kind === "search-text") {
-    copyKeys(record, compact, ["query", "regex", "paths", "glob", "context", "multiedit", "results", "count", "truncated"]);
-    return compact;
+    return compactSearchTextResult(record, compact);
   }
   if (kind === "history-trace") {
     copyKeys(record, compact, ["file", "target", "git", "latest", "commits", "blame", "commands", "suggestions"]);
@@ -271,6 +271,62 @@ function collectWarnings(record: JsonRecord, files: AgentFileSummary[]): unknown
     if (Array.isArray(file.warnings)) warnings.push(...file.warnings);
   }
   return dedupeWarnings(warnings);
+}
+
+function compactSearchTextResult(record: JsonRecord, compact: JsonRecord): JsonRecord {
+  copyKeys(record, compact, ["query", "regex", "paths", "glob", "context", "count", "truncated"]);
+  if (record.multiedit && typeof record.multiedit === "object" && !Array.isArray(record.multiedit)) compact.multiedit = record.multiedit;
+  if (Array.isArray(record.results)) {
+    const shown = record.results.slice(0, DEFAULT_COMPACT_SEARCH_RESULT_LIMIT);
+    const { files, results } = compactSearchResults(shown);
+    compact.resultsShown = results.length;
+    if (record.results.length > shown.length) compact.resultsTruncated = true;
+    if (files.length > 0) compact.files = files;
+    compact.results = results;
+  }
+  const suggestions = [
+    "Use files[].path plus results[].lineRange with inspect_range for surrounding context.",
+    record.multiedit ? "Pass multiedit to multiedit input to apply the grouped replacement." : "Rerun with multieditSpec=true and replace to get a grouped multiedit handoff.",
+  ];
+  compact.suggestions = suggestions;
+  return compact;
+}
+
+function compactSearchResults(results: unknown[]): { files: JsonRecord[]; results: JsonRecord[] } {
+  const files: JsonRecord[] = [];
+  const fileIds = new Map<string, string>();
+  const compactResults: JsonRecord[] = [];
+
+  for (const result of results) {
+    if (!result || typeof result !== "object" || Array.isArray(result)) continue;
+    const record = result as JsonRecord;
+    const file = typeof record.file === "string" ? record.file : undefined;
+    const path = typeof record.path === "string" ? record.path : file;
+    let fileId: string | undefined;
+    if (file) {
+      fileId = fileIds.get(file);
+      if (!fileId) {
+        fileId = "file_" + String(fileIds.size + 1);
+        fileIds.set(file, fileId);
+        files.push({ id: fileId, path: file, ...(path && path !== file ? { display: path } : {}) });
+      }
+    }
+    const range = record.range && typeof record.range === "object" && !Array.isArray(record.range) ? record.range as JsonRecord : {};
+    compactResults.push({
+      ...(typeof record.id === "string" ? { id: record.id } : {}),
+      ...(fileId ? { fileId } : {}),
+      ...(path ? { path } : {}),
+      ...(typeof record.match === "string" ? { match: record.match } : {}),
+      ...(typeof range.line === "number" ? { line: range.line } : {}),
+      ...(typeof range.column === "number" ? { column: range.column } : {}),
+      ...(typeof range.endLine === "number" && range.endLine !== range.line ? { endLine: range.endLine } : {}),
+      ...(typeof range.endColumn === "number" && range.endColumn !== range.column ? { endColumn: range.endColumn } : {}),
+      ...(typeof range.lineRange === "string" ? { lineRange: range.lineRange } : {}),
+      ...(typeof record.preview === "string" ? { preview: record.preview } : {}),
+    });
+  }
+
+  return { files, results: compactResults };
 }
 
 function collectGuardrails(record: JsonRecord): unknown[] {

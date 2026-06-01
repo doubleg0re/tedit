@@ -167,6 +167,11 @@ plain file-operation lane. It reports wall time, operation count, input/output
 bytes, and a proxy token estimate. The token estimate is not model usage; exact
 model tokens require API or agent runtime usage logs.
 
+Compact `search_text` output is intentionally terse: it returns a unique
+`files` map, up to 20 slim `results` with `fileId` and `lineRange`, and the
+optional `multiedit` handoff. Use CLI `--json` or MCP `output: "detailed"`
+when full per-result context and edit suggestions are worth the extra output.
+
 The MCP server keeps tool schemas stable for the life of the stdio connection,
 but each tool call runs through a small `mcp-runner` subprocess that imports
 the current `dist` files. Replacing `dist` therefore updates edit/multiedit/

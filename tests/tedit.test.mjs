@@ -2077,9 +2077,12 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(searchTextResult.structuredContent.multiedit.edits.length, 1);
     assert.equal(searchTextResult.structuredContent.multiedit.edits[0].replace, "Delete");
     assert.equal(searchTextResult.structuredContent.results.length, 1);
-    assert.equal(searchTextResult.structuredContent.results[0].context.lines.length, 3);
-    assert.equal(searchTextResult.structuredContent.results[0].suggested.findLines, "2");
-    assert.match(searchTextResult.structuredContent.results[0].suggested.replaceHint, /trailing newline/);
+    assert.equal(searchTextResult.structuredContent.files.length, 1);
+    assert.equal(searchTextResult.structuredContent.results[0].fileId, searchTextResult.structuredContent.files[0].id);
+    assert.equal(searchTextResult.structuredContent.results[0].lineRange, "2");
+    assert.equal(searchTextResult.structuredContent.results[0].context, undefined);
+    assert.equal(searchTextResult.structuredContent.results[0].suggested, undefined);
+    assert.ok(searchTextResult.structuredContent.suggestions.some((suggestion) => suggestion.includes("inspect_range")));
 
     const inspectRangeResult = await client.callTool({
       name: "inspect_range",

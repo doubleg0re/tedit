@@ -49,8 +49,16 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(search.success, undefined);
   assert.equal(search.kind, "search-text");
   assert.equal(search.count, 1);
+  assert.equal(search.resultsShown, 1);
+  assert.equal(search.resultsTruncated, undefined);
   assert.equal(search.multiedit.edits.length, 1);
-  assert.equal(search.results[0].suggested.tool, "edit");
+  assert.equal(search.files.length, 1);
+  assert.equal(search.files[0].path, workspace.page);
+  assert.equal(search.results[0].fileId, search.files[0].id);
+  assert.equal(search.results[0].lineRange, "2");
+  assert.equal(search.results[0].suggested, undefined);
+  assert.equal(search.results[0].suggestions, undefined);
+  assert.ok(search.suggestions.some((suggestion) => suggestion.includes("inspect_range")));
 
   const verify = runMcpTool("verify_file", { file: workspace.config });
   assert.equal(verify.ok, true);
