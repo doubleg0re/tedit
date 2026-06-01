@@ -21,6 +21,7 @@ const requiredFiles = [
   "dist/mcp-tools.js",
   "dist/output.js",
   "dist/version.js",
+  "docs/agent-setup.md",
   "README.md",
   "package.json",
 ];
@@ -196,8 +197,8 @@ function packageMetadataFailures(packageJson) {
   if (packageJson.type !== "module") metadataFailures.push({ field: "type", expected: "module", actual: packageJson.type });
   if (typeof packageJson.description !== "string" || packageJson.description.trim() === "") metadataFailures.push({ field: "description" });
   if (!packageJson.bin?.tedit || !packageJson.bin?.["tedit-mcp"]) metadataFailures.push({ field: "bin", expected: ["tedit", "tedit-mcp"], actual: packageJson.bin });
-  if (!Array.isArray(packageJson.files) || !packageJson.files.includes("dist") || !packageJson.files.includes("README.md")) {
-    metadataFailures.push({ field: "files", expected: ["dist", "README.md"], actual: packageJson.files });
+  if (!Array.isArray(packageJson.files) || !packageJson.files.includes("dist") || !packageJson.files.includes("docs") || !packageJson.files.includes("README.md")) {
+    metadataFailures.push({ field: "files", expected: ["dist", "docs", "README.md"], actual: packageJson.files });
   }
   if (typeof packageJson.engines?.node !== "string" || !packageJson.engines.node.includes(">=20")) {
     metadataFailures.push({ field: "engines.node", expected: ">=20", actual: packageJson.engines?.node });

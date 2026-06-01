@@ -20,6 +20,9 @@ Distribution hardening:
   `npx -y --package <tgz> tedit --version`, installs the packed artifact, runs
   installed `tedit actions --json`, and starts the packed `tedit-mcp` stdio
   server through an MCP client.
+- README and `docs/agent-setup.md` now document npm/global/npx/local checkout
+  install flows, MCP registration, AGENTS/CLAUDE instruction snippets, and
+  optional skill text for agent hosts.
 
 Remaining external release check:
 - After publishing to npm, run `npx -y tedit@<published-version> --version`
