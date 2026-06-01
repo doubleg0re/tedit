@@ -161,6 +161,12 @@ set of local scenarios and emits compact JSON with scenario count, pass count,
 compact response count, retry-hint count, max compact-response bytes, and parse
 guardrail count.
 
+For rough tedit-vs-plain workload comparison, `npm run dogfood:compare` runs
+the same small, medium, large, and guardrail edits through a tedit lane and a
+plain file-operation lane. It reports wall time, operation count, input/output
+bytes, and a proxy token estimate. The token estimate is not model usage; exact
+model tokens require API or agent runtime usage logs.
+
 The MCP server keeps tool schemas stable for the life of the stdio connection,
 but each tool call runs through a small `mcp-runner` subprocess that imports
 the current `dist` files. Replacing `dist` therefore updates edit/multiedit/
