@@ -95,9 +95,11 @@ them:
   top of mutations.
 - **A code formatter.** `tedit` should never re-format what it
   didn't mutate. That's prettier's job.
-- **A general-purpose AST manipulator.** Stay in JSX (and the
-  minimum non-JSX needed to make JSX edits complete — imports,
-  expression containers). Don't drift into "edit any TS node".
+- **A general-purpose AST manipulator.** Stay in JSX plus the narrow
+  TS exception recorded on 2026-06-17: named-declaration targeting,
+  block-body replacement, declaration insertion, and declaration moves
+  with explicit trivia hints. Do not drift into arbitrary TS node
+  mutation or subtree reprinting.
 - **A multi-language tool.** Other rules (HTML, MDX) are fine in
   principle but each one is its own trust contract. Don't ship a
   rule that breaks trust just to get coverage.

@@ -17,6 +17,7 @@ import { getOptionalAdapterForFile, listRules, openDocumentForFile } from "./cor
 import { runAstEdit, runAstSelect, runScanStrings } from "./ast-tools.js";
 import { inspectRange, searchText } from "./search-tools.js";
 import { historyTrace } from "./history-tools.js";
+import { runTsEdit, runTsMove, runTsSelect } from "./ts-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { toErrorResult } from "./errors.js";
 import { formatAgentResult, outputOptionsFromConfig, parseDiffMode, parseOutputMode, type OutputMode, type OutputOptions } from "./output.js";
@@ -122,6 +123,18 @@ async function main(): Promise<void> {
     case "ast-edit":
     case "ast_edit":
       commandAstEdit(args);
+      return;
+    case "ts-select":
+    case "ts_select":
+      commandTsSelect(args);
+      return;
+    case "ts-edit":
+    case "ts_edit":
+      commandTsEdit(args);
+      return;
+    case "ts-move":
+    case "ts_move":
+      commandTsMove(args);
       return;
     case "analyze-state":
       commandAnalyzeState(args);
@@ -297,6 +310,9 @@ function commandActions(args: ParsedArgs): void {
     "scan-strings",
     "ast-select",
     "ast-edit",
+    "ts-select",
+    "ts-edit",
+    "ts-move",
     ...languageRules.flatMap((rule) => rule.actions),
   ];
   const result = {
@@ -381,6 +397,45 @@ function commandAstEdit(args: ParsedArgs): void {
   output(args, result, typeof result.diff === "string" && result.diff.length > 0 ? result.diff : "No changes");
 }
 
+function commandTsSelect(args: ParsedArgs): void {
+  const [filePath, selector] = requirePositionals(args, 1, "ts-select <file> [fn:name|class:Name|method:Owner.name|prop:name|var:name] [--json]");
+  const result = runTsSelect(filePath, selector);
+  output(args, result, formatAstMatches(result.matches as unknown[]));
+}
+
+function commandTsEdit(args: ParsedArgs): void {
+  const [filePath, selector] = requirePositionals(args, 2, "ts-edit <file> <selector> --body <body>|--insert-before <code>|--insert-after <code> [--dry-run|--write]");
+  const result = runTsEdit(filePath, {
+    selector,
+    action: tsEditActionFlag(args),
+    body: readOptionalTsTextInput(args, "body"),
+    insertBefore: readOptionalTsTextInput(args, "insert-before"),
+    insertAfter: readOptionalTsTextInput(args, "insert-after"),
+    ...writeFlags(args),
+  });
+  writeDiffOut(args, result);
+  if (quietRequested(args)) return;
+  output(args, result, typeof result.diff === "string" && result.diff.length > 0 ? result.diff : "No changes");
+}
+
+function commandTsMove(args: ParsedArgs): void {
+  const [filePath, target] = requirePositionals(args, 2, "ts-move <file> <target-selector> (--before <selector>|--after <selector>) [--confirm-trivia] [--dry-run|--write]");
+  const result = runTsMove(filePath, {
+    target,
+    before: stringFlag(args, "before"),
+    after: stringFlag(args, "after"),
+    take: csvFlags(args, "take"),
+    drop: csvFlags(args, "drop"),
+    confirmTrivia: booleanFlag(args, "confirm-trivia") || booleanFlag(args, "confirmTrivia"),
+    sourceHash: stringFlag(args, "source-hash") ?? stringFlag(args, "sourceHash"),
+    includeTriviaContent: booleanFlag(args, "include-trivia-content") || booleanFlag(args, "includeTriviaContent"),
+    ...writeFlags(args),
+  });
+  writeDiffOut(args, result);
+  if (quietRequested(args)) return;
+  output(args, result, typeof result.diff === "string" && result.diff.length > 0 ? result.diff : "No changes");
+}
+
 function resolveAstEditSelector(args: ParsedArgs): string {
   const positional = args.positionals[1];
   const stringValue = stringFlag(args, "string");
@@ -414,6 +469,29 @@ function astCallSelector(value: string): string {
     return `CallExpression[callee.object.name=${astSelectorValue(parts[0])}][callee.property.name=${astSelectorValue(parts[1])}]`;
   }
   return `CallExpression[callee.name=${astSelectorValue(value)}]`;
+}
+
+function tsEditActionFlag(args: ParsedArgs): "replace-body" | "insert-before" | "insert-after" | undefined {
+  const raw = stringFlag(args, "action");
+  if (raw === undefined) return undefined;
+  if (raw === "replace-body" || raw === "insert-before" || raw === "insert-after") return raw;
+  throw new Error("ts-edit --action must be replace-body, insert-before, or insert-after.");
+}
+
+function readOptionalTsTextInput(args: ParsedArgs, name: "body" | "insert-before" | "insert-after"): string | undefined {
+  const inline = flagValuePresent(args, name) ? stringFlag(args, name) ?? "" : undefined;
+  const file = stringFlag(args, `${name}-file`);
+  const stdin = booleanFlag(args, `${name}-stdin`);
+  const count = [inline !== undefined, file !== undefined, stdin].filter(Boolean).length;
+  if (count > 1) throw new Error(`ts-edit accepts only one input source for --${name}.`);
+  if (inline !== undefined) return inline;
+  if (file !== undefined) return readFileSync(file, "utf8");
+  if (stdin) return readFileSync(0, "utf8");
+  return undefined;
+}
+
+function csvFlags(args: ParsedArgs, name: string): string[] {
+  return stringFlags(args, name).flatMap((value) => value.split(",").map((item) => item.trim()).filter(Boolean));
 }
 
 function commandAnalyzeState(args: ParsedArgs): void {
@@ -2029,6 +2107,9 @@ Usage:
   tedit scan-strings <file> [--contains <text>] [--include-excluded] [--json]
   tedit ast-select <file> <selector> [--json]
   tedit ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--jsx-attr name|--object-key key|--call callee] [--dry-run|--write]
+  tedit ts-select <file> [fn:name|class:Name|method:Owner.name|prop:name|var:name] [--json]
+  tedit ts-edit <file> <selector> --body <body>|--insert-before <code>|--insert-after <code> [--dry-run|--write]
+  tedit ts-move <file> <target-selector> (--before <selector>|--after <selector>) [--confirm-trivia] [--dry-run|--write]
   tedit analyze-state <file> [--json]
   tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--plan-out <plan-json>|--dry-run|--write]
   tedit find <file> <selector> [--json]
@@ -2164,6 +2245,15 @@ function shortHelp(command: string): string | null {
     case "ast-edit":
     case "ast_edit":
       return "tedit ast-edit\nUsage:\n  tedit ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--jsx-attr name|--object-key key|--call callee] [--dry-run|--write]\n\nSafely replaces one editable AST string target matched by ast-select or a shortcut.";
+    case "ts-select":
+    case "ts_select":
+      return "tedit ts-select\nUsage:\n  tedit ts-select <file> [fn:name|class:Name|method:Owner.name|prop:name|var:name] [--json]\n\nFinds named TS/JS declarations with source ranges and body-replace capability flags.";
+    case "ts-edit":
+    case "ts_edit":
+      return "tedit ts-edit\nUsage:\n  tedit ts-edit <file> <selector> --body <body> [--dry-run|--write]\n  tedit ts-edit <file> <selector> --insert-before <code> [--dry-run|--write]\n  tedit ts-edit <file> <selector> --insert-after <code> [--dry-run|--write]\n\nTargets named declarations and replaces only tool-owned block bodies or inserts declarations around them.";
+    case "ts-move":
+    case "ts_move":
+      return "tedit ts-move\nUsage:\n  tedit ts-move <file> <target-selector> (--before <selector>|--after <selector>) [--take id[,id]] [--drop id[,id]] [--confirm-trivia] [--dry-run|--write]\n\nMoves a named declaration as a source-range cut/paste with carried-trivia hints. Writes require --confirm-trivia.";
     case "analyze-state":
       return "tedit analyze-state\nUsage:\n  tedit analyze-state <file> [--json]\n\nReports useState clusters, handler usage, and refactor guidance.";
     case "find":

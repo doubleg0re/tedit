@@ -216,8 +216,8 @@ loop is:
   `mode: "scaffold"`, or `mode: "template"`.
 - `verify_file` before or after edits when parser coverage matters; pass
   `files` to check several related files in one call.
-- `TEDIT_MCP_PROFILE=all` for AST, JSX/markup structural actions, templates,
-  history, extract, and refactor helpers.
+- `TEDIT_MCP_PROFILE=all` for AST, TS declaration targeting, JSX/markup
+  structural actions, templates, history, extract, and refactor helpers.
 
 Failure responses are part of the workflow: `MATCH_NONE`,
 `MATCH_NOT_UNIQUE`, `PARSE_BROKEN_AFTER_EDIT`, `AST_MATCH_NONE`, and
@@ -227,9 +227,10 @@ narrow, or retry without guessing.
 Set `TEDIT_MCP_PROFILE=all` (or `TEDIT_MCP_EXPOSE_ADVANCED=true`) to expose
 the advanced and legacy fine-grained tools as MCP tools too, including
 `create_file`, `templates`, `history_trace`, `scan_strings`, `ast_select`,
-`ast_edit`, `jsx_select`, `jsx_node`, `jsx_attr`, `jsx_content`, `imports`,
-`extract_component`, `analyze_state`, `refactor_state`, `apply_plan`,
-`chain_workspace`, `write_file`, `scaffold_file`, `new_file`, `find`,
+`ast_edit`, `ts_select`, `ts_edit`, `ts_move`, `jsx_select`, `jsx_node`,
+`jsx_attr`, `jsx_content`, `imports`, `extract_component`, `analyze_state`,
+`refactor_state`, `apply_plan`, `chain_workspace`, `write_file`,
+`scaffold_file`, `new_file`, `find`,
 `inspect`, `append`, `prepend`, `wrap`, `unwrap`, `remove`, `rename`,
 `prop_set`, `prop_remove`, `class_add`, `class_remove`, `class_replace`,
 `text_set`, `text_replace`, `insert_comment`, `imports_add`,
@@ -362,6 +363,27 @@ policy, backup, diff, parse verification, and quality warnings as other tedit
 mutations. Shortcuts include `--string`, `--contains`, `--jsx-text`,
 `--jsx-attr`, `--object-key`, and `--call`. Dotted calls such as
 `--call toast.error` target string arguments under that member call.
+
+## TS Declaration Targeting
+
+For large plain TS/JS modules, use declaration selectors when raw `old_string`
+matching is too brittle:
+
+```bash
+tedit ts-select src/server.ts
+tedit ts-select src/server.ts fn:apiGateMetadata --json
+tedit ts-edit src/server.ts fn:apiGateMetadata --body $'\n  return buildMetadata();\n' --write
+tedit ts-edit src/server.ts fn:startServer --insert-before $'function setup() {}\n' --write
+tedit ts-move src/server.ts fn:apiGateMetadata --before fn:startServer --dry-run
+tedit ts-move src/server.ts fn:apiGateMetadata --before fn:startServer --confirm-trivia --write
+```
+
+Selectors are intentionally narrow: `fn:name`, `class:Name`,
+`method:Owner.name`, `prop:name`, `prop:Owner.name`, and `var:name`.
+`ts-edit --body` replaces only the inside of the target block body; tedit owns
+the outer braces and parse-verifies the result. `ts-move` is dry-run-first in
+practice: write calls require `--confirm-trivia` after reviewing the carried
+comment hints, with optional `--take trivia_id` / `--drop trivia_id` overrides.
 
 Flow files use a compact `action`/`out` shape:
 

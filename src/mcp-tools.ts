@@ -16,6 +16,7 @@ import { getOptionalAdapterForFile } from "./core/registry.js";
 import { runAstEdit as runAstEditEngine, runAstSelect, runScanStrings } from "./ast-tools.js";
 import { inspectRange, searchText } from "./search-tools.js";
 import { historyTrace } from "./history-tools.js";
+import { runTsEdit as runTsEditEngine, runTsMove as runTsMoveEngine, runTsSelect } from "./ts-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { formatAgentResult, outputOptionsFromRecord } from "./output.js";
@@ -362,6 +363,59 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       ...writeFlagSchema,
     },
     handler: runAstEditTool,
+  },
+  {
+    name: "ts_select",
+    title: "TS Select",
+    description: "Read-only TS/JS named declaration selector. Examples: fn:apiGateMetadata, class:Server, method:Server.start, prop:configKey, var:cache.",
+    category: "ast",
+    aliases: ["ts-select", "declaration_select", "code_block_select"],
+    bestFor: ["large plain-TS files", "named declaration discovery", "finding exact source ranges before ts_edit or ts_move"],
+    inputSchema: {
+      file: fileSchema,
+      selector: z.string().min(1).optional().describe("Optional declaration selector: fn:name, class:Name, method:Owner.name, prop:name, prop:Owner.name, or var:name."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runTsSelectTool,
+  },
+  {
+    name: "ts_edit",
+    title: "TS Edit",
+    description: "Safely edit TS/JS named declarations: replace only the tool-owned block body, or insert source before/after a declaration. Uses source-range patches and parse verification.",
+    category: "ast",
+    aliases: ["ts-edit", "declaration_edit", "body_replace"],
+    bestFor: ["large plain-TS files", "function body replacement without authoring outer braces", "insert before/after a named declaration"],
+    inputSchema: {
+      file: fileSchema,
+      selector: z.string().min(1).describe("Declaration selector: fn:name, class:Name, method:Owner.name, prop:name, prop:Owner.name, or var:name."),
+      action: z.enum(["replace-body", "insert-before", "insert-after"]).optional().describe("Optional when body, insertBefore, or insertAfter makes the action unambiguous."),
+      body: z.string().optional().describe("Replacement for the inside of the target block body. Do not include the outer braces."),
+      insertBefore: z.string().optional().describe("Source to insert before the selected declaration."),
+      insertAfter: z.string().optional().describe("Source to insert after the selected declaration."),
+      ...writeFlagSchema,
+    },
+    handler: runTsEditTool,
+  },
+  {
+    name: "ts_move",
+    title: "TS Move",
+    description: "Move a TS/JS named declaration before or after another declaration as a source-range cut/paste with compact carried-trivia hints and take/drop overrides.",
+    category: "ast",
+    aliases: ["ts-move", "declaration_move", "declaration_reorder"],
+    bestFor: ["safe declaration reorder", "moving functions with owned comments", "dry-run trivia review before write"],
+    inputSchema: {
+      file: fileSchema,
+      target: z.string().min(1).describe("Declaration selector to move."),
+      before: z.string().min(1).optional().describe("Move target before this declaration selector. Mutually exclusive with after."),
+      after: z.string().min(1).optional().describe("Move target after this declaration selector. Mutually exclusive with before."),
+      take: z.union([z.string(), z.array(z.string())]).optional().describe("Trivia id or ids to carry in addition to the default."),
+      drop: z.union([z.string(), z.array(z.string())]).optional().describe("Trivia id or ids to leave behind from the default carried set."),
+      confirmTrivia: z.boolean().optional().describe("Required for writes after reviewing carried/adjacent trivia hints."),
+      sourceHash: z.string().optional().describe("Optional source hash from a prior dry-run; rejects stale writes."),
+      includeTriviaContent: z.boolean().optional().describe("Include full trivia text, not just compact previews."),
+      ...writeFlagSchema,
+    },
+    handler: runTsMoveTool,
   },
   {
     name: "analyze_state",
@@ -1163,6 +1217,42 @@ function runAstEditTool(args: unknown): unknown {
   }), input);
 }
 
+function runTsSelectTool(args: unknown): unknown {
+  const input = recordInput(args, "ts_select");
+  return withAgentFields(runTsSelect(requiredString(input.file, "ts_select requires file."), optionalString(input.selector)), input);
+}
+
+function runTsEditTool(args: unknown): unknown {
+  const input = recordInput(args, "ts_edit");
+  const action = optionalString(input.action);
+  if (action !== undefined && action !== "replace-body" && action !== "insert-before" && action !== "insert-after") {
+    fail("INVALID_MCP_INPUT", "ts_edit action must be replace-body, insert-before, or insert-after.");
+  }
+  return withAgentFields(runTsEditEngine(requiredString(input.file, "ts_edit requires file."), {
+    selector: requiredString(input.selector, "ts_edit requires selector."),
+    ...(action === undefined ? {} : { action }),
+    ...(input.body === undefined ? {} : { body: requiredString(input.body, "ts_edit body must be a string.") }),
+    ...(input.insertBefore === undefined ? {} : { insertBefore: requiredString(input.insertBefore, "ts_edit insertBefore must be a string.") }),
+    ...(input.insertAfter === undefined ? {} : { insertAfter: requiredString(input.insertAfter, "ts_edit insertAfter must be a string.") }),
+    ...writeFlagsFromInput(input),
+  }), input);
+}
+
+function runTsMoveTool(args: unknown): unknown {
+  const input = recordInput(args, "ts_move");
+  return withAgentFields(runTsMoveEngine(requiredString(input.file, "ts_move requires file."), {
+    target: requiredString(input.target, "ts_move requires target."),
+    before: optionalString(input.before),
+    after: optionalString(input.after),
+    take: stringArray(input.take, "take"),
+    drop: stringArray(input.drop, "drop"),
+    confirmTrivia: booleanValue(input.confirmTrivia),
+    sourceHash: optionalString(input.sourceHash),
+    includeTriviaContent: booleanValue(input.includeTriviaContent),
+    ...writeFlagsFromInput(input),
+  }), input);
+}
+
 function astEditSelectorFromInput(input: JsonRecord): string {
   const selector = optionalString(input.selector);
   const stringValue = optionalString(input.string);
@@ -1211,13 +1301,13 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "Use inspect_range for sed-style line context plus parse status and edit-ready findLines suggestions.",
       "Use search_text for rg/grep-style raw text discovery when the next step is likely a tedit edit.",
       "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
-      "Set TEDIT_MCP_PROFILE=all for JSX, AST, history, template, and refactor helpers.",
+      "Set TEDIT_MCP_PROFILE=all for JSX, TS declaration, AST, history, template, and refactor helpers.",
     ],
     no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
     profile: {
       current: teditMcpProfileFromEnv(),
       default_surface: "Agent profile exposes only actions, edit, multiedit, patch, file_write, inspect_range, search_text, and verify_file.",
-      advanced_surface: "Set TEDIT_MCP_PROFILE=all to expose JSX, AST, history, template, extract, plan, and legacy fine-grained tools.",
+      advanced_surface: "Set TEDIT_MCP_PROFILE=all to expose JSX, TS declaration, AST, history, template, extract, plan, and legacy fine-grained tools.",
     },
     tool_priorities: [
       "search_text or inspect_range for target discovery",
@@ -1226,7 +1316,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "file_write for whole-file generation, scaffold mode, or template mode",
       "verify_file before or after edits when parser coverage matters",
       "patch only when the change is already a diff",
-      "TEDIT_MCP_PROFILE=all for JSX/AST/history/refactor/template helpers",
+      "TEDIT_MCP_PROFILE=all for JSX/TS declaration/AST/history/refactor/template helpers",
     ],
     workflow_guide: [
       { when: "need target context before editing", first_tool: "search_text", then: "inspect_range or edit", reason: "turn raw text matches into line ranges and edit-ready suggestions" },
@@ -1234,6 +1324,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { when: "same change across several places or files", first_tool: "search_text", then: "multiedit", reason: "search_text can emit a grouped multiedit spec; multiedit applies atomically" },
       { when: "already have a generated diff", first_tool: "patch", then: "verify_file for important touched files", reason: "patch accepts unified diff and Codex apply-patch envelopes" },
       { when: "create or overwrite a whole file", first_tool: "file_write", then: "verify_file", reason: "mode=write/scaffold/template keeps generation behind write policy and parse verification" },
+      { when: "large plain-TS named function or class edit", first_tool: "ts_select", then: "ts_edit or ts_move", reason: "named declaration selectors avoid brittle old_string ranges and keep braces/trivia mechanical" },
       { when: "hardcoded JS/TS/JSX strings", first_tool: "scan_strings", then: "ast_select or ast_edit", reason: "AST scanning covers code strings that structural find does not" },
       { when: "structural JSX/markup mutation", first_tool: "actions with file", then: "TEDIT_MCP_PROFILE=all structural tools or CLI chain", reason: "agent profile stays small; advanced profile exposes fine-grained structural actions" },
       { when: "need change history before risky edit", first_tool: "history_trace", then: "inspect_range or edit", reason: "history_trace avoids hand-assembling blame/log commands" },
@@ -1258,6 +1349,8 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "structural JSX/markup mutation", tool: "jsx_select, then jsx_node/jsx_attr/jsx_content/imports", reason: "selector/id based edits avoid brittle text spans" },
       { intent: "hardcoded text audit", tool: "scan_strings", reason: "AST scan covers JSX text/attrs plus JS/TS string literals; find remains structural" },
       { intent: "code AST discovery or one safe string replacement", tool: "ast_select, then ast_edit", reason: "AST shortcuts target common string/object/JSX text replacements" },
+      { intent: "large TS declaration body edit", tool: "ts_select, then ts_edit", reason: "selector resolves the named declaration and tedit owns the outer braces" },
+      { intent: "reorder TS declarations", tool: "ts_move", reason: "dry-run-first source-range move with carried trivia hints and take/drop overrides" },
     ],
     refactor_loop: [
       { intent: "small confident JSX component extraction", tool: "extract_component", required: ["mode=direct", "from", "selector", "to", "name"], reason: "direct dry-run/write extraction with prop inference and parser guardrails" },
@@ -1282,6 +1375,9 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       scan_strings: { file: "src/Page.tsx", contains: "삭제" },
       ast_select: { file: "src/Page.tsx", selector: "ObjectProperty[key.name=\"label\"] > StringLiteral" },
       ast_edit: { file: "src/Page.tsx", call: "toast.error", replace: "Failed", write: true },
+      ts_select: { file: "src/server.ts", selector: "fn:apiGateMetadata" },
+      ts_edit: { file: "src/server.ts", selector: "fn:apiGateMetadata", body: "\n  return buildMetadata();\n", write: true },
+      ts_move: { file: "src/server.ts", target: "fn:apiGateMetadata", before: "fn:startServer", dryRun: true },
       chain_workspace: {
         steps: [
           { action: "extract", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard" },
