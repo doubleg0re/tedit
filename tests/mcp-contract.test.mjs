@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,11 +10,13 @@ test("mcp default profile tools share compact agent contracts", () => {
   const defaultTools = toolsForMcpProfile("agent").map((tool) => tool.name).sort();
   assert.deepEqual(defaultTools, [
     "actions",
+    "delete_file",
     "edit",
     "file_write",
     "inspect_range",
     "multiedit",
     "patch",
+    "rename_file",
     "search_text",
     "verify_file",
   ].sort());
@@ -115,6 +117,25 @@ test("mcp default profile tools share compact agent contracts", () => {
   });
   assertMutationContract(patch, workspace.notes, { changedCount: 1, writtenCount: 0, persisted: false });
 
+  const deleted = runMcpTool("delete_file", {
+    file: workspace.deleteMe,
+    dryRun: true,
+    diffMode: "stats",
+  });
+  assertMutationContract(deleted, workspace.deleteMe, { changedCount: 1, writtenCount: 0, persisted: false });
+  assert.equal(deleted.files[0].change, "deleted");
+  assert.equal(existsSync(workspace.deleteMe), true);
+
+  const renamed = runMcpTool("rename_file", {
+    file: workspace.renameOld,
+    to: workspace.renameNew,
+    write: true,
+    diffMode: "stats",
+  });
+  assertMutationContract(renamed, undefined, { changedCount: 2, writtenCount: 2, persisted: true });
+  assert.equal(existsSync(workspace.renameOld), false);
+  assert.equal(readFileSync(workspace.renameNew, "utf8"), "move me\n");
+
   const written = runMcpTool("file_write", {
     mode: "write",
     file: workspace.generated,
@@ -135,10 +156,15 @@ function createWorkspace() {
   const notes = join(root, "notes.md");
   const config = join(root, "config.json");
   const generated = join(root, "generated.json");
+  const deleteMe = join(root, "delete-me.txt");
+  const renameOld = join(root, "old-name.txt");
+  const renameNew = join(root, "new-name.txt");
   writeFileSync(page, "export function Page() {\n  return <button>삭제</button>;\n}\n");
   writeFileSync(notes, "# Notes\nstatus: draft\n");
   writeFileSync(config, "{\"enabled\":true}\n");
-  return { root, src, page, notes, config, generated };
+  writeFileSync(deleteMe, "remove me\n");
+  writeFileSync(renameOld, "move me\n");
+  return { root, src, page, notes, config, generated, deleteMe, renameOld, renameNew };
 }
 
 function assertMutationContract(result, path, expected) {

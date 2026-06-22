@@ -145,6 +145,33 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
     handler: runPatchTool,
   },
   {
+    name: "delete_file",
+    title: "Delete File",
+    description: "Delete one existing file through tedit's atomic workspace transaction and write policy. Use patch for coordinated delete+edit batches.",
+    category: "edit",
+    aliases: ["file_delete", "remove_file"],
+    bestFor: ["deleting generated files", "small rollback cleanup", "dry-run delete confirmation"],
+    inputSchema: {
+      file: fileSchema,
+      ...writeFlagSchema,
+    },
+    handler: runDeleteFileTool,
+  },
+  {
+    name: "rename_file",
+    title: "Rename File",
+    description: "Rename one existing file through tedit's atomic workspace transaction and write policy. Use patch for coordinated rename+edit batches.",
+    category: "edit",
+    aliases: ["file_rename", "move_file"],
+    bestFor: ["renaming generated files", "moving one file", "dry-run rename confirmation"],
+    inputSchema: {
+      file: fileSchema,
+      to: z.string().min(1).describe("Destination file path."),
+      ...writeFlagSchema,
+    },
+    handler: runRenameFileTool,
+  },
+  {
     name: "write_file",
     title: "Write File",
     description: "Safer replacement for Write on complete file contents: create or overwrite through tedit write policy and parse verification.",
@@ -941,6 +968,8 @@ const AGENT_MCP_TOOL_NAMES = new Set([
   "edit",
   "multiedit",
   "patch",
+  "delete_file",
+  "rename_file",
   "file_write",
   "inspect_range",
   "search_text",
@@ -1095,6 +1124,19 @@ function runMultieditTool(args: unknown): unknown {
 function runPatchTool(args: unknown): unknown {
   const input = recordInput(args, "patch");
   return withAgentFields(runPatchInput(requiredString(input.patch, "patch requires patch."), writeFlagsFromInput(input)), input);
+}
+
+function runDeleteFileTool(args: unknown): unknown {
+  const input = recordInput(args, "delete_file");
+  const filePath = requiredPatchPath(input.file, "delete_file requires file.");
+  return withAgentFields(runPatchInput(`*** Begin Patch\n*** Delete File: ${filePath}\n*** End Patch\n`, writeFlagsFromInput(input)), input);
+}
+
+function runRenameFileTool(args: unknown): unknown {
+  const input = recordInput(args, "rename_file");
+  const filePath = requiredPatchPath(input.file, "rename_file requires file.");
+  const to = requiredPatchPath(input.to, "rename_file requires to.");
+  return withAgentFields(runPatchInput(`*** Begin Patch\n*** Update File: ${filePath}\n*** Move to: ${to}\n*** End Patch\n`, writeFlagsFromInput(input)), input);
 }
 
 function runActionsTool(args: unknown): unknown {
@@ -1306,13 +1348,15 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
     profile: {
       current: teditMcpProfileFromEnv(),
-      default_surface: "Agent profile exposes only actions, edit, multiedit, patch, file_write, inspect_range, search_text, and verify_file.",
+      default_surface: "Agent profile exposes only actions, edit, multiedit, patch, delete_file, rename_file, file_write, inspect_range, search_text, and verify_file.",
       advanced_surface: "Set TEDIT_MCP_PROFILE=all to expose JSX, TS declaration, AST, history, template, extract, plan, and legacy fine-grained tools.",
+      refresh_hint: "If actions lists a tool but the host does not expose it as callable, restart or refresh the MCP host; tool schema/name changes are captured only when the host reloads the server.",
     },
     tool_priorities: [
       "search_text or inspect_range for target discovery",
       "edit for one localized change",
       "multiedit for repeated or cross-file changes",
+      "delete_file or rename_file for one-file cleanup/moves",
       "file_write for whole-file generation, scaffold mode, or template mode",
       "verify_file before or after edits when parser coverage matters",
       "patch only when the change is already a diff",
@@ -1323,6 +1367,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { when: "one localized replacement/insertion/deletion", first_tool: "edit", then: "rerun with write=true after dry-run if needed", reason: "exact/fuzzy/regex/line strategies plus parser guardrails" },
       { when: "same change across several places or files", first_tool: "search_text", then: "multiedit", reason: "search_text can emit a grouped multiedit spec; multiedit applies atomically" },
       { when: "already have a generated diff", first_tool: "patch", then: "verify_file for important touched files", reason: "patch accepts unified diff and Codex apply-patch envelopes" },
+      { when: "delete or rename one file", first_tool: "delete_file or rename_file", then: "patch for multi-file transactions", reason: "single-file cleanup no longer requires hand-authored patch text" },
       { when: "create or overwrite a whole file", first_tool: "file_write", then: "verify_file", reason: "mode=write/scaffold/template keeps generation behind write policy and parse verification" },
       { when: "large plain-TS named function or class edit", first_tool: "ts_select", then: "ts_edit or ts_move", reason: "named declaration selectors avoid brittle old_string ranges and keep braces/trivia mechanical" },
       { when: "hardcoded JS/TS/JSX strings", first_tool: "scan_strings", then: "ast_select or ast_edit", reason: "AST scanning covers code strings that structural find does not" },
@@ -1340,6 +1385,8 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },
       { intent: "several coordinated text edits", tool: "multiedit", reason: "atomic application across files and same-file sequential edits" },
       { intent: "already generated diff", tool: "patch", reason: "atomic unified diff/apply-patch input with verification" },
+      { intent: "delete one file", tool: "delete_file", reason: "dry-run/write delete without authoring a patch envelope" },
+      { intent: "rename one file", tool: "rename_file", reason: "dry-run/write move without authoring a patch envelope" },
       { intent: "line range context before editing", tool: "inspect_range", reason: "sed-style context plus parser status and edit findLines suggestion" },
       { intent: "raw text search before editing", tool: "search_text", reason: "grep-style candidates with inspect/edit/multiedit follow-ups" },
       { intent: "who changed this or when", tool: "history_trace", reason: "git blame/log history without hand-assembling commands" },
@@ -1363,6 +1410,8 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       edit: { file: "src/Page.tsx", find: "oldLabel", replace: "newLabel", dryRun: true },
       multiedit: { edits: [{ file: "src/Page.tsx", find: "삭제", replace: "Delete", replaceAll: true, expectCount: 2 }], dryRun: true },
       patch: { patch: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ ...", dryRun: true },
+      delete_file: { file: "src/generated/LoginButtons.tsx", dryRun: true },
+      rename_file: { file: "src/old.ts", to: "src/new.ts", dryRun: true },
       file_write: { mode: "write", file: "src/generated.json", source: "{\"ok\":true}\n", write: true },
       extract_component: { mode: "direct", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", write: true },
       extract_component_plan: { mode: "plan", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", planOut: ".tedit/plans/extract-card.json" },
@@ -1385,6 +1434,12 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
         ],
         write: true,
       },
+    },
+    cli_fallbacks: {
+      edit: "node dist/cli.js edit src/Page.tsx --find '<LoginButtons variant=\"inline\" />' --replace '<button>로그인</button>' --write --json",
+      multiedit: "node dist/cli.js multiedit --from-stdin --write < edits.json",
+      patch_delete: "printf '*** Begin Patch\\n*** Delete File: src/generated/LoginButtons.tsx\\n*** End Patch\\n' | node dist/cli.js patch --stdin --write --json",
+      patch_rename: "printf '*** Begin Patch\\n*** Update File: src/old.ts\\n*** Move to: src/new.ts\\n*** End Patch\\n' | node dist/cli.js patch --stdin --write --json",
     },
     ...(filePath ? { file: filePath, file_rules: ruleNames } : {}),
   };
@@ -1878,6 +1933,12 @@ function pick(record: JsonRecord, ...keys: string[]): unknown {
 function requiredValue(value: unknown, message: string): unknown {
   if (value === undefined) fail("INVALID_MCP_INPUT", message);
   return value;
+}
+
+function requiredPatchPath(value: unknown, message: string): string {
+  const path = requiredString(value, message);
+  if (path.includes("\n") || path.includes("\r")) fail("INVALID_MCP_INPUT", "Patch-backed file paths cannot contain newlines.");
+  return path;
 }
 
 function requiredString(value: unknown, message: string): string {

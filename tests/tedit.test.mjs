@@ -1860,15 +1860,19 @@ test("mcp server lists tools and runs universal edit", async () => {
     const toolNames = tools.tools.map((tool) => tool.name);
     assert.deepEqual(toolNames.sort(), [
       "actions",
+      "delete_file",
       "edit",
       "file_write",
       "inspect_range",
       "multiedit",
       "patch",
+      "rename_file",
       "search_text",
       "verify_file",
     ].sort());
     assert.ok(tools.tools.some((tool) => tool.name === "edit"));
+    assert.ok(tools.tools.some((tool) => tool.name === "delete_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "rename_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "file_write"));
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "inspect_range"));
@@ -1901,6 +1905,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(actionsDiscovery.isError, undefined);
     assert.ok(actionsDiscovery.structuredContent.actions.includes("multiedit"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("delete_file"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("rename_file"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("file_write"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("inspect_range"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("search_text"));
@@ -1941,11 +1947,13 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(actionsDiscovery.structuredContent.profiles.current, "agent");
     assert.deepEqual(actionsDiscovery.structuredContent.profiles.agent.sort(), [
       "actions",
+      "delete_file",
       "edit",
       "file_write",
       "inspect_range",
       "multiedit",
       "patch",
+      "rename_file",
       "search_text",
       "verify_file",
     ].sort());

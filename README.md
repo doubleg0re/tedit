@@ -190,8 +190,8 @@ than raw text.
 The default MCP profile is `agent`, which keeps the callable tool list small
 and intent-oriented:
 
-`actions`, `edit`, `multiedit`, `patch`, `file_write`, `inspect_range`,
-`search_text`, and `verify_file`.
+`actions`, `edit`, `multiedit`, `patch`, `delete_file`, `rename_file`,
+`file_write`, `inspect_range`, `search_text`, and `verify_file`.
 
 `inspect_range` and `search_text` bridge `sed`/`rg` style workflows into
 tedit's edit-ready structured results. `verify_file` accepts either `file` or
@@ -210,6 +210,8 @@ loop is:
   line-range change.
 - `multiedit` after `search_text` when the same change spans several places or
   files.
+- `delete_file` or `rename_file` for one-file cleanup or moves without
+  hand-authoring a patch envelope.
 - `patch` only when the change already exists as a unified diff or apply-patch
   envelope.
 - `file_write` for whole-file generation through `mode: "write"`,
@@ -223,6 +225,11 @@ Failure responses are part of the workflow: `MATCH_NONE`,
 `MATCH_NOT_UNIQUE`, `PARSE_BROKEN_AFTER_EDIT`, `AST_MATCH_NONE`, and
 `PATCH_HUNK_FAILED` include bounded `suggestions` so an agent can inspect,
 narrow, or retry without guessing.
+
+If `actions` lists a tool but the MCP host does not expose it as callable,
+restart or refresh the MCP host. Running code changes are picked up by the
+runner subprocess, but tool schema/name changes require the host to reload the
+server.
 
 Set `TEDIT_MCP_PROFILE=all` (or `TEDIT_MCP_EXPOSE_ADVANCED=true`) to expose
 the advanced and legacy fine-grained tools as MCP tools too, including

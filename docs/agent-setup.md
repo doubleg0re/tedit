@@ -106,6 +106,7 @@ Use the `tedit` MCP tools for routine file mutations when available.
 - Use `mcp__tedit__edit` for one localized replacement, insertion, deletion, regex, fuzzy, or line-range edit.
 - Use `mcp__tedit__multiedit` for coordinated repeated edits across one or more files.
 - Use `mcp__tedit__patch` only when the change already exists as a unified diff or apply-patch envelope.
+- Use `mcp__tedit__delete_file` or `mcp__tedit__rename_file` for one-file cleanup or moves.
 - Use `mcp__tedit__file_write` for whole-file generation through `mode: "write"`, `mode: "scaffold"`, or `mode: "template"`.
 - Use `mcp__tedit__verify_file` with `files` after related edits when parser coverage matters.
 - Treat `suggestions` on failures as the retry plan before guessing.
