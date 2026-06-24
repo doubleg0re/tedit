@@ -18,6 +18,9 @@ test("mcp default profile tools share compact agent contracts", () => {
     "patch",
     "rename_file",
     "search_text",
+    "ts_edit",
+    "ts_move",
+    "ts_select",
     "verify_file",
   ].sort());
 
@@ -93,6 +96,40 @@ test("mcp default profile tools share compact agent contracts", () => {
   assertMutationContract(edit, workspace.notes, { changedCount: 1, writtenCount: 0, persisted: false });
   assert.equal(edit.next[0], "rerun with write=true to apply");
 
+  const verifiedEdit = runMcpTool("edit", {
+    file: workspace.verifyPass,
+    find: "before",
+    replace: "after",
+    write: true,
+    verify: { cmd: [process.execPath, "-e", "process.exit(0)"], timeoutMs: 5000 },
+  });
+  assert.equal(verifiedEdit.ok, true);
+  assert.equal(verifiedEdit.verify.passed, true);
+  assert.match(verifiedEdit.summary, /verification passed/);
+  assert.equal(readFileSync(workspace.verifyPass, "utf8"), "after\n");
+
+  const failedVerifiedEdit = runMcpTool("edit", {
+    file: workspace.verifyFail,
+    find: "before",
+    replace: "after",
+    write: true,
+    verify: { cmd: [process.execPath, "-e", "console.error('src/Page.tsx(1,2): error TS2322: Bad'); process.exit(7)"], timeoutMs: 5000, rollbackOnFail: true },
+  });
+  assert.equal(failedVerifiedEdit.ok, false);
+  assert.equal(failedVerifiedEdit.verification_failed, true);
+  assert.equal(failedVerifiedEdit.verify.passed, false);
+  assert.equal(failedVerifiedEdit.verify.exitCode, 7);
+  assert.deepEqual(failedVerifiedEdit.verify.diagnostics[0], {
+    file: "src/Page.tsx",
+    line: 1,
+    column: 2,
+    code: "TS2322",
+    message: "Bad",
+    source: "tsc",
+  });
+  assert.equal(failedVerifiedEdit.verify.rollback.attempted, true);
+  assert.equal(readFileSync(workspace.verifyFail, "utf8"), "before\n");
+
   const multiedit = runMcpTool("multiedit", {
     edits: [
       { file: workspace.notes, find: "draft", replace: "queued" },
@@ -159,12 +196,16 @@ function createWorkspace() {
   const deleteMe = join(root, "delete-me.txt");
   const renameOld = join(root, "old-name.txt");
   const renameNew = join(root, "new-name.txt");
+  const verifyPass = join(root, "verify-pass.txt");
+  const verifyFail = join(root, "verify-fail.txt");
   writeFileSync(page, "export function Page() {\n  return <button>삭제</button>;\n}\n");
   writeFileSync(notes, "# Notes\nstatus: draft\n");
   writeFileSync(config, "{\"enabled\":true}\n");
   writeFileSync(deleteMe, "remove me\n");
   writeFileSync(renameOld, "move me\n");
-  return { root, src, page, notes, config, generated, deleteMe, renameOld, renameNew };
+  writeFileSync(verifyPass, "before\n");
+  writeFileSync(verifyFail, "before\n");
+  return { root, src, page, notes, config, generated, deleteMe, renameOld, renameNew, verifyPass, verifyFail };
 }
 
 function assertMutationContract(result, path, expected) {

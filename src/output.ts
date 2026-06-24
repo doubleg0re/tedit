@@ -143,7 +143,7 @@ function compactMutationResult(record: JsonRecord, files: AgentFileSummary[], op
   const next = agentNextSteps(record, files, options);
   const suggestions = agentSuggestions(record);
   const compact: JsonRecord = {
-    ok: true,
+    ok: !verificationFailed(record),
     kind: "mutation",
     summary: agentSummary(record, files),
   };
@@ -165,6 +165,8 @@ function compactMutationResult(record: JsonRecord, files: AgentFileSummary[], op
   if (warnings.length > 0) compact.warnings = warnings;
   const guardrails = collectGuardrails(record);
   if (guardrails.length > 0) compact.guardrails = guardrails;
+  if (record.verify && typeof record.verify === "object" && !Array.isArray(record.verify)) compact.verify = record.verify;
+  if (record.verification_failed === true) compact.verification_failed = true;
   if (typeof record.plan === "string") compact.plan = record.plan;
   if (next.length > 0) compact.next = next;
   if (suggestions.length > 0) compact.suggestions = suggestions;
@@ -672,9 +674,20 @@ function agentSummary(record: JsonRecord, files: AgentFileSummary[]): string {
   const changed = files.filter((file) => file.changed).length;
   const written = files.filter((file) => file.written).length;
   const suffix = parseSummarySuffix(files);
-  if (written > 0) return String(written) + " " + plural("file", written) + " written" + suffix;
+  const verifySuffix = verificationFailed(record) ? "; verification failed" : verificationPassedStatus(record) ? "; verification passed" : "";
+  if (written > 0) return String(written) + " " + plural("file", written) + " written" + suffix + verifySuffix;
   if (changed > 0) return String(changed) + " " + plural("file", changed) + " would change" + suffix;
   return "no file changes" + suffix;
+}
+
+function verificationFailed(record: JsonRecord): boolean {
+  return record.verification_failed === true || verificationPassedStatus(record) === false;
+}
+
+function verificationPassedStatus(record: JsonRecord): boolean | undefined {
+  if (!record.verify || typeof record.verify !== "object" || Array.isArray(record.verify)) return undefined;
+  const passed = (record.verify as JsonRecord).passed;
+  return typeof passed === "boolean" ? passed : undefined;
 }
 
 function parseSummarySuffix(files: AgentFileSummary[]): string {

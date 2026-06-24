@@ -191,7 +191,8 @@ The default MCP profile is `agent`, which keeps the callable tool list small
 and intent-oriented:
 
 `actions`, `edit`, `multiedit`, `patch`, `delete_file`, `rename_file`,
-`file_write`, `inspect_range`, `search_text`, and `verify_file`.
+`ts_select`, `ts_edit`, `ts_move`, `file_write`, `inspect_range`,
+`search_text`, and `verify_file`.
 
 `inspect_range` and `search_text` bridge `sed`/`rg` style workflows into
 tedit's edit-ready structured results. `verify_file` accepts either `file` or
@@ -255,6 +256,32 @@ work, then narrow with `ast_select` and apply one safe string replacement with
 Mutating MCP tools are described as safer replacements for routine Edit, Write,
 MultiEdit, and Patch calls when parser guardrails, dry-runs, git-aware write
 policy, or deterministic retry hints are useful.
+
+Mutating MCP tools also accept an optional post-write `verify` command. It is
+off by default because every repository has different validation costs and
+commands. Prefer argv arrays over shell strings when possible:
+
+```json
+{
+  "file": "apps/web/src/app/book/layout.tsx",
+  "find": "<LoginButtons variant=\"inline\" />",
+  "replace": "<button onClick={() => startLogin()}>로그인</button>",
+  "write": true,
+  "verify": {
+    "cmd": ["npx", "tsc", "-p", "apps/web/tsconfig.json", "--noEmit"],
+    "timeoutMs": 30000,
+    "rollbackOnFail": false
+  }
+}
+```
+
+`verify` may be a shell command string, an argv array, or an object with
+`cmd`, optional `args`, `cwd`, `timeoutMs`, and `rollbackOnFail`. Verification
+runs only after files are written. A failed verify returns the edit result with
+`verify.passed: false`; recognized TypeScript compiler output also adds
+`verify.diagnostics[]` entries with file, line, column, code, and message. When
+`rollbackOnFail` is true, tedit restores the changed files from the pre-edit
+snapshot.
 
 Mutating MCP tools default to compact machine-readable results for agent loops:
 `ok`, `kind`, `summary`, `changedCount`, `writtenCount`, `files[].path`,

@@ -14,6 +14,7 @@ test("actions guidance gives agents a stable workflow decision table", () => {
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("several places") && row.then === "multiedit"));
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("generated diff") && row.first_tool === "patch"));
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("delete or rename") && row.first_tool === "delete_file or rename_file"));
+  assert.ok(guide.workflow_guide.some((row) => row.when.includes("validation") && row.first_tool === "edit/multiedit/patch with verify"));
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("whole file") && row.first_tool === "file_write"));
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("hardcoded") && row.first_tool === "scan_strings"));
 
@@ -32,6 +33,7 @@ test("actions guidance gives agents a stable workflow decision table", () => {
     "patch",
     "delete_file",
     "rename_file",
+    "edit_with_verify",
     "file_write",
     "scan_strings",
     "ast_edit",
@@ -39,6 +41,7 @@ test("actions guidance gives agents a stable workflow decision table", () => {
     "ast_edit",
     "delete_file",
     "edit",
+    "edit_with_verify",
     "file_write",
     "multiedit",
     "patch",

@@ -1868,11 +1868,17 @@ test("mcp server lists tools and runs universal edit", async () => {
       "patch",
       "rename_file",
       "search_text",
+      "ts_edit",
+      "ts_move",
+      "ts_select",
       "verify_file",
     ].sort());
     assert.ok(tools.tools.some((tool) => tool.name === "edit"));
     assert.ok(tools.tools.some((tool) => tool.name === "delete_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "rename_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "ts_select"));
+    assert.ok(tools.tools.some((tool) => tool.name === "ts_edit"));
+    assert.ok(tools.tools.some((tool) => tool.name === "ts_move"));
     assert.ok(tools.tools.some((tool) => tool.name === "file_write"));
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "inspect_range"));
@@ -1907,6 +1913,9 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("delete_file"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("rename_file"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("ts_select"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("ts_edit"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("ts_move"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("file_write"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("inspect_range"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("search_text"));
@@ -1955,6 +1964,9 @@ test("mcp server lists tools and runs universal edit", async () => {
       "patch",
       "rename_file",
       "search_text",
+      "ts_edit",
+      "ts_move",
+      "ts_select",
       "verify_file",
     ].sort());
     assert.equal(actionsDiscovery.structuredContent.profiles.agent.includes("jsx_attr"), false);

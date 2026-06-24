@@ -20,8 +20,8 @@ import { runTsEdit as runTsEditEngine, runTsMove as runTsMoveEngine, runTsSelect
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { formatAgentResult, outputOptionsFromRecord } from "./output.js";
-import { runMultiedit, runMultieditInput } from "./multiedit.js";
-import { runPatchInput } from "./patch.js";
+import { parseMultieditInput, runMultiedit, runMultieditInput } from "./multiedit.js";
+import { parsePatchInput, runPatchInput } from "./patch.js";
 import { analyzeState, qualityWarnings } from "./quality.js";
 import { runRefactorState } from "./refactor-state.js";
 import { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, writePlanFile } from "./refactor-plan.js";
@@ -29,6 +29,7 @@ import type { ExtractOptions, HelperPolicy } from "./extract.js";
 import { runWorkspaceFlow, type WorkspaceFlowOptions, type WorkspaceFlowStep } from "./workspace-flow.js";
 import { buildScaffoldSource, listTemplates, loadTemplateSpec, parseParams, type ScaffoldSpec } from "./scaffold.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
+import { applyPostVerify, captureRestorePoints, verifySpecFromInput, type RestorePoint } from "./verify-command.js";
 
 export type TeditMcpTool = {
   name: string;
@@ -80,6 +81,11 @@ const writeFlagSchema = {
   inlineDiffMaxHunks: z.number().int().positive().optional().describe("Maximum hunk count to inline when diffMode is auto."),
   diffArtifactDir: z.string().min(1).optional().describe("Artifact directory for large auto diffs; must stay inside the current working directory."),
   diffArtifacts: z.boolean().optional().describe("Allow large diff artifact writes. Dry-runs only write artifacts when this is explicitly true."),
+  verify: z.unknown().optional().describe("Optional post-write verify command: string, argv array, or {cmd, args, timeoutMs, cwd, rollbackOnFail}. Runs only after files are written."),
+  verifyCommand: z.unknown().optional().describe("Alias for verify. Prefer verify.cmd as an argv array for safer execution."),
+  verify_command: z.unknown().optional().describe("Alias for verifyCommand."),
+  rollbackOnVerifyFail: z.boolean().optional().describe("Top-level rollback alias for verify command strings/arrays. Prefer verify.rollbackOnFail."),
+  rollback_on_verify_fail: z.boolean().optional().describe("Alias for rollbackOnVerifyFail."),
 } satisfies z.ZodRawShape;
 
 const fileSchema = z.string().min(1).describe("Target file path.");
@@ -970,6 +976,9 @@ const AGENT_MCP_TOOL_NAMES = new Set([
   "patch",
   "delete_file",
   "rename_file",
+  "ts_select",
+  "ts_edit",
+  "ts_move",
   "file_write",
   "inspect_range",
   "search_text",
@@ -1037,6 +1046,7 @@ function runFileWriteTool(args: unknown): unknown {
 function runWholeFileTool(input: JsonRecord, label: string, kind: string, source: string, extraResult: Record<string, unknown> = {}): unknown {
   const filePath = requiredString(input.file, label + " requires file.");
   const existed = existsSync(filePath);
+  const restorePoints = captureRestorePoints([filePath]);
   if (existed && !booleanValue(input.overwrite)) {
     fail("FILE_EXISTS", "Refusing to overwrite existing file: " + filePath + ". Pass overwrite=true to bypass.");
   }
@@ -1056,7 +1066,7 @@ function runWholeFileTool(input: JsonRecord, label: string, kind: string, source
     writeFileSync(filePath, source);
   }
 
-  return withAgentFields({
+  return withVerifiedAgentFields({
     success: true,
     file: filePath,
     existed,
@@ -1067,12 +1077,13 @@ function runWholeFileTool(input: JsonRecord, label: string, kind: string, source
     warnings,
     write_policy: writePolicyReport(policy, backup),
     ...(diff ? { diff } : {}),
-  }, input);
+  }, input, restorePoints);
 }
 
 function runEditTool(args: unknown): unknown {
   const input = recordInput(args, "edit");
   const filePath = requiredString(input.file, "edit requires file.");
+  const restorePoints = captureRestorePoints([filePath]);
   const source = readFileSync(filePath, "utf8");
   const expectCountValue = pick(input, "expectCount", "expect-count", "expect_count");
   const expectCount = optionalInteger(expectCountValue, "expectCount");
@@ -1094,7 +1105,7 @@ function runEditTool(args: unknown): unknown {
     writeFileSync(filePath, plan.nextSource);
   }
 
-  return withAgentFields({
+  return withVerifiedAgentFields({
     success: true,
     file: filePath,
     action: plan.action,
@@ -1107,36 +1118,41 @@ function runEditTool(args: unknown): unknown {
     warnings,
     write_policy: writePolicyReport(policy, backup),
     ...(plan.diff ? { diff: plan.diff } : {}),
-  }, input);
+  }, input, restorePoints);
 }
 
 function runMultieditTool(args: unknown): unknown {
   const input = recordInput(args, "multiedit");
+  const restorePoints = captureRestorePoints(multieditFilesFromInput(input));
   if (input.input !== undefined && input.edits !== undefined) {
     fail("INVALID_MCP_INPUT", "multiedit accepts only one of input or edits.");
   }
-  if (input.input !== undefined) return withAgentFields(runMultieditInput(requiredString(input.input, "multiedit input must be a string."), writeFlagsFromInput(input)), input);
+  if (input.input !== undefined) return withVerifiedAgentFields(runMultieditInput(requiredString(input.input, "multiedit input must be a string."), writeFlagsFromInput(input)), input, restorePoints);
   const edits = input.edits;
   if (!Array.isArray(edits)) fail("INVALID_MCP_INPUT", "multiedit requires edits array or input string.");
-  return withAgentFields(runMultiedit(edits, writeFlagsFromInput(input)), input);
+  return withVerifiedAgentFields(runMultiedit(edits, writeFlagsFromInput(input)), input, restorePoints);
 }
 
 function runPatchTool(args: unknown): unknown {
   const input = recordInput(args, "patch");
-  return withAgentFields(runPatchInput(requiredString(input.patch, "patch requires patch."), writeFlagsFromInput(input)), input);
+  const patch = requiredString(input.patch, "patch requires patch.");
+  const restorePoints = captureRestorePoints(patchFilesForRestore(patch));
+  return withVerifiedAgentFields(runPatchInput(patch, writeFlagsFromInput(input)), input, restorePoints);
 }
 
 function runDeleteFileTool(args: unknown): unknown {
   const input = recordInput(args, "delete_file");
   const filePath = requiredPatchPath(input.file, "delete_file requires file.");
-  return withAgentFields(runPatchInput(`*** Begin Patch\n*** Delete File: ${filePath}\n*** End Patch\n`, writeFlagsFromInput(input)), input);
+  const restorePoints = captureRestorePoints([filePath]);
+  return withVerifiedAgentFields(runPatchInput(`*** Begin Patch\n*** Delete File: ${filePath}\n*** End Patch\n`, writeFlagsFromInput(input)), input, restorePoints);
 }
 
 function runRenameFileTool(args: unknown): unknown {
   const input = recordInput(args, "rename_file");
   const filePath = requiredPatchPath(input.file, "rename_file requires file.");
   const to = requiredPatchPath(input.to, "rename_file requires to.");
-  return withAgentFields(runPatchInput(`*** Begin Patch\n*** Update File: ${filePath}\n*** Move to: ${to}\n*** End Patch\n`, writeFlagsFromInput(input)), input);
+  const restorePoints = captureRestorePoints([filePath, to]);
+  return withVerifiedAgentFields(runPatchInput(`*** Begin Patch\n*** Update File: ${filePath}\n*** Move to: ${to}\n*** End Patch\n`, writeFlagsFromInput(input)), input, restorePoints);
 }
 
 function runActionsTool(args: unknown): unknown {
@@ -1343,12 +1359,13 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "Use inspect_range for sed-style line context plus parse status and edit-ready findLines suggestions.",
       "Use search_text for rg/grep-style raw text discovery when the next step is likely a tedit edit.",
       "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
+      "Pass verify for optional post-write project checks such as typecheck, lint, test, or build.",
       "Set TEDIT_MCP_PROFILE=all for JSX, TS declaration, AST, history, template, and refactor helpers.",
     ],
     no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
     profile: {
       current: teditMcpProfileFromEnv(),
-      default_surface: "Agent profile exposes only actions, edit, multiedit, patch, delete_file, rename_file, file_write, inspect_range, search_text, and verify_file.",
+      default_surface: "Agent profile exposes actions, edit, multiedit, patch, delete_file, rename_file, ts_select, ts_edit, ts_move, file_write, inspect_range, search_text, and verify_file.",
       advanced_surface: "Set TEDIT_MCP_PROFILE=all to expose JSX, TS declaration, AST, history, template, extract, plan, and legacy fine-grained tools.",
       refresh_hint: "If actions lists a tool but the host does not expose it as callable, restart or refresh the MCP host; tool schema/name changes are captured only when the host reloads the server.",
     },
@@ -1357,6 +1374,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "edit for one localized change",
       "multiedit for repeated or cross-file changes",
       "delete_file or rename_file for one-file cleanup/moves",
+      "verify for optional post-write project checks",
       "file_write for whole-file generation, scaffold mode, or template mode",
       "verify_file before or after edits when parser coverage matters",
       "patch only when the change is already a diff",
@@ -1368,6 +1386,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { when: "same change across several places or files", first_tool: "search_text", then: "multiedit", reason: "search_text can emit a grouped multiedit spec; multiedit applies atomically" },
       { when: "already have a generated diff", first_tool: "patch", then: "verify_file for important touched files", reason: "patch accepts unified diff and Codex apply-patch envelopes" },
       { when: "delete or rename one file", first_tool: "delete_file or rename_file", then: "patch for multi-file transactions", reason: "single-file cleanup no longer requires hand-authored patch text" },
+      { when: "project-specific validation is needed after write", first_tool: "edit/multiedit/patch with verify", then: "inspect verify stdout/stderr; optionally rollbackOnFail", reason: "repo checks vary, so verification is opt-in per mutation" },
       { when: "create or overwrite a whole file", first_tool: "file_write", then: "verify_file", reason: "mode=write/scaffold/template keeps generation behind write policy and parse verification" },
       { when: "large plain-TS named function or class edit", first_tool: "ts_select", then: "ts_edit or ts_move", reason: "named declaration selectors avoid brittle old_string ranges and keep braces/trivia mechanical" },
       { when: "hardcoded JS/TS/JSX strings", first_tool: "scan_strings", then: "ast_select or ast_edit", reason: "AST scanning covers code strings that structural find does not" },
@@ -1387,6 +1406,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "already generated diff", tool: "patch", reason: "atomic unified diff/apply-patch input with verification" },
       { intent: "delete one file", tool: "delete_file", reason: "dry-run/write delete without authoring a patch envelope" },
       { intent: "rename one file", tool: "rename_file", reason: "dry-run/write move without authoring a patch envelope" },
+      { intent: "post-write typecheck/lint/test", tool: "verify option", reason: "optional command hook with timeoutMs and rollbackOnFail" },
       { intent: "line range context before editing", tool: "inspect_range", reason: "sed-style context plus parser status and edit findLines suggestion" },
       { intent: "raw text search before editing", tool: "search_text", reason: "grep-style candidates with inspect/edit/multiedit follow-ups" },
       { intent: "who changed this or when", tool: "history_trace", reason: "git blame/log history without hand-assembling commands" },
@@ -1412,6 +1432,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       patch: { patch: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ ...", dryRun: true },
       delete_file: { file: "src/generated/LoginButtons.tsx", dryRun: true },
       rename_file: { file: "src/old.ts", to: "src/new.ts", dryRun: true },
+      edit_with_verify: { file: "src/Page.tsx", find: "oldLabel", replace: "newLabel", write: true, verify: { cmd: ["npx", "tsc", "-p", "apps/web/tsconfig.json", "--noEmit"], timeoutMs: 30000, rollbackOnFail: false } },
       file_write: { mode: "write", file: "src/generated.json", source: "{\"ok\":true}\n", write: true },
       extract_component: { mode: "direct", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", write: true },
       extract_component_plan: { mode: "plan", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", planOut: ".tedit/plans/extract-card.json" },
@@ -1733,6 +1754,30 @@ function templateParamsFromInput(value: unknown): Record<string, string> {
 
 function withAgentFields<T>(result: T, input: JsonRecord = {}): T {
   return formatAgentResult(result, outputOptionsFromRecord(input)) as T;
+}
+
+function withVerifiedAgentFields<T extends Record<string, unknown>>(result: T, input: JsonRecord, restorePoints: RestorePoint[]): T {
+  return withAgentFields(applyPostVerify(result, verifySpecFromInput(input), restorePoints), input);
+}
+
+function multieditFilesFromInput(input: JsonRecord): string[] {
+  const rawEdits = input.input !== undefined
+    ? parseMultieditInput(requiredString(input.input, "multiedit input must be a string."))
+    : input.edits;
+  if (!Array.isArray(rawEdits)) return [];
+  return rawEdits.flatMap((edit) => {
+    if (!edit || typeof edit !== "object" || Array.isArray(edit)) return [];
+    const file = (edit as JsonRecord).file;
+    return typeof file === "string" ? [file] : [];
+  });
+}
+
+function patchFilesForRestore(input: string): string[] {
+  return parsePatchInput(input).flatMap((patch) => {
+    const files = [patch.oldPath, patch.newPath, patch.file]
+      .filter((file): file is string => Boolean(file) && file !== "/dev/null");
+    return [...new Set(files)];
+  });
 }
 
 function resolveEditStrategy(input: JsonRecord): BaseFindStrategy {
