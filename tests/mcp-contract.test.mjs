@@ -18,6 +18,7 @@ test("mcp default profile tools share compact agent contracts", () => {
     "patch",
     "rename_file",
     "search_text",
+    "select",
     "ts_edit",
     "ts_move",
     "ts_select",
@@ -32,6 +33,26 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.deepEqual(actions.profiles.agent.sort(), defaultTools);
   assert.ok(actions.guidance.edit_loop.some((row) => row.tool === "edit"));
   assert.ok(actions.guidance.edit_loop.some((row) => row.tool === "search_text"));
+  assert.ok(actions.guidance.edit_loop.some((row) => row.tool === "select"));
+
+  const select = runMcpTool("select", { file: workspace.page, selector: "button" });
+  assert.equal(select.ok, true);
+  assert.equal(select.kind, "select");
+  assert.equal(select.language, "tsx");
+  assert.ok(select.matches.some((match) => match.route === "jsx" && match.kind === "jsx.element"));
+  assert.ok(select.matches.some((match) => match.editHint?.tool === "edit"));
+
+  const pythonSelect = runMcpTool("select", { file: workspace.python, selector: "train_model" });
+  assert.equal(pythonSelect.ok, true);
+  assert.equal(pythonSelect.kind, "select");
+  assert.equal(pythonSelect.language, "py");
+  assert.equal(pythonSelect.route, "python");
+  assert.ok(pythonSelect.matches.some((match) => match.kind === "python.function" && match.name === "train_model"));
+  assert.ok(pythonSelect.matches.some((match) => match.editHint?.tool === "edit" && match.editHint.findLines));
+
+  const pythonClassSelect = runMcpTool("select", { file: workspace.python, kind: "class", selector: "Trainer" });
+  assert.equal(pythonClassSelect.ok, true);
+  assert.equal(pythonClassSelect.matches[0].kind, "python.class");
 
   const inspect = runMcpTool("inspect_range", { file: workspace.page, lines: "2", context: 1 });
   assert.equal(inspect.ok, true);
@@ -74,17 +95,24 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(verify.parse_verified, true);
   assert.equal(verify.parser, "json");
 
-  const verifyMany = runMcpTool("verify_file", { files: [workspace.config, workspace.page] });
+  const verifyPython = runMcpTool("verify_file", { file: workspace.python });
+  assert.equal(verifyPython.ok, true);
+  assert.equal(verifyPython.parse_verified, true);
+  assert.equal(verifyPython.parser, "python-syntax");
+
+  const verifyMany = runMcpTool("verify_file", { files: [workspace.config, workspace.page, workspace.python] });
   assert.equal(verifyMany.ok, true);
   assert.equal(verifyMany.success, undefined);
   assert.equal(verifyMany.kind, "verify-files");
-  assert.equal(verifyMany.count, 2);
-  assert.equal(verifyMany.verifiedCount, 2);
-  assert.equal(verifyMany.files.length, 2);
+  assert.equal(verifyMany.count, 3);
+  assert.equal(verifyMany.verifiedCount, 3);
+  assert.equal(verifyMany.files.length, 3);
   assert.equal(verifyMany.files[0].path, workspace.config);
   assert.equal(verifyMany.files[0].file, undefined);
   assert.equal(verifyMany.files[1].path, workspace.page);
   assert.equal(verifyMany.files[1].parser, "jsx");
+  assert.equal(verifyMany.files[2].path, workspace.python);
+  assert.equal(verifyMany.files[2].parser, "python-syntax");
 
   const edit = runMcpTool("edit", {
     file: workspace.notes,
@@ -95,6 +123,29 @@ test("mcp default profile tools share compact agent contracts", () => {
   });
   assertMutationContract(edit, workspace.notes, { changedCount: 1, writtenCount: 0, persisted: false });
   assert.equal(edit.next[0], "rerun with write=true to apply");
+
+  const pythonEdit = runMcpTool("edit", {
+    file: workspace.python,
+    find: "TIMEOUT = 30",
+    replace: "TIMEOUT = 60",
+    write: true,
+    noBackup: true,
+    diffMode: "stats",
+  });
+  assertMutationContract(pythonEdit, workspace.python, { changedCount: 1, writtenCount: 1, persisted: true });
+  assert.equal(pythonEdit.parser, "python-syntax");
+  const pythonBeforeInvalid = readFileSync(workspace.python, "utf8");
+  assert.throws(
+    () => runMcpTool("edit", {
+      file: workspace.python,
+      find: "def train_model(path: str) -> dict[str, float]:",
+      replace: "def train_model(:",
+      write: true,
+      noBackup: true,
+    }),
+    (err) => err.code === "PARSE_BROKEN_AFTER_EDIT",
+  );
+  assert.equal(readFileSync(workspace.python, "utf8"), pythonBeforeInvalid);
 
   const verifiedEdit = runMcpTool("edit", {
     file: workspace.verifyPass,
@@ -192,6 +243,7 @@ function createWorkspace() {
   const page = join(src, "Page.tsx");
   const notes = join(root, "notes.md");
   const config = join(root, "config.json");
+  const python = join(root, "train.py");
   const generated = join(root, "generated.json");
   const deleteMe = join(root, "delete-me.txt");
   const renameOld = join(root, "old-name.txt");
@@ -199,13 +251,31 @@ function createWorkspace() {
   const verifyPass = join(root, "verify-pass.txt");
   const verifyFail = join(root, "verify-fail.txt");
   writeFileSync(page, "export function Page() {\n  return <button>삭제</button>;\n}\n");
+  writeFileSync(python, [
+    "import torch",
+    "from dataclasses import dataclass",
+    "",
+    "TIMEOUT = 30",
+    "",
+    "@dataclass",
+    "class Trainer:",
+    "  def fit(self):",
+    "    return TIMEOUT",
+    "",
+    "def train_model(path: str) -> dict[str, float]:",
+    "  return {\"loss\": 0.1}",
+    "",
+    "if __name__ == \"__main__\":",
+    "  train_model(\"data\")",
+    "",
+  ].join("\n"));
   writeFileSync(notes, "# Notes\nstatus: draft\n");
   writeFileSync(config, "{\"enabled\":true}\n");
   writeFileSync(deleteMe, "remove me\n");
   writeFileSync(renameOld, "move me\n");
   writeFileSync(verifyPass, "before\n");
   writeFileSync(verifyFail, "before\n");
-  return { root, src, page, notes, config, generated, deleteMe, renameOld, renameNew, verifyPass, verifyFail };
+  return { root, src, page, python, notes, config, generated, deleteMe, renameOld, renameNew, verifyPass, verifyFail };
 }
 
 function assertMutationContract(result, path, expected) {

@@ -1868,12 +1868,14 @@ test("mcp server lists tools and runs universal edit", async () => {
       "patch",
       "rename_file",
       "search_text",
+      "select",
       "ts_edit",
       "ts_move",
       "ts_select",
       "verify_file",
     ].sort());
     assert.ok(tools.tools.some((tool) => tool.name === "edit"));
+    assert.ok(tools.tools.some((tool) => tool.name === "select"));
     assert.ok(tools.tools.some((tool) => tool.name === "delete_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "rename_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "ts_select"));
@@ -1909,6 +1911,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       arguments: {},
     });
     assert.equal(actionsDiscovery.isError, undefined);
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("select"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("multiedit"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("delete_file"));
@@ -1964,6 +1967,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "patch",
       "rename_file",
       "search_text",
+      "select",
       "ts_edit",
       "ts_move",
       "ts_select",

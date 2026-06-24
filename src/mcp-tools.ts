@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, extname } from "node:path";
 import { z } from "zod/v4";
 import {
   BASE_ACTIONS,
@@ -361,6 +361,25 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runScanStringsTool,
+  },
+  {
+    name: "select",
+    title: "Universal Select",
+    description: "Read-only facade that routes selection by file type: TS/JS declarations, JSX/TSX elements, or text fallback with one common response shape.",
+    category: "discover",
+    aliases: ["smart_select", "find_symbol", "select_node"],
+    bestFor: ["one entrypoint before edit", "TS/JS/JSX/TSX target discovery", "choosing the safest follow-up edit route"],
+    inputSchema: {
+      file: fileSchema,
+      selector: z.string().min(1).optional().describe("Common selector/name/query. Examples: LoginButton, fn:start, class:Server, button.primary, 삭제."),
+      name: z.string().min(1).optional().describe("Alias for selector when selecting a named declaration or JSX element."),
+      contains: z.string().min(1).optional().describe("Text fallback query or secondary filter for previews."),
+      kind: z.enum(["auto", "function", "class", "method", "prop", "var", "import", "jsx", "text"]).optional().describe("Optional route hint. Defaults to auto."),
+      context: z.number().int().nonnegative().optional().describe("Context lines for text fallback."),
+      maxResults: z.number().int().positive().optional().describe("Maximum normalized matches to return."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runSelectTool,
   },
   {
     name: "ast_select",
@@ -971,6 +990,7 @@ export type TeditMcpProfile = "agent" | "all";
 
 const AGENT_MCP_TOOL_NAMES = new Set([
   "actions",
+  "select",
   "edit",
   "multiedit",
   "patch",
@@ -1261,6 +1281,361 @@ function runScanStringsTool(args: unknown): unknown {
   }), input);
 }
 
+function runSelectTool(args: unknown): unknown {
+  const input = recordInput(args, "select");
+  return withAgentFields(runUniversalSelect(input), input);
+}
+
+function runUniversalSelect(input: JsonRecord): JsonRecord {
+  const file = requiredString(input.file, "select requires file.");
+  const selector = optionalString(pick(input, "selector", "name"));
+  const contains = optionalString(input.contains);
+  const query = selector ?? contains;
+  const kind = optionalString(input.kind) ?? "auto";
+  const maxResults = optionalInteger(input.maxResults, "maxResults") ?? 25;
+  const context = optionalInteger(input.context, "context") ?? 2;
+  const ext = extname(file).toLowerCase();
+  const routes = selectRoutes(ext, kind, query);
+  const routeErrors: JsonRecord[] = [];
+  const matches: JsonRecord[] = [];
+
+  if (routes.includes("ts")) {
+    try {
+      matches.push(...selectTsMatches(file, selector, kind));
+    } catch (error) {
+      routeErrors.push(selectRouteError("ts", error));
+    }
+  }
+
+  if (routes.includes("jsx") && query) {
+    try {
+      matches.push(...selectJsxMatches(file, query));
+    } catch (error) {
+      routeErrors.push(selectRouteError("jsx", error));
+    }
+  }
+
+  if (routes.includes("python")) {
+    try {
+      matches.push(...selectPythonMatches(file, selector, kind, maxResults));
+    } catch (error) {
+      routeErrors.push(selectRouteError("python", error));
+    }
+  }
+
+  if ((routes.includes("text") || matches.length === 0 && kind === "auto") && query) {
+    try {
+      matches.push(...selectTextMatches(file, query, context, maxResults));
+    } catch (error) {
+      routeErrors.push(selectRouteError("text", error));
+    }
+  }
+
+  const limited = matches.slice(0, maxResults);
+  return {
+    success: true,
+    kind: "select",
+    file,
+    language: selectLanguage(ext),
+    route: routes.join("+"),
+    ...(selector ? { selector } : {}),
+    ...(contains ? { contains } : {}),
+    requestedKind: kind,
+    matches: limited,
+    count: matches.length,
+    truncated: matches.length > limited.length,
+    summary: `${limited.length}${matches.length > limited.length ? "+" : ""} selection ${limited.length === 1 ? "match" : "matches"}`,
+    suggestions: selectSuggestions(limited),
+    ...(routeErrors.length > 0 && limited.length === 0 ? { routeErrors } : {}),
+  };
+}
+
+function selectRoutes(ext: string, kind: string, query: string | undefined): string[] {
+  const tsExts = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]);
+  const jsxExts = new Set([".tsx", ".jsx"]);
+  const pythonExts = new Set([".py", ".pyw"]);
+  if (kind === "text") return ["text"];
+  if (kind === "jsx") return jsxExts.has(ext) ? ["jsx"] : ["text"];
+  if (["function", "class", "method", "var", "import"].includes(kind)) return pythonExts.has(ext) ? ["python"] : tsExts.has(ext) ? ["ts"] : ["text"];
+  if (["prop"].includes(kind)) return tsExts.has(ext) ? ["ts"] : ["text"];
+  const routes: string[] = [];
+  if (tsExts.has(ext)) routes.push("ts");
+  if (jsxExts.has(ext) && query) routes.push("jsx");
+  if (pythonExts.has(ext)) routes.push("python");
+  if (routes.length === 0 && query) routes.push("text");
+  return routes.length > 0 ? routes : ["text"];
+}
+
+function selectLanguage(ext: string): string {
+  if (ext.startsWith(".")) return ext.slice(1) || "text";
+  return "text";
+}
+
+function selectTsMatches(file: string, selector: string | undefined, kind: string): JsonRecord[] {
+  const tsSelector = tsSelectorForSelect(selector, kind);
+  const result = runTsSelect(file, tsSelector) as JsonRecord;
+  const rawMatches = Array.isArray(result.matches) ? result.matches as JsonRecord[] : [];
+  const filtered = tsSelector || !selector ? rawMatches : rawMatches.filter((match) => match.name === selector || match.selector === selector);
+  return filtered.map((match) => ({
+    id: `ts:${String(match.id ?? match.selector ?? match.name)}`,
+    route: "ts",
+    kind: `ts.${String(match.kind ?? "declaration")}`,
+    name: match.name,
+    selector: match.selector,
+    range: match.range,
+    lineRange: match.lineRange,
+    preview: match.preview,
+    context: match.context,
+    canReplaceBody: match.canReplaceBody,
+    editHint: { tool: "ts_edit", file, selector: match.selector },
+    moveHint: { tool: "ts_move", file, target: match.selector },
+  }));
+}
+
+function tsSelectorForSelect(selector: string | undefined, kind: string): string | undefined {
+  if (!selector) return undefined;
+  if (/^(fn|function|class|method|prop|var):/.test(selector)) return selector;
+  if (kind === "function") return `fn:${selector}`;
+  if (kind === "class") return `class:${selector}`;
+  if (kind === "method") return `method:${selector}`;
+  if (kind === "prop") return `prop:${selector}`;
+  if (kind === "var") return `var:${selector}`;
+  return undefined;
+}
+
+function selectJsxMatches(file: string, selector: string): JsonRecord[] {
+  const result = runWorkspaceFlow([{ action: "find", file, selector, all: true }]);
+  const data = result.results[0]?.data;
+  const rawMatches = Array.isArray(data) ? data as JsonRecord[] : typeof data === "string" ? [{ id: data }] : [];
+  return rawMatches.map((match) => ({
+    id: `jsx:${String(match.id ?? selector)}`,
+    route: "jsx",
+    kind: "jsx.element",
+    name: match.name,
+    selector,
+    range: match.loc,
+    lineRange: lineRangeFromLoc(match.loc),
+    preview: match.preview,
+    editHint: { tool: "edit", file, find: match.preview ?? selector },
+    inspectHint: { tool: "jsx_select", file, action: "inspect", id: match.id },
+  }));
+}
+
+function selectTextMatches(file: string, query: string, context: number, maxResults: number): JsonRecord[] {
+  const result = searchText({ query, paths: [file], context, maxResults });
+  const rawMatches = Array.isArray(result.results) ? result.results as JsonRecord[] : [];
+  return rawMatches.map((match) => ({
+    id: `text:${String(match.id ?? match.lineRange ?? match.preview)}`,
+    route: "text",
+    kind: "text.match",
+    selector: query,
+    range: match.range,
+    lineRange: (match.range as JsonRecord | undefined)?.lineRange,
+    preview: match.preview,
+    editHint: match.suggested,
+  }));
+}
+
+type PythonSelectMatch = {
+  id: string;
+  kind: "python.function" | "python.method" | "python.class" | "python.import" | "python.var" | "python.main";
+  name: string;
+  owner?: string;
+  line: number;
+  endLine: number;
+  preview: string;
+};
+
+function selectPythonMatches(file: string, selector: string | undefined, kind: string, maxResults: number): JsonRecord[] {
+  const source = readFileSync(file, "utf8");
+  const matches = collectPythonMatches(source);
+  const filtered = matches.filter((match) => pythonMatchFits(match, selector, kind)).slice(0, maxResults);
+  return filtered.map((match) => {
+    const lineRange = match.line === match.endLine ? String(match.line) : `${match.line}:${match.endLine}`;
+    return {
+      id: `python:${match.id}`,
+      route: "python",
+      kind: match.kind,
+      name: match.name,
+      ...(match.owner ? { owner: match.owner } : {}),
+      selector: pythonSelectorForMatch(match),
+      lineRange,
+      preview: match.preview,
+      editHint: { tool: "edit", file, findLines: lineRange },
+    };
+  });
+}
+
+function collectPythonMatches(source: string): PythonSelectMatch[] {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const matches: PythonSelectMatch[] = [];
+  const classStack: Array<{ name: string; indent: number; endLine: number }> = [];
+
+  for (let index = 0; index < lines.length; index++) {
+    const lineNumber = index + 1;
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = leadingSpaces(line);
+    while (classStack.length > 0 && lineNumber > classStack[classStack.length - 1].endLine) classStack.pop();
+    const decoratorStart = pythonDecoratorStart(lines, index);
+
+    const classMatch = line.match(/^(\s*)class\s+([A-Za-z_]\w*)\b/);
+    if (classMatch) {
+      const endLine = pythonBlockEnd(lines, index, indent);
+      const name = classMatch[2];
+      matches.push({ id: `class_${matches.length + 1}`, kind: "python.class", name, line: decoratorStart, endLine, preview: trimmed });
+      classStack.push({ name, indent, endLine });
+      continue;
+    }
+
+    const functionMatch = line.match(/^(\s*)(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/);
+    if (functionMatch) {
+      const owner = currentPythonClassOwner(classStack, indent);
+      matches.push({
+        id: `function_${matches.length + 1}`,
+        kind: owner ? "python.method" : "python.function",
+        name: functionMatch[2],
+        ...(owner ? { owner } : {}),
+        line: decoratorStart,
+        endLine: pythonBlockEnd(lines, index, indent),
+        preview: trimmed,
+      });
+      continue;
+    }
+
+    if (line.match(/^\s*if\s+__name__\s*==\s*['"]__main__['"]\s*:/)) {
+      matches.push({ id: `main_${matches.length + 1}`, kind: "python.main", name: "__main__", line: lineNumber, endLine: pythonBlockEnd(lines, index, indent), preview: trimmed });
+      continue;
+    }
+
+    const importMatch = line.match(/^\s*(?:import\s+(.+)|from\s+([A-Za-z_][\w.]*)\s+import\s+(.+))/);
+    if (importMatch) {
+      const name = (importMatch[2] ?? importMatch[1] ?? "").split(/[,\s]/)[0];
+      matches.push({ id: `import_${matches.length + 1}`, kind: "python.import", name, line: lineNumber, endLine: lineNumber, preview: trimmed });
+      continue;
+    }
+
+    if (indent === 0) {
+      const assignmentMatch = line.match(/^([A-Za-z_]\w*)\s*(?::[^=]+)?=/);
+      if (assignmentMatch) {
+        matches.push({ id: `var_${matches.length + 1}`, kind: "python.var", name: assignmentMatch[1], line: lineNumber, endLine: pythonStatementEnd(lines, index), preview: trimmed });
+      }
+    }
+  }
+
+  return matches;
+}
+
+function pythonMatchFits(match: PythonSelectMatch, selector: string | undefined, requestedKind: string): boolean {
+  if (requestedKind !== "auto") {
+    if (requestedKind === "function" && match.kind !== "python.function") return false;
+    if (requestedKind === "class" && match.kind !== "python.class") return false;
+    if (requestedKind === "method" && match.kind !== "python.method") return false;
+    if (requestedKind === "var" && match.kind !== "python.var") return false;
+    if (requestedKind === "import" && match.kind !== "python.import") return false;
+  }
+  if (!selector) return true;
+  const parsed = selector.match(/^(fn|function|class|method|var|import):(.+)$/);
+  const expectedName = (parsed ? parsed[2] : selector).trim();
+  const expectedKind = parsed?.[1];
+  if (expectedKind && !pythonKindMatchesSelector(match, expectedKind)) return false;
+  if (expectedName.includes(".") && match.owner) return `${match.owner}.${match.name}` === expectedName;
+  return match.name === expectedName || match.preview.includes(expectedName);
+}
+
+function pythonKindMatchesSelector(match: PythonSelectMatch, selectorKind: string): boolean {
+  if (selectorKind === "fn" || selectorKind === "function") return match.kind === "python.function";
+  if (selectorKind === "class") return match.kind === "python.class";
+  if (selectorKind === "method") return match.kind === "python.method";
+  if (selectorKind === "var") return match.kind === "python.var";
+  if (selectorKind === "import") return match.kind === "python.import";
+  return true;
+}
+
+function currentPythonClassOwner(classStack: Array<{ name: string; indent: number; endLine: number }>, indent: number): string | undefined {
+  for (let index = classStack.length - 1; index >= 0; index--) {
+    if (indent > classStack[index].indent) return classStack[index].name;
+  }
+  return undefined;
+}
+
+function pythonSelectorForMatch(match: PythonSelectMatch): string {
+  if (match.kind === "python.function") return `function:${match.name}`;
+  if (match.kind === "python.class") return `class:${match.name}`;
+  if (match.kind === "python.method") return `method:${match.owner ? `${match.owner}.` : ""}${match.name}`;
+  if (match.kind === "python.var") return `var:${match.name}`;
+  if (match.kind === "python.import") return `import:${match.name}`;
+  return match.name;
+}
+
+function pythonBlockEnd(lines: string[], startIndex: number, indent: number): number {
+  let end = startIndex + 1;
+  for (let index = startIndex + 1; index < lines.length; index++) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      end = index + 1;
+      continue;
+    }
+    if (leadingSpaces(line) <= indent) break;
+    end = index + 1;
+  }
+  return end;
+}
+
+function pythonStatementEnd(lines: string[], startIndex: number): number {
+  let balance = 0;
+  for (let index = startIndex; index < lines.length; index++) {
+    const line = lines[index];
+    balance += (line.match(/[\[({]/g) ?? []).length;
+    balance -= (line.match(/[\])}]/g) ?? []).length;
+    const continuation = line.trimEnd().endsWith("\\");
+    if (balance <= 0 && !continuation) return index + 1;
+  }
+  return startIndex + 1;
+}
+
+function pythonDecoratorStart(lines: string[], index: number): number {
+  let start = index;
+  while (start > 0 && lines[start - 1].trimStart().startsWith("@")) start--;
+  return start + 1;
+}
+
+function leadingSpaces(line: string): number {
+  return line.match(/^\s*/)?.[0].replace(/\t/g, "    ").length ?? 0;
+}
+
+function lineRangeFromLoc(loc: unknown): string | undefined {
+  if (!loc || typeof loc !== "object" || Array.isArray(loc)) return undefined;
+  const record = loc as JsonRecord;
+  const start = record.start;
+  const end = record.end;
+  if (!start || typeof start !== "object" || !end || typeof end !== "object") return undefined;
+  const startLine = (start as JsonRecord).line;
+  const endLine = (end as JsonRecord).line;
+  if (typeof startLine !== "number" || typeof endLine !== "number") return undefined;
+  return startLine === endLine ? String(startLine) : `${startLine}:${endLine}`;
+}
+
+function selectSuggestions(matches: JsonRecord[]): string[] {
+  const tools = [...new Set(matches.flatMap((match) => {
+    const editHint = match.editHint as JsonRecord | undefined;
+    const moveHint = match.moveHint as JsonRecord | undefined;
+    return [editHint?.tool, moveHint?.tool].filter((tool): tool is string => typeof tool === "string");
+  }))];
+  return tools.map((tool) => `Use ${tool} with the returned hint for the selected match.`);
+}
+
+function selectRouteError(route: string, error: unknown): JsonRecord {
+  const record = error && typeof error === "object" ? error as JsonRecord : {};
+  return {
+    route,
+    code: typeof record.code === "string" ? record.code : "SELECT_ROUTE_FAILED",
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
 function runAstSelectTool(args: unknown): unknown {
   const input = recordInput(args, "ast_select");
   return withAgentFields(runAstSelect(requiredString(input.file, "ast_select requires file."), requiredString(input.selector, "ast_select requires selector.")), input);
@@ -1356,6 +1731,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     read_path: [
       "Use the host/native Read tool for full file contents; tedit does not duplicate plain file reading yet.",
       "Use actions first when unsure; it returns the current profile, default tools, advanced tools, and examples.",
+      "Use select as the common TS/JS/JSX/TSX target discovery facade before choosing edit, ts_edit, or move.",
       "Use inspect_range for sed-style line context plus parse status and edit-ready findLines suggestions.",
       "Use search_text for rg/grep-style raw text discovery when the next step is likely a tedit edit.",
       "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
@@ -1365,12 +1741,13 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
     profile: {
       current: teditMcpProfileFromEnv(),
-      default_surface: "Agent profile exposes actions, edit, multiedit, patch, delete_file, rename_file, ts_select, ts_edit, ts_move, file_write, inspect_range, search_text, and verify_file.",
+      default_surface: "Agent profile exposes actions, select, edit, multiedit, patch, delete_file, rename_file, ts_select, ts_edit, ts_move, file_write, inspect_range, search_text, and verify_file.",
       advanced_surface: "Set TEDIT_MCP_PROFILE=all to expose JSX, TS declaration, AST, history, template, extract, plan, and legacy fine-grained tools.",
       refresh_hint: "If actions lists a tool but the host does not expose it as callable, restart or refresh the MCP host; tool schema/name changes are captured only when the host reloads the server.",
     },
     tool_priorities: [
-      "search_text or inspect_range for target discovery",
+      "select for file-type-aware target discovery", 
+      "search_text or inspect_range for text/range discovery",
       "edit for one localized change",
       "multiedit for repeated or cross-file changes",
       "delete_file or rename_file for one-file cleanup/moves",
@@ -1381,6 +1758,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "TEDIT_MCP_PROFILE=all for JSX/TS declaration/AST/history/refactor/template helpers",
     ],
     workflow_guide: [
+      { when: "need file-type-aware target discovery", first_tool: "select", then: "edit, ts_edit, or ts_move from returned hints", reason: "one common facade routes TS/JS declarations, JSX elements, or text fallback" },
       { when: "need target context before editing", first_tool: "search_text", then: "inspect_range or edit", reason: "turn raw text matches into line ranges and edit-ready suggestions" },
       { when: "one localized replacement/insertion/deletion", first_tool: "edit", then: "rerun with write=true after dry-run if needed", reason: "exact/fuzzy/regex/line strategies plus parser guardrails" },
       { when: "same change across several places or files", first_tool: "search_text", then: "multiedit", reason: "search_text can emit a grouped multiedit spec; multiedit applies atomically" },
@@ -1401,6 +1779,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { code: "PATCH_HUNK_FAILED", suggestion: "Inspect current file context and regenerate the hunk against the current source." },
     ],
     edit_loop: [
+      { intent: "select target across TS/JS/JSX/TSX", tool: "select", reason: "file-type-aware facade returning normalized matches and follow-up edit hints" },
       { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },
       { intent: "several coordinated text edits", tool: "multiedit", reason: "atomic application across files and same-file sequential edits" },
       { intent: "already generated diff", tool: "patch", reason: "atomic unified diff/apply-patch input with verification" },
@@ -1427,6 +1806,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "React state cluster cleanup or hook extraction", tool: "analyze_state then refactor_state", reason: "inspect clusters first, then apply directly or request mode=plan" },
     ],
     examples: {
+      select: { file: "src/Page.tsx", selector: "LoginButtons" },
       edit: { file: "src/Page.tsx", find: "oldLabel", replace: "newLabel", dryRun: true },
       multiedit: { edits: [{ file: "src/Page.tsx", find: "삭제", replace: "Delete", replaceAll: true, expectCount: 2 }], dryRun: true },
       patch: { patch: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ ...", dryRun: true },

@@ -9,7 +9,7 @@ test("docs: README MCP profile lists match registered profiles", () => {
   const allTools = toolsForMcpProfile("all").map((tool) => tool.name).sort();
   const advancedTools = allTools.filter((name) => !agentTools.includes(name)).sort();
 
-  const defaultBlock = readmeSection(readme, "and intent-oriented:\n\n", "\n\n`inspect_range`");
+  const defaultBlock = readmeSection(readme, "and intent-oriented:\n\n", "\n\n`select`");
   const documentedDefault = backtickValues(defaultBlock).sort();
   assert.deepEqual(documentedDefault, agentTools);
 

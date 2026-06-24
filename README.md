@@ -184,20 +184,21 @@ advanced tools, file-specific rules, normalized `action` names for flow-style
 aliases, and an agent-oriented `guidance` section. `tedit` intentionally does
 not expose a plain `read_file` MCP tool yet: host/native Read remains better
 for full file contents. Use `verify_file` for parser coverage and validity,
-and use `jsx_select` when a structural target id or selector is more useful
-than raw text.
+and use `select` when a file-type-aware TS/JS/Python/JSX/TSX target hint is
+more useful than raw text.
 
 The default MCP profile is `agent`, which keeps the callable tool list small
 and intent-oriented:
 
-`actions`, `edit`, `multiedit`, `patch`, `delete_file`, `rename_file`,
-`ts_select`, `ts_edit`, `ts_move`, `file_write`, `inspect_range`,
-`search_text`, and `verify_file`.
+`actions`, `select`, `edit`, `multiedit`, `patch`, `delete_file`,
+`rename_file`, `ts_select`, `ts_edit`, `ts_move`, `file_write`,
+`inspect_range`, `search_text`, and `verify_file`.
 
-`inspect_range` and `search_text` bridge `sed`/`rg` style workflows into
-tedit's edit-ready structured results. `verify_file` accepts either `file` or
-`files` and gives parser coverage plus validity checks without trying to
-replace native Read.
+`select` is the common facade for TS/JS declarations, Python functions/classes,
+JSX/TSX elements, and text fallback hints. `inspect_range` and `search_text`
+bridge `sed`/`rg` style workflows into tedit's edit-ready structured results.
+`verify_file` accepts either `file` or `files` and gives parser coverage plus
+validity checks without trying to replace native Read.
 
 Use `file_write` with a required `mode` for whole-file writes:
 `mode: "write"` for complete source replacement, `mode: "scaffold"` for
@@ -206,6 +207,7 @@ scaffold specs, and `mode: "template"` for built-in or project templates.
 The `actions` response includes an agent workflow guide. The intended default
 loop is:
 
+- `select` for file-type-aware TS/JS/Python/JSX/TSX target discovery.
 - `search_text` or `inspect_range` when the target is not certain yet.
 - `edit` for one localized replacement, insertion, deletion, regex, fuzzy, or
   line-range change.
@@ -218,7 +220,8 @@ loop is:
 - `file_write` for whole-file generation through `mode: "write"`,
   `mode: "scaffold"`, or `mode: "template"`.
 - `verify_file` before or after edits when parser coverage matters; pass
-  `files` to check several related files in one call.
+  `files` to check several related files in one call. `.py` receives a
+  syntax-only guard (`parser: "python-syntax"`), not structural Python rewriting.
 - `TEDIT_MCP_PROFILE=all` for AST, TS declaration targeting, JSX/markup
   structural actions, templates, history, extract, and refactor helpers.
 

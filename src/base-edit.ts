@@ -1,6 +1,7 @@
 import { getOptionalAdapterForFile } from "./core/registry.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
+import { spawnSync } from "node:child_process";
 import { extname } from "node:path";
 
 export const BASE_ACTIONS = [
@@ -68,7 +69,7 @@ export type BaseEditGuardrail = {
   appended: "\n" | "\r\n";
 };
 
-export type ParseSkipReason = "disabled" | "unsupported_extension";
+export type ParseSkipReason = "disabled" | "unsupported_extension" | "parser_unavailable";
 
 export type BaseParseVerification = {
   verified: boolean;
@@ -488,6 +489,9 @@ export function verifyParseForFile(filePath: string, source: string, enabled = t
     else if (parser === "json") JSON.parse(source);
     else if (parser === "markdown-lite") verifyMarkdownLite(source);
     else if (parser === "yaml-lite") verifyYamlLite(source);
+    else if (parser === "python-syntax" && !verifyPythonSyntax(source)) {
+      return { verified: false, skipped: true, skipReason: "parser_unavailable" };
+    }
     return { verified: true, parser };
   } catch (error) {
     fail("PARSE_BROKEN_AFTER_EDIT", "Edit would produce invalid syntax for this file type; no write was performed.", {
@@ -505,6 +509,7 @@ function parserForExtension(extension: string): string | undefined {
   if (extension === ".json") return "json";
   if (extension === ".md" || extension === ".markdown" || extension === ".mdx") return "markdown-lite";
   if (extension === ".yaml" || extension === ".yml") return "yaml-lite";
+  if (extension === ".py" || extension === ".pyw") return "python-syntax";
   return undefined;
 }
 
@@ -550,6 +555,48 @@ function lineForOffset(source: string, offset: number): number {
 
 function sourceLine(source: string, line: number): string {
   return source.split(/\r?\n/)[line - 1] ?? "";
+}
+
+function verifyPythonSyntax(source: string): boolean {
+  const script = [
+    "import ast, sys",
+    "source = sys.stdin.read()",
+    "try:",
+    "    ast.parse(source)",
+    "except SyntaxError as e:",
+    "    msg = e.msg or 'invalid syntax'",
+    "    line = e.lineno or 1",
+    "    col = e.offset or 1",
+    "    print(f'{msg} at line {line}, column {col}', file=sys.stderr)",
+    "    sys.exit(1)",
+  ].join("\n");
+  const result = spawnPython(script, source);
+  if (result === "unavailable") return false;
+  if (result.status === 0) return true;
+  const message = (result.stderr || result.stdout || "invalid Python syntax").trim();
+  const error = new Error(message);
+  const line = message.match(/line\s+(\d+)/i)?.[1];
+  if (line) (error as Error & { line?: number }).line = Number(line);
+  throw error;
+}
+
+function spawnPython(script: string, source: string): "unavailable" | { status: number | null; stdout: string; stderr: string } {
+  for (const command of ["python3", "python"]) {
+    const result = spawnSync(command, ["-c", script], {
+      input: source,
+      encoding: "utf8",
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+    });
+    if (result.error && (result.error as NodeJS.ErrnoException).code === "ENOENT") continue;
+    if (result.error) throw result.error;
+    return {
+      status: result.status,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    };
+  }
+  return "unavailable";
 }
 
 function verifyMarkdownLite(source: string): void {

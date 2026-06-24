@@ -11,7 +11,7 @@ test("trust-core structured formats route to the AST path", () => {
 });
 
 test("non-core formats route to the safe-string path", () => {
-  for (const file of ["notes.md", "page.html", "data.txt", "Makefile", "x.unknown"]) {
+  for (const file of ["notes.md", "train.py", "page.html", "data.txt", "Makefile", "x.unknown"]) {
     assert.equal(resolveEditRoute(file).route, "string", file);
   }
 });
@@ -30,4 +30,13 @@ test("never-worse safety: string-routed known formats still fail loud on broken 
   const ok = verifyParseForFile("notes.md", "# title\n\nbody\n");
   assert.equal(ok.verified, true);
   assert.equal(ok.parser, "markdown-lite");
+
+  const python = verifyParseForFile("train.py", "def train_model():\n    return 1\n");
+  assert.equal(python.verified, true);
+  assert.equal(python.parser, "python-syntax");
+
+  assert.throws(
+    () => verifyParseForFile("broken.py", "def train_model(:\n    return 1\n"),
+    (err) => err.code === "PARSE_BROKEN_AFTER_EDIT",
+  );
 });

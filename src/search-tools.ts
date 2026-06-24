@@ -68,7 +68,7 @@ type MultieditSpec = {
 
 const DEFAULT_SEARCH_EXCLUDES = new Set([".git", "node_modules", "dist", "build", "coverage", ".tedit-cache"]);
 const TEXT_EXTENSIONS = new Set([
-  ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+  ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py", ".pyw",
   ".json", ".jsonl", ".md", ".mdx", ".txt", ".css", ".scss",
   ".html", ".xml", ".yml", ".yaml",
 ]);

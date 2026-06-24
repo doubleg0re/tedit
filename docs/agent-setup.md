@@ -103,6 +103,7 @@ Use the `tedit` MCP tools for routine file mutations when available.
 - Use native Read/search tools for full-file reading and broad discovery.
 - Use `mcp__tedit__actions` when choosing an edit strategy.
 - Use `mcp__tedit__search_text` or `mcp__tedit__inspect_range` when the target is not certain.
+- Use `mcp__tedit__select` first when a TS/JS/Python/JSX/TSX target can be chosen by file type before editing.
 - Use `mcp__tedit__edit` for one localized replacement, insertion, deletion, regex, fuzzy, or line-range edit.
 - Use `mcp__tedit__multiedit` for coordinated repeated edits across one or more files.
 - Use `mcp__tedit__patch` only when the change already exists as a unified diff or apply-patch envelope.
