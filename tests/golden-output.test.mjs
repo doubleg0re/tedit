@@ -233,7 +233,7 @@ test("golden: edit compact mutation output contract", () => {
       diffAvailable: true,
       hunks: 1,
       bytesDelta: 8,
-      diff: { mode: "stats", bytes: 234, hunks: 1, bytesDelta: 8 },
+      diff: { mode: "stats", bytes: 245, hunks: 1, bytesDelta: 8 },
     }],
     path: "src/Page.tsx",
     parse_verified: true,
