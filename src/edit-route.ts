@@ -11,7 +11,7 @@ import { getOptionalAdapterForFile } from "./core/registry.js";
  * the exact routing doubt this dispatch is meant to remove. The breadth lives
  * in the dispatcher, not in N trust contracts.
  *
- * See ISSUE-single-edit-entrypoint-dispatch.md.
+ * See docs/issues/ISSUE-single-edit-entrypoint-dispatch.md.
  */
 const STRUCTURED_TRUST_CORE = new Set([".tsx", ".jsx", ".ts", ".js", ".json", ".yaml", ".yml"]);
 
