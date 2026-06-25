@@ -163,3 +163,46 @@ test("mcp advanced ts tools return compact mutation contracts", () => {
   assert.equal(move.kind, "mutation");
   assert.equal(move.files[0].diff.mode, "stats");
 });
+
+test("mcp ts_edit runs verify argv and rolls back on failure", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "tedit-ts-mcp-verify-"));
+  const file = join(workspace, "server.ts");
+  const original = "function alpha() {\n  return 1;\n}\n";
+  writeFileSync(file, original);
+
+  const passed = runMcpTool("ts_edit", {
+    file,
+    selector: "fn:alpha",
+    body: "\n  return 2;\n",
+    write: true,
+    noBackup: true,
+    verify: { cmd: [process.execPath, "-e", "process.exit(0)"], timeoutMs: 5000 },
+    output: "detailed",
+  });
+  assert.equal(passed.success, true);
+  assert.equal(passed.verify.passed, true);
+  assert.match(readFileSync(file, "utf8"), /return 2/);
+
+  const beforeFail = readFileSync(file, "utf8");
+  const failed = runMcpTool("ts_edit", {
+    file,
+    selector: "fn:alpha",
+    body: "\n  return 3;\n",
+    write: true,
+    noBackup: true,
+    verify: {
+      cmd: [process.execPath, "-e", "console.error('server.ts(1,1): error TS9999: nope'); process.exit(7)"],
+      timeoutMs: 5000,
+      rollbackOnFail: true,
+    },
+    output: "detailed",
+  });
+
+  assert.equal(failed.success, true);
+  assert.equal(failed.verify.passed, false);
+  assert.equal(failed.verify.exitCode, 7);
+  assert.equal(failed.verification_failed, true);
+  assert.equal(failed.verify.rollback.attempted, true);
+  assert.equal(failed.verify.diagnostics[0].code, "TS9999");
+  assert.equal(readFileSync(file, "utf8"), beforeFail);
+});

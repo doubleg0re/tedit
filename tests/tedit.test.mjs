@@ -2445,7 +2445,10 @@ test("base edit reports ambiguous exact matches with candidates", () => {
   assert.equal(failed.body.code, "MATCH_NOT_UNIQUE");
   assert.equal(failed.body.details.matches.length, 2);
   assert.deepEqual(failed.body.details.retry_hints.filter((hint) => hint.kind === "find-lines").map((hint) => hint.findLines), ["1", "3"]);
-  assert.deepEqual(failed.body.suggestions.slice(0, 2), ["Retry candidate 1 with --find-lines 1.", "Retry candidate 2 with --find-lines 3."]);
+  assert.deepEqual(failed.body.suggestions.slice(0, 2), [
+    "Retry candidate 1 with findLines=1 (CLI: --find-lines 1).",
+    "Retry candidate 2 with findLines=3 (CLI: --find-lines 3).",
+  ]);
   assert.match(readFileSync(file, "utf8"), /Button\nSpacer\nButton/);
 });
 
@@ -2466,8 +2469,8 @@ test("base edit exact failure surfaces a fuzzy-only diagnostic without writing",
   assert.equal(failed.body.details.retry_hints[0].findFuzzy, "function save( value )");
   assert.equal(failed.body.details.retry_hints[1].findLines, "1:3");
   assert.deepEqual(failed.body.suggestions, [
-    'Retry with --find-fuzzy "function save( value )" using the same mutation.',
-    "Retry candidate 1 with --find-lines 1:3."
+    'Retry with findFuzzy="function save( value )" (CLI: --find-fuzzy "function save( value )") using the same mutation.',
+    "Retry candidate 1 with findLines=1:3 (CLI: --find-lines 1:3)."
   ]);
   assert.deepEqual(failed.body.details.fuzzy_candidates[0].whitespace_drift.requested_runs, [1, 1, 1]);
   assert.equal(readFileSync(file, "utf8"), original);
@@ -2486,7 +2489,7 @@ test("base edit exact miss surfaces near candidates and retry hints", () => {
   assert.match(failed.body.details.near_candidates[0].preview, /Hello world/);
   assert.equal(failed.body.details.retry_hints[0].kind, "find-lines");
   assert.equal(failed.body.details.retry_hints[0].findLines, "1");
-  assert.equal(failed.body.suggestions[0], "Retry near candidate 1 with --find-lines 1.");
+  assert.equal(failed.body.suggestions[0], "Retry near candidate 1 with findLines=1 (CLI: --find-lines 1).");
   assert.equal(readFileSync(file, "utf8"), "Hello world\nStatus: pending\n");
 });
 
@@ -2916,7 +2919,7 @@ test("edit summary mode reports failures tersely with suggestions", () => {
   assert.equal(failed.stderr, "");
   assert.match(failed.stdout, /FAIL - no match/);
   assert.match(failed.stdout, /result: failure - MATCH_NONE/);
-  assert.match(failed.stdout, /Retry near candidate 1 with --find-lines 1/);
+  assert.match(failed.stdout, /Retry near candidate 1 with findLines=1 \(CLI: --find-lines 1\)/);
   assert.equal(readFileSync(file, "utf8"), "Hello world\n");
 });
 
@@ -3167,7 +3170,7 @@ test("cli non-tty failures use compact error output", () => {
   assert.equal(body.code, "MATCH_NONE");
   assert.match(body.summary, /No match found/);
   assert.equal(body.details, undefined);
-  assert.equal(body.suggestions[0], "Retry near candidate 1 with --find-lines 1.");
+  assert.equal(body.suggestions[0], "Retry near candidate 1 with findLines=1 (CLI: --find-lines 1).");
 });
 
 test("edit quiet mode suppresses stdout while diff-out captures detail", () => {

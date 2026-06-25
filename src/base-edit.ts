@@ -206,8 +206,8 @@ function failNoMatch(options: BaseEditOptions): never {
         fuzzy_candidates: fuzzyCandidateHints(options.source, options.strategy.pattern, fuzzyMatches),
         retry_hints: retryHints,
         suggestions: [
-          "Re-run with --find-fuzzy to accept a whitespace-insensitive match.",
-          "Use --find-lines N:M if the exact source range is already known.",
+          "Retry with findFuzzy (CLI: --find-fuzzy) to accept a whitespace-insensitive match.",
+          "Use findLines (CLI: --find-lines N:M) if the exact source range is already known.",
         ],
         recovery_suggestions: recoveryNext(retryHints),
         next_step_hint: "tedit refused to guess. Choose the fuzzy match explicitly or provide more context.",
@@ -237,7 +237,7 @@ function failNoMatch(options: BaseEditOptions): never {
     ...(retryHints.length > 0 ? { retry_hints: retryHints, recovery_suggestions: recoveryNext(retryHints) } : {}),
     suggestions: noMatchSuggestions(nearCandidates.length),
     next_step_hint: nearCandidates.length > 0
-      ? "Inspect the near candidates, then retry with --find-lines or correct the find text."
+      ? "Inspect the near candidates, then retry with findLines (CLI: --find-lines) or correct the find text."
       : "Re-run with a strategy that can identify exactly one target span.",
   });
 }
@@ -247,7 +247,7 @@ function fuzzyOnlyRetryHints(options: BaseEditOptions, matches: RawMatch[]): Rec
   if (options.strategy.kind === "exact") {
     hints.push({
       kind: "find-fuzzy",
-      description: "Retry with --find-fuzzy " + jsonHint(options.strategy.pattern) + " using the same mutation.",
+      description: "Retry with findFuzzy=" + jsonHint(options.strategy.pattern) + " (CLI: --find-fuzzy " + jsonHint(options.strategy.pattern) + ") using the same mutation.",
       findFuzzy: options.strategy.pattern,
       mutation: mutationHint(options.mutation),
       preview: previewForSpan(options.source, matches[0].start, matches[0].end),
@@ -285,7 +285,7 @@ function countMismatchRetryHints(options: BaseEditOptions, matches: RawMatch[]):
 function nearCandidateRetryHints(options: BaseEditOptions, candidates: NearTextCandidate[]): RecoveryHint[] {
   return candidates.slice(0, 3).map((candidate, index) => ({
     kind: "find-lines",
-    description: "Retry near candidate " + (index + 1) + " with --find-lines " + candidate.find_lines + ".",
+    description: "Retry near candidate " + (index + 1) + " with findLines=" + candidate.find_lines + " (CLI: --find-lines " + candidate.find_lines + ").",
     findLines: candidate.find_lines,
     mutation: mutationHint(options.mutation),
     preview: candidate.preview,
@@ -297,7 +297,7 @@ function lineRangeRetryHints(options: BaseEditOptions, matches: RawMatch[], limi
     const range = lineRangeForMatch(options.source, match);
     return {
       kind: "find-lines",
-      description: "Retry candidate " + (index + 1) + " with --find-lines " + range + ".",
+      description: "Retry candidate " + (index + 1) + " with findLines=" + range + " (CLI: --find-lines " + range + ").",
       findLines: range,
       mutation: mutationHint(options.mutation),
       preview: previewForSpan(options.source, match.start, match.end),
@@ -752,11 +752,11 @@ function noMatchCandidatePattern(strategy: BaseFindStrategy): string | undefined
 
 function noMatchSuggestions(candidateCount: number): string[] {
   return [
-    ...(candidateCount > 0 ? ["Inspect near_candidates; use --find-lines for the intended span or correct the find text."] : []),
+    ...(candidateCount > 0 ? ["Inspect near_candidates; use findLines (CLI: --find-lines) for the intended span or correct the find text."] : []),
     "Check the literal text for stale whitespace, punctuation, or typos.",
     "Use --find-fuzzy for whitespace-insensitive matching.",
     "Use --find-anchor-after with --find when the target is in a known section.",
-    "Use --find-lines N:M as a last resort when a diagnostic already gave line numbers.",
+    "Use findLines (CLI: --find-lines N:M) as a last resort when a diagnostic already gave line numbers.",
   ].slice(0, 4);
 }
 
@@ -906,7 +906,7 @@ function notUniqueSuggestions(count: number): string[] {
     "Add surrounding context to the find text.",
     "Use --find-anchor-after when the target is inside a known section.",
     `Use --replace-all if all ${count} locations are intended.`,
-    "Use --find-lines N:M as a last resort if you already know the source range.",
+    "Use findLines (CLI: --find-lines N:M) as a last resort if you already know the source range.",
   ];
 }
 

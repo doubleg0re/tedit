@@ -16,13 +16,13 @@ test("recovery: compact match errors include bounded retry hints", () => {
   assert.equal(none.body.kind, "error");
   assert.equal(none.body.code, "MATCH_NONE");
   assert.equal(none.body.details, undefined);
-  assert.equal(none.body.suggestions[0], "Retry near candidate 1 with --find-lines 1.");
+  assert.equal(none.body.suggestions[0], "Retry near candidate 1 with findLines=1 (CLI: --find-lines 1).");
   assert.ok(none.body.suggestions.length <= 3);
 
   const ambiguous = runFail(["edit", "notes.txt", "--find", "Hello world", "--replace", "x", "--dry-run"], dir);
   assert.equal(ambiguous.status, 1);
   assert.equal(ambiguous.body.code, "MATCH_NOT_UNIQUE");
-  assert.equal(ambiguous.body.suggestions[0], "Retry candidate 1 with --find-lines 1.");
+  assert.equal(ambiguous.body.suggestions[0], "Retry candidate 1 with findLines=1 (CLI: --find-lines 1).");
   assert.ok(ambiguous.body.suggestions.length <= 3);
 });
 

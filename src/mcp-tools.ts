@@ -84,6 +84,24 @@ const detailFlagSchema = {
   detailArtifactDir: z.string().min(1).optional().describe("Artifact directory for large compact-output fields; must stay inside the current working directory."),
 } satisfies z.ZodRawShape;
 
+const verifyCommandSchema = z.union([
+  z.string().min(1),
+  z.array(z.string()).min(1),
+  z.object({
+    command: z.string().min(1).optional(),
+    cmd: z.union([z.string().min(1), z.array(z.string()).min(1)]).optional(),
+    args: z.array(z.string()).optional(),
+    timeoutMs: z.number().int().positive().optional(),
+    timeout_ms: z.number().int().positive().optional(),
+    timeout: z.number().int().positive().optional(),
+    cwd: z.string().min(1).optional(),
+    rollbackOnFail: z.boolean().optional(),
+    rollback_on_fail: z.boolean().optional(),
+    rollbackOnVerifyFail: z.boolean().optional(),
+    rollback_on_verify_fail: z.boolean().optional(),
+  }).passthrough(),
+]);
+
 const writeFlagSchema = {
   write: z.boolean().optional().describe("Write changes when true; otherwise git-aware defaults apply."),
   dryRun: z.boolean().optional().describe("Force dry-run mode."),
@@ -98,9 +116,9 @@ const writeFlagSchema = {
   diffArtifactDir: z.string().min(1).optional().describe("Artifact directory for large auto diffs; must stay inside the current working directory."),
   diffArtifacts: z.boolean().optional().describe("Allow large diff artifact writes. Dry-runs only write artifacts when this is explicitly true."),
   ...detailFlagSchema,
-  verify: z.unknown().optional().describe("Optional post-write verify command: string, argv array, or {cmd, args, timeoutMs, cwd, rollbackOnFail}. Runs only after files are written."),
-  verifyCommand: z.unknown().optional().describe("Alias for verify. Prefer verify.cmd as an argv array for safer execution."),
-  verify_command: z.unknown().optional().describe("Alias for verifyCommand."),
+  verify: verifyCommandSchema.optional().describe("Optional post-write verify command: string, argv array, or {cmd, args, timeoutMs, cwd, rollbackOnFail}. Runs only after files are written."),
+  verifyCommand: verifyCommandSchema.optional().describe("Alias for verify. Prefer verify.cmd as an argv array for safer execution."),
+  verify_command: verifyCommandSchema.optional().describe("Alias for verifyCommand."),
   rollbackOnVerifyFail: z.boolean().optional().describe("Top-level rollback alias for verify command strings/arrays. Prefer verify.rollbackOnFail."),
   rollback_on_verify_fail: z.boolean().optional().describe("Alias for rollbackOnVerifyFail."),
 } satisfies z.ZodRawShape;
@@ -835,23 +853,27 @@ function runTsSelectTool(args: unknown): unknown {
 
 function runTsEditTool(args: unknown): unknown {
   const input = recordInput(args, "ts_edit");
+  const filePath = requiredString(input.file, "ts_edit requires file.");
+  const restorePoints = captureRestorePoints([filePath]);
   const action = optionalString(input.action);
   if (action !== undefined && action !== "replace-body" && action !== "insert-before" && action !== "insert-after") {
     fail("INVALID_MCP_INPUT", "ts_edit action must be replace-body, insert-before, or insert-after.");
   }
-  return withAgentFields(runTsEditEngine(requiredString(input.file, "ts_edit requires file."), {
+  return withVerifiedAgentFields(runTsEditEngine(filePath, {
     selector: requiredString(input.selector, "ts_edit requires selector."),
     ...(action === undefined ? {} : { action }),
     ...(input.body === undefined ? {} : { body: requiredString(input.body, "ts_edit body must be a string.") }),
     ...(input.insertBefore === undefined ? {} : { insertBefore: requiredString(input.insertBefore, "ts_edit insertBefore must be a string.") }),
     ...(input.insertAfter === undefined ? {} : { insertAfter: requiredString(input.insertAfter, "ts_edit insertAfter must be a string.") }),
     ...writeFlagsFromInput(input),
-  }), input);
+  }), input, restorePoints);
 }
 
 function runTsMoveTool(args: unknown): unknown {
   const input = recordInput(args, "ts_move");
-  return withAgentFields(runTsMoveEngine(requiredString(input.file, "ts_move requires file."), {
+  const filePath = requiredString(input.file, "ts_move requires file.");
+  const restorePoints = captureRestorePoints([filePath]);
+  return withVerifiedAgentFields(runTsMoveEngine(filePath, {
     target: requiredString(input.target, "ts_move requires target."),
     before: optionalString(input.before),
     after: optionalString(input.after),
@@ -861,7 +883,7 @@ function runTsMoveTool(args: unknown): unknown {
     sourceHash: optionalString(input.sourceHash),
     includeTriviaContent: booleanValue(input.includeTriviaContent),
     ...writeFlagsFromInput(input),
-  }), input);
+  }), input, restorePoints);
 }
 
 function astEditSelectorFromInput(input: JsonRecord): string {
@@ -1190,6 +1212,7 @@ function moduleSplitOperation(operation: unknown): MoveSymbolsOperation | Extrac
   const input = recordInput(operation, "module_split_plan operation");
   const action = requiredString(pick(input, "action", "kind", "type"), "module_split_plan operation requires action.").replace(/_/g, "-");
   if (action === "move-symbols") {
+    rejectModuleSplitFields(input, "move_symbols", ["file", "array", "exportName", "export_name", "export-name", "where", "entries"]);
     return {
       action: "move_symbols",
       from: requiredString(input.from, "move_symbols operation requires from."),
@@ -1199,6 +1222,7 @@ function moduleSplitOperation(operation: unknown): MoveSymbolsOperation | Extrac
     };
   }
   if (action === "extract-array-entries") {
+    rejectModuleSplitFields(input, "extract_array_entries", ["from", "symbols", "closure"]);
     return {
       action: "extract_array_entries",
       file: requiredString(input.file, "extract_array_entries operation requires file."),
@@ -1210,6 +1234,13 @@ function moduleSplitOperation(operation: unknown): MoveSymbolsOperation | Extrac
     };
   }
   fail("INVALID_MCP_INPUT", "module_split_plan operation action must be move_symbols or extract_array_entries.");
+}
+
+function rejectModuleSplitFields(input: JsonRecord, action: string, fields: string[]): void {
+  const present = fields.filter((field) => input[field] !== undefined);
+  if (present.length > 0) {
+    fail("INVALID_MCP_INPUT", `${action} operation cannot include fields from the other module_split action: ${present.join(", ")}.`);
+  }
 }
 
 function runWorkspaceTool(args: unknown): unknown {

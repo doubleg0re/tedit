@@ -181,6 +181,24 @@ test("module-split plans round-trip through apply_plan and MCP refactor facade",
   assert.ok(graph.symbols.some((symbol) => symbol.name === "TEDIT_MCP_ALL_TOOLS"));
 });
 
+test("module-split plan rejects fields from the other operation kind", () => {
+  const dir = workspace("tedit-ts-module-invalid-op-");
+  const from = join(dir, "mcp-tools.ts");
+  const to = join(dir, "mcp-edit-tools.ts");
+  writeFileSync(from, sourceFixture());
+
+  assert.throws(
+    () => runMcpTool("refactor", {
+      kind: "module_split_plan",
+      file: from,
+      planOut: join(dir, "created.plan.json"),
+      operations: [{ action: "move_symbols", from, to, symbols: ["runEditTool"], array: "TEDIT_MCP_ALL_TOOLS" }],
+      output: "detailed",
+    }),
+    (error) => error.code === "INVALID_MCP_INPUT" && /cannot include fields/.test(error.message),
+  );
+});
+
 test("move_symbols verify rollback restores source and removes new target", () => {
   const dir = workspace("tedit-ts-move-rollback-");
   const from = join(dir, "mcp-tools.ts");
