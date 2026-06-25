@@ -276,6 +276,25 @@ export function readDetailArtifact(input: JsonRecord): JsonRecord {
   let value = artifact.value;
   const selectedPath = stringValue(input.path ?? input.jsonPath ?? input.json_path);
   if (selectedPath) value = selectJsonPath(value, selectedPath);
+  const itemOffset = nonnegativeInteger(input.offset ?? input.cursor, undefined);
+  const itemLimit = positiveInteger(input.limit ?? input.count, undefined);
+  let page: JsonRecord = {};
+  if (Array.isArray(value) && (itemOffset !== undefined || itemLimit !== undefined)) {
+    const offset = itemOffset ?? 0;
+    const total = value.length;
+    const limit = itemLimit ?? Math.max(0, total - offset);
+    const end = Math.min(total, offset + limit);
+    const slice = value.slice(offset, end);
+    value = slice;
+    page = {
+      offset,
+      limit,
+      count: slice.length,
+      total,
+      hasMore: end < total,
+      ...(end < total ? { readNext: { tool: "read_detail", id: typeof artifact.id === "string" ? artifact.id : id, ...(selectedPath ? { path: selectedPath } : {}), offset: end, limit } } : {}),
+    };
+  }
 
   const grep = stringValue(input.grep ?? input.contains);
   const lines = stringValue(input.lines);
@@ -295,11 +314,12 @@ export function readDetailArtifact(input: JsonRecord): JsonRecord {
     field: artifact.field,
     bytes: artifact.bytes,
     ...(selectedPath ? { path: selectedPath } : {}),
+    ...page,
     ...(grep ? { grep } : {}),
     ...(lines ? { lines } : {}),
     resultBytes: originalBytes,
     truncated,
-    ...(truncated || grep || lines || selectedPath ? { text } : { data: value }),
+    ...(truncated || grep || lines ? { text } : { data: value }),
   };
 }
 
@@ -320,6 +340,9 @@ function writeDetailArtifact(field: string, value: unknown, bytes: number, optio
   const id = detailId(field, value);
   const artifactDir = resolveArtifactDir(process.cwd(), options.detailArtifactDir ?? DEFAULT_DETAIL_ARTIFACT_DIR);
   const artifactPath = resolve(artifactDir, `${id}.json`);
+  const preview = detailPreview(value, outputPositive(options.detailFieldMaxBytes, DEFAULT_DETAIL_FIELD_MAX_BYTES));
+  const previewCount = Array.isArray(preview) ? preview.length : undefined;
+  const remaining = Array.isArray(value) && previewCount !== undefined ? Math.max(0, value.length - previewCount) : undefined;
   mkdirSync(artifactDir, { recursive: true });
   writeFileSync(artifactPath, JSON.stringify({ id, field, bytes, value }, null, 2));
   return {
@@ -327,12 +350,15 @@ function writeDetailArtifact(field: string, value: unknown, bytes: number, optio
     id,
     field,
     bytes,
-    summary: detailSummary(value),
+    summary: detailSummary(value, previewCount),
     ...(Array.isArray(value) ? { count: value.length } : {}),
+    ...(previewCount === undefined ? {} : { previewCount }),
+    ...(remaining && remaining > 0 ? { remaining } : {}),
     path: artifactPath,
     relPath: relative(process.cwd(), artifactPath) || basename(artifactPath),
-    preview: detailPreview(value),
+    preview,
     read: { tool: "read_detail", id },
+    ...(remaining && remaining > 0 ? { readNext: { tool: "read_detail", id, offset: previewCount, limit: previewCount || 20 } } : {}),
   };
 }
 
@@ -353,14 +379,24 @@ function resolveDetailArtifactFile(file: string): string {
   return artifactPath;
 }
 
-function detailPreview(value: unknown): unknown {
-  if (Array.isArray(value)) return value.slice(0, 3).map(compactPreviewValue);
+function detailPreview(value: unknown, maxBytes = DEFAULT_DETAIL_FIELD_MAX_BYTES): unknown {
+  if (Array.isArray(value)) return boundedArrayPreview(value, maxBytes);
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as JsonRecord).slice(0, 5).map(([key, item]) => [key, compactPreviewValue(item)]));
   return compactPreviewValue(value);
 }
 
-function detailSummary(value: unknown): string {
-  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}; preview shows first ${Math.min(3, value.length)}`;
+function boundedArrayPreview(value: unknown[], maxBytes: number): unknown[] {
+  const preview: unknown[] = [];
+  for (const item of value) {
+    const next = [...preview, compactPreviewValue(item)];
+    if (preview.length > 0 && Buffer.byteLength(JSON.stringify(next), "utf8") > maxBytes) break;
+    preview.push(next[next.length - 1]);
+  }
+  return preview;
+}
+
+function detailSummary(value: unknown, previewCount?: number): string {
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}; preview shows first ${previewCount ?? Math.min(3, value.length)}`;
   if (typeof value === "string") return `${Buffer.byteLength(value, "utf8")} byte string`;
   if (value && typeof value === "object") {
     const keys = Object.keys(value as JsonRecord);
@@ -909,6 +945,13 @@ function positiveInteger(value: unknown, fallback: number | undefined): number |
   if (value === undefined) return fallback;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) return fallback;
+  return parsed;
+}
+
+function nonnegativeInteger(value: unknown, fallback: number | undefined): number | undefined {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) return fallback;
   return parsed;
 }
 

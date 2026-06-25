@@ -211,7 +211,7 @@ loop is:
 
 - `select` for file-type-aware TS/JS/Python/JSX/TSX target discovery.
 - `search_text` or `inspect_range` when the target is not certain yet.
-- `read_detail` only when a compact response returns a `$detail` descriptor for a large field you actually need.
+- `read_detail` only when a compact response returns a `$detail` descriptor and its inline `preview` is not enough.
 - `edit` for one localized replacement, insertion, deletion, regex, fuzzy, or
   line-range change.
 - `multiedit` after `search_text` when the same change spans several places or
@@ -305,8 +305,9 @@ returns a truncated preview for
 large dry-runs; large writes also save the full diff under `.tedit-cache/diffs`
 and return `files[].diff.path`. Compact output stores individual non-core fields
 larger than `detailFieldMaxBytes` (default 4096 JSON bytes) under
-`.tedit-cache/details` and returns a `$detail` descriptor; call `read_detail`
-with the descriptor `id`/`file`, optional `path`, `grep`, `lines`, or
+`.tedit-cache/details` and returns a `$detail` descriptor with a bounded
+`preview`. For arrays, use the descriptor's `readNext` or call `read_detail`
+with `id`/`file`, optional `path`, `offset`, `limit`, `grep`, `lines`, or
 `limitBytes` to fetch only the needed slice. Pass `output: "detailed"` or
 `includeDetails: true` to retrieve legacy full results and write-policy
 diagnostics. Failures use the same structured tedit fields where possible,

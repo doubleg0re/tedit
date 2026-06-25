@@ -314,11 +314,27 @@ test("compact output stores large payload fields as read_detail artifacts", () =
   assert.ok(result.strings.bytes > 4096);
   assert.match(result.strings.summary, /180 items/);
   assert.equal(result.strings.count, 180);
+  assert.ok(result.strings.previewCount > 3);
+  assert.equal(result.strings.remaining, 180 - result.strings.previewCount);
+  assert.deepEqual(result.strings.readNext, {
+    tool: "read_detail",
+    id: result.strings.id,
+    offset: result.strings.previewCount,
+    limit: result.strings.previewCount,
+  });
   assert.ok(existsSync(result.strings.path));
   assert.equal(result.strings.preview[0].id, "str_1");
   assert.equal(result.strings.preview[0].value, "label-000");
 
   assert.equal(readDetailValue(result.strings, { path: "0.value" }), "label-000");
+  const nextPage = runMcpTool("read_detail", { id: result.strings.id, offset: result.strings.previewCount, limit: 2 });
+  assert.equal(nextPage.kind, "detail");
+  assert.equal(nextPage.offset, result.strings.previewCount);
+  assert.equal(nextPage.limit, 2);
+  assert.equal(nextPage.count, 2);
+  assert.equal(nextPage.total, 180);
+  assert.equal(nextPage.hasMore, true);
+  assert.equal(nextPage.data[0].value, `label-${String(result.strings.previewCount).padStart(3, "0")}`);
   const grep = runMcpTool("read_detail", { id: result.strings.id, grep: "label-042", limitBytes: 1000 });
   assert.equal(grep.kind, "detail");
   assert.match(grep.text, /label-042/);

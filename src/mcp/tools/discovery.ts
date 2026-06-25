@@ -80,7 +80,7 @@ export function makeDISCOVERY_TOOLS(deps: any): readonly TeditMcpTool[] {
     {
       name: "read_detail",
       title: "Read Detail",
-      description: "Read one large compact-output detail artifact on demand. Supports JSON path, grep, line slicing, and byte limits.",
+      description: "Read one large compact-output detail artifact on demand. Supports JSON path, array offset/limit paging, grep, line slicing, and byte limits.",
       category: "discover",
       aliases: ["read-detail", "show_detail", "detail"],
       bestFor: ["reading large compact response fields on demand", "grep/slice artifact data", "avoiding huge MCP responses"],
@@ -88,6 +88,8 @@ export function makeDISCOVERY_TOOLS(deps: any): readonly TeditMcpTool[] {
         id: z.string().optional().describe("Detail id returned in a $detail descriptor."),
         file: z.string().optional().describe("Artifact path returned in a $detail descriptor."),
         path: z.string().optional().describe("Dot-separated JSON path inside the stored value, e.g. 0.value or symbols.0.name."),
+        offset: z.number().int().nonnegative().optional().describe("Array item offset after path selection. Use readNext.offset from a $detail descriptor to continue."),
+        limit: z.number().int().positive().optional().describe("Maximum array item count after path selection. Separate from limitBytes."),
         grep: z.string().optional().describe("Return only lines containing this string after JSON rendering."),
         lines: z.string().optional().describe("Line slice N or N:M after JSON rendering."),
         limitBytes: z.number().int().positive().optional().describe("Maximum response bytes. Defaults to 8000."),
