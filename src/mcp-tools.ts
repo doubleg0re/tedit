@@ -80,7 +80,7 @@ type SingleStepConfig = {
 };
 
 const detailFlagSchema = {
-  detailFieldMaxBytes: z.number().int().positive().optional().describe("Compact output stores individual fields larger than this many JSON bytes as read_detail artifacts. Defaults to 1024."),
+  detailFieldMaxBytes: z.number().int().positive().optional().describe("Compact output stores individual fields larger than this many JSON bytes as read_detail artifacts. Defaults to 4096."),
   detailArtifactDir: z.string().min(1).optional().describe("Artifact directory for large compact-output fields; must stay inside the current working directory."),
 } satisfies z.ZodRawShape;
 
@@ -580,18 +580,23 @@ function selectJsxMatches(file: string, selector: string): JsonRecord[] {
   const result = runWorkspaceFlow([{ action: "find", file, selector, all: true }]);
   const data = result.results[0]?.data;
   const rawMatches = Array.isArray(data) ? data as JsonRecord[] : typeof data === "string" ? [{ id: data }] : [];
-  return rawMatches.map((match) => ({
-    id: `jsx:${String(match.id ?? selector)}`,
-    route: "jsx",
-    kind: "jsx.element",
-    name: match.name,
-    selector,
-    range: match.loc,
-    lineRange: lineRangeFromLoc(match.loc),
-    preview: match.preview,
-    editHint: { tool: "edit", file, find: match.preview ?? selector },
-    inspectHint: { tool: "jsx_select", file, action: "inspect", id: match.id },
-  }));
+  return rawMatches.map((match) => {
+    const lineRange = lineRangeFromLoc(match.loc);
+    return {
+      id: `jsx:${String(match.id ?? selector)}`,
+      route: "jsx",
+      kind: "jsx.element",
+      name: match.name,
+      selector,
+      range: match.loc,
+      lineRange,
+      preview: match.preview,
+      editHint: lineRange
+        ? { tool: "edit", file, findLines: lineRange }
+        : { tool: "edit", file, findExact: match.preview ?? selector },
+      inspectHint: lineRange ? { tool: "inspect_range", file, lines: lineRange } : undefined,
+    };
+  });
 }
 
 function selectTextMatches(file: string, query: string, context: number, maxResults: number): JsonRecord[] {

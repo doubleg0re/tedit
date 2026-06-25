@@ -53,6 +53,26 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(select.language, "tsx");
   assert.ok(select.matches.some((match) => match.route === "jsx" && match.kind === "jsx.element"));
   assert.ok(select.matches.some((match) => match.editHint?.tool === "edit"));
+  assert.ok(select.matches.some((match) => match.editHint?.findLines === "2"));
+  assert.ok(select.matches.some((match) => match.inspectHint?.tool === "inspect_range"));
+
+  const multilinePage = join(workspace.src, "Multiline.tsx");
+  writeFileSync(multilinePage, [
+    "export function Page() {",
+    "  return (",
+    "    <button",
+    "      className=\"primary\"",
+    "    >",
+    "      Save",
+    "    </button>",
+    "  );",
+    "}",
+    "",
+  ].join("\n"));
+  const multilineSelect = runMcpTool("select", { file: multilinePage, selector: "button" });
+  assert.equal(multilineSelect.matches[0].editHint.find, undefined);
+  assert.equal(multilineSelect.matches[0].editHint.findLines, "3:7");
+  assert.equal(multilineSelect.matches[0].inspectHint.tool, "inspect_range");
 
   const pythonSelect = runMcpTool("select", { file: workspace.python, selector: "train_model" });
   assert.equal(pythonSelect.ok, true);
@@ -282,7 +302,7 @@ test("compact output stores large payload fields as read_detail artifacts", () =
   const noisy = join(workspace.src, "Many.tsx");
   writeFileSync(noisy, [
     "export const labels = [",
-    ...Array.from({ length: 80 }, (_, index) => `  "label-${String(index).padStart(3, "0")}",`),
+    ...Array.from({ length: 180 }, (_, index) => `  "label-${String(index).padStart(3, "0")}",`),
     "];",
     "",
   ].join("\n"));
@@ -291,8 +311,8 @@ test("compact output stores large payload fields as read_detail artifacts", () =
   assert.equal(result.ok, true);
   assert.equal(result.kind, "scan-strings");
   assert.equal(result.strings.$detail, true);
-  assert.ok(result.strings.bytes > 1024);
-  assert.equal(result.strings.count, 80);
+  assert.ok(result.strings.bytes > 4096);
+  assert.equal(result.strings.count, 180);
   assert.ok(existsSync(result.strings.path));
   assert.equal(result.strings.preview[0].id, "str_1");
 
