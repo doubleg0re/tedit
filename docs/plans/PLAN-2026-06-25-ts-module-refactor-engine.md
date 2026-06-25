@@ -19,6 +19,12 @@ Current anchors:
 4. MCP surface stays small: expose via `refactor` and `flow`, not many one-off tools.
 5. Each phase leaves one runnable regression test.
 
+## Status
+
+- P0: done in `feat: expose MCP flow facade`.
+- P1-P5: implemented as a fixture-proven TS module refactor engine in `src/ts-module-refactor.ts`, exposed through `refactor` MCP kinds, integrated with `apply_plan`, and covered by `tests/ts-module-refactor.test.mjs`.
+- P6: intentionally not started; it is the dogfood phase that uses the new engine to split real `src/mcp-tools.ts`.
+
 ## Roadmap
 
 ### P0 — MCP `flow` facade

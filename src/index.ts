@@ -39,8 +39,10 @@ export { buildScaffoldSource, listTemplates, loadScaffoldSpec, loadTemplateSpec 
 export type { ScaffoldExportSpec, ScaffoldImportSpec, ScaffoldSpec, TemplateInfo } from "./scaffold.js";
 export { parseExtractSlot, planExtract } from "./extract.js";
 export { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, inspectRefactorPlan, writePlanFile } from "./refactor-plan.js";
+export { buildModuleSplitPlan, buildTsModuleGraph, runExtractArrayEntries, runMoveSymbols } from "./ts-module-refactor.js";
 export type { ExtractOptions, ExtractPlan, ExtractResult, ExtractSlotSpec } from "./extract.js";
 export type { ApplyPlanOptions, ApplyPlanResult, ExtractComponentPlanFile, InspectPlanResult, RefactorPlanKind, RefactorPlanRisk, RefactorPlanStep, RefactorStatePlanFile, SerializableExtractOptions, SerializableRefactorStateOptions, TeditRefactorPlanFile } from "./refactor-plan.js";
+export type { ExtractArrayEntriesOptions, ModuleSplitPlanFile, MoveSymbolsOptions, TsModuleGraph, TsModuleRefactorResult, TsModuleSymbol } from "./ts-module-refactor.js";
 export { analyzeState, classNameConflictWarnings, fileLengthWarnings, formatQualityWarnings, loadQualityConfig, qualityWarnings } from "./quality.js";
 export type { ClassNameConflictConfig, ClassNameConflictWarning, FileLengthThresholds, FileLengthWarning, QualityConfig, QualityWarning, StateAnalysis, StateAnalysisGuidance, StateCluster } from "./quality.js";
 export { TeditError } from "./errors.js";

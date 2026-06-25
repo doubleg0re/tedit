@@ -25,6 +25,7 @@ import { parsePatchInput, runPatchInput } from "./patch.js";
 import { analyzeState, qualityWarnings } from "./quality.js";
 import { runRefactorState } from "./refactor-state.js";
 import { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, writePlanFile } from "./refactor-plan.js";
+import { buildModuleSplitPlan, buildTsModuleGraph, runExtractArrayEntries, runMoveSymbols, type ExtractArrayEntriesOperation, type MoveSymbolsOperation } from "./ts-module-refactor.js";
 import type { ExtractOptions, HelperPolicy } from "./extract.js";
 import { runWorkspaceFlow, type WorkspaceFlowOptions, type WorkspaceFlowStep } from "./workspace-flow.js";
 import { buildScaffoldSource, listTemplates, loadTemplateSpec, parseParams, type ScaffoldSpec } from "./scaffold.js";
@@ -489,12 +490,12 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
   {
     name: "refactor",
     title: "Refactor",
-    description: "Small facade for existing refactor workflows. kind=state applies or plans refactor-state; kind=extract extracts or plans JSX component extraction; kind=apply-plan applies a saved plan.",
+    description: "Facade for refactor workflows: React state/extract, saved plans, and TS module split helpers for moving symbols or registry entries.",
     category: "refactor",
-    aliases: ["refactor_state", "extract_component", "apply_plan"],
-    bestFor: ["agent default access to CLI refactors", "React state refactors", "JSX component extraction", "reviewable refactor plans"],
+    aliases: ["refactor_state", "extract_component", "apply_plan", "symbol_graph", "move_symbols", "extract_array_entries", "module_split_plan"],
+    bestFor: ["agent default access to CLI refactors", "React state refactors", "JSX component extraction", "TS module splitting", "reviewable refactor plans"],
     inputSchema: {
-      kind: z.enum(["state", "refactor-state", "extract", "extract-component", "apply-plan"]).describe("Which existing refactor workflow to run."),
+      kind: z.enum(["state", "refactor-state", "extract", "extract-component", "apply-plan", "symbol-graph", "symbol_graph", "move-symbols", "move_symbols", "extract-array-entries", "extract_array_entries", "module-split-plan", "module_split_plan"]).describe("Which refactor workflow to run."),
       mode: z.enum(["apply", "plan", "direct"]).optional().describe("state: apply/plan. extract: direct/plan. apply-plan ignores mode."),
       file: z.string().optional().describe("State refactor source file, or apply-plan alias for plan."),
       plan: z.string().optional().describe("Plan path for kind=apply-plan."),
@@ -506,6 +507,12 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       externalDeps: z.enum(["fail", "params"]).optional(),
       from: fileSchema.optional().describe("Source JSX/TSX file for kind=extract."),
       selector: selectorSchema.optional().describe("JSX selector for kind=extract."),
+      symbols: z.array(z.string()).optional().describe("Top-level TS symbols for kind=move_symbols."),
+      array: z.string().optional().describe("Top-level array registry name for kind=extract_array_entries."),
+      exportName: z.string().optional().describe("Exported array name created by kind=extract_array_entries."),
+      where: z.record(z.string(), z.unknown()).optional().describe("Literal object-property match for kind=extract_array_entries."),
+      entries: z.array(z.string()).optional().describe("Entry names for kind=extract_array_entries."),
+      operations: z.array(z.record(z.string(), z.unknown())).optional().describe("Operations for kind=module_split_plan."),
       overwrite: z.boolean().optional(),
       only: z.union([z.string(), z.array(z.string())]).optional(),
       skip: z.union([z.string(), z.array(z.string())]).optional(),
@@ -1968,7 +1975,7 @@ function verifyFileEntry(filePath: string): VerifyFileEntry {
 
 function runRefactorTool(args: unknown): unknown {
   const input = recordInput(args, "refactor");
-  const kind = requiredString(pick(input, "kind", "type", "action"), "refactor requires kind: state, extract, or apply-plan.");
+  const kind = requiredString(pick(input, "kind", "type", "action"), "refactor requires kind: state, extract, apply-plan, symbol-graph, move-symbols, extract-array-entries, or module-split-plan.");
   const normalized = kind.replace(/_/g, "-");
 
   if (normalized === "state" || normalized === "refactor-state") return runRefactorStateTool(input);
@@ -1979,8 +1986,12 @@ function runRefactorTool(args: unknown): unknown {
     fail("INVALID_MCP_INPUT", "refactor kind=extract mode must be direct or plan.");
   }
   if (normalized === "apply-plan") return runApplyPlanTool(input);
+  if (normalized === "symbol-graph") return withAgentFields(buildTsModuleGraph(requiredString(input.file, "refactor kind=symbol_graph requires file.")), input);
+  if (normalized === "move-symbols") return runMoveSymbolsTool(input);
+  if (normalized === "extract-array-entries") return runExtractArrayEntriesTool(input);
+  if (normalized === "module-split-plan") return runModuleSplitPlanTool(input);
 
-  fail("INVALID_MCP_INPUT", "refactor kind must be state, extract, or apply-plan.");
+  fail("INVALID_MCP_INPUT", "refactor kind must be state, extract, apply-plan, symbol-graph, move-symbols, extract-array-entries, or module-split-plan.");
 }
 
 function runRefactorStateTool(args: unknown): unknown {
@@ -2025,12 +2036,78 @@ function runExtractPlanTool(args: unknown): unknown {
 function runApplyPlanTool(args: unknown): unknown {
   const input = recordInput(args, "apply_plan");
   const planPath = requiredString(pick(input, "plan", "file", "path"), "apply_plan requires plan, file, or path.");
-  return withAgentFields(applyRefactorPlan(planPath, {
+  const restorePoints = captureRestorePoints(refactorPlanFilesForRestore(planPath));
+  return withVerifiedAgentFields(applyRefactorPlan(planPath, {
     ...writeFlagsFromInput(input),
     overwrite: booleanValue(input.overwrite),
     only: stringArray(input.only, "only"),
     skip: stringArray(input.skip, "skip"),
-  }), input);
+  }) as unknown as Record<string, unknown>, input, restorePoints);
+}
+
+function runMoveSymbolsTool(input: JsonRecord): unknown {
+  const from = requiredString(input.from, "refactor kind=move_symbols requires from.");
+  const to = requiredString(input.to, "refactor kind=move_symbols requires to.");
+  const restorePoints = captureRestorePoints([from, to]);
+  return withVerifiedAgentFields(runMoveSymbols({
+    from,
+    to,
+    symbols: stringArray(input.symbols, "symbols"),
+    closure: optionalString(input.closure) as "none" | "helpers" | "ask" | undefined,
+    ...writeFlagsFromInput(input),
+  }), input, restorePoints);
+}
+
+function runExtractArrayEntriesTool(input: JsonRecord): unknown {
+  const file = requiredString(input.file, "refactor kind=extract_array_entries requires file.");
+  const to = requiredString(input.to, "refactor kind=extract_array_entries requires to.");
+  const restorePoints = captureRestorePoints([file, to]);
+  return withVerifiedAgentFields(runExtractArrayEntries({
+    file,
+    array: requiredString(input.array, "refactor kind=extract_array_entries requires array."),
+    to,
+    exportName: requiredString(pick(input, "exportName", "export_name", "export-name"), "refactor kind=extract_array_entries requires exportName."),
+    where: recordOrUndefined(input.where, "where"),
+    entries: stringArray(input.entries, "entries"),
+    ...writeFlagsFromInput(input),
+  }), input, restorePoints);
+}
+
+function runModuleSplitPlanTool(input: JsonRecord): unknown {
+  const source = requiredString(pick(input, "source", "file", "from"), "refactor kind=module_split_plan requires source or file.");
+  const planOut = requiredString(pick(input, "planOut", "plan_out", "plan-out", "to"), "refactor kind=module_split_plan requires planOut.");
+  const rawOperations = input.operations;
+  if (!Array.isArray(rawOperations)) fail("INVALID_MCP_INPUT", "refactor kind=module_split_plan requires operations array.");
+  const operations = rawOperations.map((operation) => moduleSplitOperation(operation));
+  const plan = buildModuleSplitPlan(source, operations);
+  writePlanFile(planOut, plan, booleanValue(input.overwrite));
+  return withAgentFields({ success: true, plan: planOut, ...plan }, input);
+}
+
+function moduleSplitOperation(operation: unknown): MoveSymbolsOperation | ExtractArrayEntriesOperation {
+  const input = recordInput(operation, "module_split_plan operation");
+  const action = requiredString(pick(input, "action", "kind", "type"), "module_split_plan operation requires action.").replace(/_/g, "-");
+  if (action === "move-symbols") {
+    return {
+      action: "move_symbols",
+      from: requiredString(input.from, "move_symbols operation requires from."),
+      to: requiredString(input.to, "move_symbols operation requires to."),
+      symbols: stringArray(input.symbols, "symbols"),
+      closure: optionalString(input.closure) as "none" | "helpers" | "ask" | undefined,
+    };
+  }
+  if (action === "extract-array-entries") {
+    return {
+      action: "extract_array_entries",
+      file: requiredString(input.file, "extract_array_entries operation requires file."),
+      array: requiredString(input.array, "extract_array_entries operation requires array."),
+      to: requiredString(input.to, "extract_array_entries operation requires to."),
+      exportName: requiredString(pick(input, "exportName", "export_name", "export-name"), "extract_array_entries operation requires exportName."),
+      where: recordOrUndefined(input.where, "where"),
+      entries: stringArray(input.entries, "entries"),
+    };
+  }
+  fail("INVALID_MCP_INPUT", "module_split_plan operation action must be move_symbols or extract_array_entries.");
 }
 
 function runWorkspaceTool(args: unknown): unknown {
@@ -2246,6 +2323,20 @@ function patchFilesForRestore(input: string): string[] {
       .filter((file): file is string => Boolean(file) && file !== "/dev/null");
     return [...new Set(files)];
   });
+}
+
+function refactorPlanFilesForRestore(planPath: string): string[] {
+  const raw = JSON.parse(readFileSync(planPath, "utf8")) as JsonRecord;
+  const files = [raw.source, raw.target].filter((file): file is string => typeof file === "string" && file.length > 0);
+  const operations = Array.isArray(raw.operations) ? raw.operations : [];
+  for (const operation of operations) {
+    if (!operation || typeof operation !== "object" || Array.isArray(operation)) continue;
+    const record = operation as JsonRecord;
+    for (const value of [record.file, record.from, record.to]) {
+      if (typeof value === "string" && value.length > 0) files.push(value);
+    }
+  }
+  return [...new Set(files)];
 }
 
 function resolveEditStrategy(input: JsonRecord): BaseFindStrategy {

@@ -5,10 +5,11 @@ import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { planExtract, type ExtractOptions, type ExtractPlan, type HelperPolicy } from "./extract.js";
 import { runRefactorState, type RefactorStateOptions, type RefactorStateResult } from "./refactor-state.js";
+import { applyModuleSplitPlan, type ModuleSplitPlanFile } from "./ts-module-refactor.js";
 import { qualityWarnings } from "./quality.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
 
-export type RefactorPlanKind = "extract-component-plan" | "refactor-state-plan";
+export type RefactorPlanKind = "extract-component-plan" | "refactor-state-plan" | "module-split-plan";
 export type RefactorPlanRisk = "low" | "medium" | "high";
 
 export type RefactorPlanStep = {
@@ -47,7 +48,7 @@ export type RefactorStatePlanFile = {
   steps: RefactorPlanStep[];
 };
 
-export type TeditRefactorPlanFile = ExtractComponentPlanFile | RefactorStatePlanFile;
+export type TeditRefactorPlanFile = ExtractComponentPlanFile | RefactorStatePlanFile | ModuleSplitPlanFile;
 
 export type SerializableExtractOptions = {
   from: string;
@@ -172,6 +173,7 @@ export function applyRefactorPlan(planPath: string, options: ApplyPlanOptions = 
   const plan = loadRefactorPlan(planPath);
   if (plan.kind === "extract-component-plan") return applyExtractComponentPlan(planPath, plan, options);
   if (plan.kind === "refactor-state-plan") return applyRefactorStatePlan(planPath, plan, options);
+  if (plan.kind === "module-split-plan") return applyModuleSplitPlan(planPath, plan, options) as unknown as ApplyPlanResult;
   fail("UNSUPPORTED_PLAN", `Unsupported refactor plan kind: ${(plan as { kind?: unknown }).kind}`);
 }
 
@@ -335,7 +337,7 @@ export function inspectRefactorPlan(planPath: string): InspectPlanResult {
     plan: planPath,
     source: plan.source,
     target: plan.target,
-    ...(plan.kind === "extract-component-plan" ? { component: plan.options.name } : { mode: plan.mode }),
+    ...(plan.kind === "extract-component-plan" ? { component: plan.options.name } : plan.kind === "refactor-state-plan" ? { mode: plan.mode } : { mode: "module-split" }),
     summary: planSummary(plan, risks, stale),
     stale,
     steps_total: plan.steps.length,
@@ -447,7 +449,13 @@ function loadRefactorPlan(planPath: string): TeditRefactorPlanFile {
     }
     return raw as RefactorStatePlanFile;
   }
-  fail("INVALID_PLAN", "Refactor plan kind must be extract-component-plan or refactor-state-plan.");
+  if (raw.kind === "module-split-plan") {
+    if (!raw.source || !raw.source_hash || !Array.isArray(raw.steps) || !Array.isArray((raw as { operations?: unknown }).operations)) {
+      fail("INVALID_PLAN", "Module split plan is missing required fields.");
+    }
+    return raw as ModuleSplitPlanFile;
+  }
+  fail("INVALID_PLAN", "Refactor plan kind must be extract-component-plan, refactor-state-plan, or module-split-plan.");
 }
 
 function assertPlanFileHash(role: "source" | "target", file: string, expectedHash: string | null): void {
