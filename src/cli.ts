@@ -54,6 +54,8 @@ type ParsedArgs = {
 type EditSpec = Record<string, unknown>;
 
 type VerifyFileEntry = { file: string } & ParseVerificationFields & { warnings: QualityWarning[] };
+type SetupScope = "user" | "project";
+type SetupTarget = "codex" | "claude";
 
 let currentArgs: ParsedArgs | undefined;
 
@@ -103,7 +105,7 @@ async function main(): Promise<void> {
       commandActions(args);
       return;
     case "setup":
-      commandSetup(args);
+      await commandSetup(args);
       return;
     case "doctor":
       commandDoctor(args);
@@ -339,25 +341,67 @@ function commandActions(args: ParsedArgs): void {
   output(args, result, actions.join("\n"));
 }
 
-function commandSetup(args: ParsedArgs): void {
+async function commandSetup(args: ParsedArgs): Promise<void> {
   const target = args.positionals[0] ?? "print";
   if (target === "print") {
     process.stdout.write(JSON.stringify({ mcpServers: { tedit: { command: "tedit-mcp" } } }, null, 2) + "\n");
     return;
   }
-  if (target !== "codex" && target !== "claude") throw new Error("setup target must be codex, claude, or print.");
-  const command = [target, "mcp", "add", "tedit", "--", "tedit-mcp"];
+  if (target !== "mcp" && target !== "codex" && target !== "claude") throw new Error("setup target must be mcp, codex, claude, or print.");
+  const targets = await setupTargets(args, target);
+  const scope = await setupScope(args, target);
+  const commands = targets.map((setupTarget) => setupCommand(setupTarget, scope));
   if (args.flags["dry-run"]) {
-    process.stdout.write(command.join(" ") + "\n");
+    process.stdout.write(commands.map((command) => command.join(" ")).join("\n") + "\n");
     return;
   }
-  if (!commandExists(target)) {
-    process.stdout.write(`${target} CLI not found. Add this MCP config manually:\n`);
-    commandSetup({ ...args, positionals: ["print"] });
-    return;
+  for (const command of commands) {
+    const setupTarget = command[0] as SetupTarget;
+    if (!commandExists(setupTarget)) {
+      process.stdout.write(`${setupTarget} CLI not found. Add this MCP config manually:\n`);
+      await commandSetup({ ...args, positionals: ["print"] });
+      continue;
+    }
+    const result = spawnCommand(command[0], command.slice(1), { stdio: "inherit" });
+    if (result.status !== 0) throw new Error(`${setupTarget} MCP setup failed.${result.error ? ` ${result.error.message}` : ""}`);
   }
-  const result = spawnCommand(command[0], command.slice(1), { stdio: "inherit" });
-  if (result.status !== 0) throw new Error(`${target} MCP setup failed.${result.error ? ` ${result.error.message}` : ""}`);
+}
+
+async function setupTargets(args: ParsedArgs, target: "mcp" | SetupTarget): Promise<SetupTarget[]> {
+  if (target !== "mcp") return [target];
+  const raw = stringFlag(args, "target") ?? stringFlag(args, "host");
+  if (raw !== undefined) return parseSetupTargets(raw);
+  if (args.flags["dry-run"] || !process.stdin.isTTY) throw new Error("tedit setup mcp requires --target claude|codex|both when not interactive.");
+  return promptSetupTargets();
+}
+
+function parseSetupTargets(raw: string): SetupTarget[] {
+  const target = raw.trim().toLowerCase();
+  if (target === "claude" || target === "1") return ["claude"];
+  if (target === "codex" || target === "2") return ["codex"];
+  if (target === "both" || target === "all" || target === "3") return ["claude", "codex"];
+  throw new Error("setup --target must be claude, codex, or both.");
+}
+
+function setupCommand(target: SetupTarget, scope: SetupScope): string[] {
+  if (target === "codex") {
+    if (scope === "project") throw new Error("Codex CLI does not currently support project-scoped MCP setup; use --scope user.");
+    return ["codex", "mcp", "add", "tedit", "--", "tedit-mcp"];
+  }
+  return ["claude", "mcp", "add", "--scope", scope, "tedit", "--", "tedit-mcp"];
+}
+
+async function setupScope(args: ParsedArgs, target: "mcp" | SetupTarget): Promise<SetupScope> {
+  const raw = stringFlag(args, "scope");
+  if (raw !== undefined) return parseSetupScope(raw);
+  if (args.flags["dry-run"] || !process.stdin.isTTY) return "user";
+  return promptSetupScope(target);
+}
+
+function parseSetupScope(raw: string): SetupScope {
+  const scope = raw.trim().toLowerCase();
+  if (scope === "user" || scope === "project") return scope;
+  throw new Error("setup --scope must be user or project.");
 }
 
 function commandDoctor(args: ParsedArgs): void {
@@ -2197,6 +2241,36 @@ async function confirm(question: string): Promise<boolean> {
   }
 }
 
+async function promptSetupTargets(): Promise<SetupTarget[]> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    while (true) {
+      process.stdout.write("Select MCP host:\n  1) claude\n  2) codex\n  3) both (claude + codex)\n");
+      const answer = (await rl.question("Host [3]: ")).trim().toLowerCase();
+      if (answer === "" || answer === "3" || answer === "both" || answer === "all") return ["claude", "codex"];
+      if (answer === "1" || answer === "claude") return ["claude"];
+      if (answer === "2" || answer === "codex") return ["codex"];
+      process.stdout.write("Please enter 1, 2, 3, claude, codex, or both.\n");
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+async function promptSetupScope(target: "mcp" | SetupTarget): Promise<SetupScope> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    while (true) {
+      const answer = (await rl.question(`MCP setup scope for ${target} (user/project) [user]: `)).trim().toLowerCase();
+      if (answer === "" || answer === "u" || answer === "user") return "user";
+      if (answer === "p" || answer === "project") return "project";
+      process.stdout.write("Please enter user or project.\n");
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 function printHelp(command?: string): void {
   if (command) {
     const text = shortHelp(command);
@@ -2228,7 +2302,8 @@ Usage:
   tedit patch --from-stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit patch --stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit actions [file] [--json]
-  tedit setup codex|claude|print [--dry-run]
+  tedit setup mcp [--target claude|codex|both] [--scope user|project] [--dry-run]
+  tedit setup codex|claude|print [--scope user|project] [--dry-run]
   tedit doctor [--skip-update] [--json]
   tedit update [--check|--yes]
   tedit inspect-range <file> --lines N:M [--context N] [--json]
@@ -2358,7 +2433,7 @@ function shortHelp(command: string): string | null {
     case "actions":
       return "tedit actions\nUsage:\n  tedit actions [file] [--json]\n\nLists universal base actions and file-specific language actions.";
     case "setup":
-      return "tedit setup\nUsage:\n  tedit setup codex|claude [--dry-run]\n  tedit setup print\n\nRegisters tedit-mcp through the host CLI when available, or prints manual MCP config.";
+      return "tedit setup\nUsage:\n  tedit setup mcp [--target claude|codex|both] [--scope user|project] [--dry-run]\n  tedit setup codex|claude [--scope user|project] [--dry-run]\n  tedit setup print\n\nInteractive MCP setup asks for host first (claude, codex, or both), then user/project scope. Codex currently supports user scope only.";
     case "doctor":
       return "tedit doctor\nUsage:\n  tedit doctor [--skip-update] [--json]\n\nChecks tedit, tedit-mcp, actions, and available npm updates.";
     case "update":

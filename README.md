@@ -89,11 +89,18 @@ Install from npm for normal CLI and MCP usage:
 ```bash
 npm install -g tedit
 tedit --version
-tedit setup codex   # or: tedit setup claude
+tedit setup mcp     # asks: claude, codex, or both; then user/project scope
 tedit doctor
 ```
 
-`tedit setup print` emits the manual MCP JSON. If tedit tools do not appear after setup, restart or refresh your MCP host. `tedit update --check` reports newer npm versions; `tedit update` asks before running `npm install -g tedit@latest`.
+For non-interactive setup, pass both choices explicitly:
+
+```bash
+tedit setup mcp --target both --scope user
+tedit setup mcp --target claude --scope project
+```
+
+Codex currently supports user-scoped MCP setup only. `tedit setup print` emits the manual MCP JSON. If tedit tools do not appear after setup, restart or refresh your MCP host. `tedit update --check` reports newer npm versions; `tedit update` asks before running `npm install -g tedit@latest`.
 
 For MCP hosts, register the installed bin:
 

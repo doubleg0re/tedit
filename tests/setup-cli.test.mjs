@@ -13,7 +13,32 @@ test("setup prints MCP config and host CLI command dry-runs", () => {
   assert.deepEqual(config, { mcpServers: { tedit: { command: "tedit-mcp" } } });
 
   assert.equal(run(["setup", "codex", "--dry-run"]), "codex mcp add tedit -- tedit-mcp\n");
-  assert.equal(run(["setup", "claude", "--dry-run"]), "claude mcp add tedit -- tedit-mcp\n");
+  assert.equal(run(["setup", "codex", "--scope", "user", "--dry-run"]), "codex mcp add tedit -- tedit-mcp\n");
+  assert.equal(run(["setup", "claude", "--dry-run"]), "claude mcp add --scope user tedit -- tedit-mcp\n");
+  assert.equal(run(["setup", "claude", "--scope", "project", "--dry-run"]), "claude mcp add --scope project tedit -- tedit-mcp\n");
+  assert.equal(run(["setup", "mcp", "--target", "claude", "--scope", "project", "--dry-run"]), "claude mcp add --scope project tedit -- tedit-mcp\n");
+  assert.equal(
+    run(["setup", "mcp", "--target", "both", "--scope", "user", "--dry-run"]),
+    "claude mcp add --scope user tedit -- tedit-mcp\ncodex mcp add tedit -- tedit-mcp\n",
+  );
+});
+
+test("setup rejects project scope for Codex until the host CLI supports it", () => {
+  assert.throws(
+    () => run(["setup", "codex", "--scope", "project", "--dry-run"]),
+    /Codex CLI does not currently support project-scoped MCP setup/,
+  );
+  assert.throws(
+    () => run(["setup", "mcp", "--target", "both", "--scope", "project", "--dry-run"]),
+    /Codex CLI does not currently support project-scoped MCP setup/,
+  );
+});
+
+test("setup mcp requires explicit target when not interactive", () => {
+  assert.throws(
+    () => run(["setup", "mcp", "--dry-run"]),
+    /requires --target claude\|codex\|both/,
+  );
 });
 
 test("doctor reports local MCP availability without network when requested", () => {
