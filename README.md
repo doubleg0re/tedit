@@ -192,7 +192,7 @@ and intent-oriented:
 
 `actions`, `select`, `edit`, `multiedit`, `patch`, `flow`, `delete_file`,
 `rename_file`, `ts_select`, `ts_edit`, `ts_move`, `file_write`,
-`inspect_range`, `search_text`, `verify_file`, and `refactor`.
+`inspect_range`, `search_text`, `read_detail`, `verify_file`, and `refactor`.
 
 `select` is the common facade for TS/JS declarations, Python functions/classes,
 JSX/TSX elements, and text fallback hints. `inspect_range` and `search_text`
@@ -211,6 +211,7 @@ loop is:
 
 - `select` for file-type-aware TS/JS/Python/JSX/TSX target discovery.
 - `search_text` or `inspect_range` when the target is not certain yet.
+- `read_detail` only when a compact response returns a `$detail` descriptor for a large field you actually need.
 - `edit` for one localized replacement, insertion, deletion, regex, fuzzy, or
   line-range change.
 - `multiedit` after `search_text` when the same change spans several places or
@@ -298,9 +299,14 @@ is a deterministic follow-up such as applying a dry-run. Compact discovery
 output preserves primary payloads such as
 `matches`, `node`, `actions`, `rules`, and parse verification fields. Pass
 `diffMode: "off" | "stats" | "auto" | "full"` to control compact diff
-verbosity. `auto` inlines small diffs and returns a truncated preview for
+verbosity; the default is `stats` so routine MCP edits return counts instead of
+inline patches. `auto` inlines small diffs and returns a truncated preview for
 large dry-runs; large writes also save the full diff under `.tedit-cache/diffs`
-and return `files[].diff.path`. Pass `output: "detailed"` or
+and return `files[].diff.path`. Compact output stores individual non-core fields
+larger than `detailFieldMaxBytes` (default 1024 JSON bytes) under
+`.tedit-cache/details` and returns a `$detail` descriptor; call `read_detail`
+with the descriptor `id`/`file`, optional `path`, `grep`, `lines`, or
+`limitBytes` to fetch only the needed slice. Pass `output: "detailed"` or
 `includeDetails: true` to retrieve legacy full results and write-policy
 diagnostics. Failures use the same structured tedit fields where possible,
 including `ok: false`, `kind: "error"`, `code`, `error`, and actionable
@@ -862,9 +868,9 @@ directory. `output.defaultMode` controls the CLI default when `--output`,
 `TEDIT_OUTPUT`, and `--json` are not set. Use `compact` for agent-first
 loops, `detailed` for legacy full-diff terminal output, or `auto` to keep
 the built-in TTY/non-TTY behavior. `output.diffMode` controls compact diff
-payloads: `off` omits them, `stats` keeps counts only, `auto` inlines small
-diffs and spills large write diffs to artifacts, and `full` includes full
-inline text.
+payloads: `off` omits them, `stats` keeps counts only (the default), `auto`
+inlines small diffs and spills large write diffs to artifacts, and `full`
+includes full inline text.
 
 ```json
 {
@@ -883,7 +889,7 @@ inline text.
   "defaultWrite": "auto",
   "output": {
     "defaultMode": "compact",
-    "diffMode": "auto",
+    "diffMode": "stats",
     "inlineDiffMaxBytes": 8000,
     "inlineDiffMaxHunks": 10,
     "diffArtifactDir": ".tedit-cache/diffs"

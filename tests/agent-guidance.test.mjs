@@ -3,11 +3,18 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runMcpTool } from "../dist/mcp-tools.js";
 
+function readDetailValue(descriptor) {
+  const detail = runMcpTool("read_detail", { id: descriptor.id, limitBytes: 50_000 });
+  if (detail.data !== undefined) return detail.data;
+  return JSON.parse(detail.text);
+}
+
 test("actions guidance gives agents a stable workflow decision table", () => {
   const actions = runMcpTool("actions", {});
-  const guide = actions.guidance;
+  const guide = readDetailValue(actions.guidance);
 
   assert.equal(actions.ok, true);
+  assert.equal(actions.guidance.$detail, true);
   assert.ok(Array.isArray(guide.workflow_guide));
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("target context") && row.first_tool === "search_text"));
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("one localized") && row.first_tool === "edit"));

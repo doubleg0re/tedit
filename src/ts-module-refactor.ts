@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { parse } from "@babel/parser";
 import traverseModule, { type NodePath, type TraverseOptions } from "@babel/traverse";
 import * as t from "@babel/types";
@@ -35,6 +35,8 @@ export type TsModuleGraph = {
   file: string;
   symbols: TsModuleSymbol[];
   imports: Array<{ source: string; locals: string[]; importKind?: string }>;
+  registries: Array<{ name: string; entries: Array<{ name: string; index: number; category?: string; dependsOn: string[]; range: TsModuleSymbol["range"] }> }>;
+  suggestedActions: Array<{ kind: "extract_array_entries"; reason: string; input: { file: string; array: string; to: string; exportName: string; entries: string[]; write: false } }>;
 };
 
 export type MoveSymbolsOptions = WritePolicyFlags & {
@@ -116,6 +118,8 @@ export function buildTsModuleGraph(filePath: string): TsModuleGraph {
     file: filePath,
     symbols,
     imports: model.imports.map((item) => ({ source: item.source, locals: item.specifiers.map((specifier) => specifier.local), ...(item.importKind ? { importKind: item.importKind } : {}) })),
+    registries: registrySummaries(model),
+    suggestedActions: registrySuggestedActions(model),
   };
 }
 
@@ -197,32 +201,50 @@ function applyExtractArrayEntries(options: ExtractArrayEntriesOptions, mode: { w
   const selected = elements.filter((element) => entryMatches(element.node as t.ObjectExpression, options));
   if (selected.length === 0) fail("NO_ARRAY_ENTRIES", `No entries matched ${options.array}.`);
   assertContiguous(elements, selected);
+
   const refs = new Set<string>();
   for (const element of selected) collectRefs(element, refs);
-  const importNames = [...refs].filter((name) => model.importsByLocal.has(name));
-  const localDeps = [...refs].filter((name) => model.symbols.has(name) && name !== options.array);
+  const arrayType = arrayTypeAnnotation(model, array);
+  const typeRefs = arrayType ? typeNames(arrayType) : [];
+  const importNames = [...new Set([...refs, ...typeRefs])].filter((name) => model.importsByLocal.has(name));
+  const localTypeDeps = typeRefs.filter((name) => {
+    const symbol = model.symbols.get(name);
+    return symbol?.kind === "type" || symbol?.kind === "interface";
+  }).sort();
+  const localValueDeps = [...refs].filter((name) => {
+    const symbol = model.symbols.get(name);
+    return symbol && symbol.name !== options.array && symbol.kind !== "type" && symbol.kind !== "interface";
+  }).sort();
+  const factoryName = `make${options.exportName}`;
+
   const patches: Patch[] = [];
-  for (const name of localDeps) {
+  for (const name of localTypeDeps) {
     const dep = model.symbols.get(name);
     if (dep && !dep.exported) patches.push({ start: dep.range.start, end: dep.range.start, text: "export " });
   }
-  patches.push({ start: importInsertOffset(model), end: importInsertOffset(model), text: `import { ${options.exportName} } from "${moduleSpecifier(options.file, options.to)}";\n` });
-  patches.push({ start: nodeStart(selected[0].node), end: nodeEnd(selected[selected.length - 1].node), text: `...${options.exportName}` });
+  patches.push({ start: importInsertOffset(model), end: importInsertOffset(model), text: `import { ${factoryName} } from "${moduleSpecifier(options.file, options.to)}";\n` });
+  const sourceReplacement = localValueDeps.length > 0 ? `...${factoryName}({ ${localValueDeps.join(", ")} })` : `...${factoryName}()`;
+  patches.push({ start: nodeStart(selected[0].node), end: nodeEnd(selected[selected.length - 1].node), text: sourceReplacement });
   const nextSource = applyPatches(source, patches);
-  const entriesSource = selected.map((element) => source.slice(nodeStart(element.node), nodeEnd(element.node))).join(",\n");
+
+  const entriesSource = selected.map((element) => normalizeEntryIndent(source, source.slice(nodeStart(element.node), nodeEnd(element.node)), element.node, "    ")).join(",\n");
   const targetAdd = [
     ...externalImportLines(model, importNames),
-    ...(localDeps.length > 0 ? [`import { ${localDeps.sort().join(", ")} } from "${moduleSpecifier(options.to, options.file)}";`] : []),
+    ...(localTypeDeps.length > 0 ? [`import type { ${localTypeDeps.join(", ")} } from "${moduleSpecifier(options.to, options.file)}";`] : []),
     "",
-    `export const ${options.exportName} = [`,
-    indent(entriesSource, "  "),
-    `];`,
+    ...(localValueDeps.length > 0 ? ["// ponytail: explicit any avoids runtime imports from the source module; tighten when dependency typing matters."] : []),
+    `export function ${factoryName}(${localValueDeps.length > 0 ? "deps: any" : ""}) {`,
+    ...(localValueDeps.length > 0 ? [`  const { ${localValueDeps.join(", ")} } = deps;`] : []),
+    `  return [`,
+    entriesSource,
+    `  ]${arrayType ? ` satisfies ${arrayType}` : ""};`,
+    `}`,
   ].join("\n").trimEnd() + "\n";
   const nextTarget = targetSource ? `${targetSource.trimEnd()}\n\n${targetAdd}` : targetAdd;
   return writeResult("extract-array-entries", [
     fileChange(options.file, source, nextSource, mode),
     fileChange(options.to, targetSource, nextTarget, mode),
-  ], { extracted: entryNames(selected.map((item) => item.node as t.ObjectExpression)), importsAdded: { [options.to]: [...importNames, ...localDeps], [options.file]: [options.exportName] }, exportsAdded: { [options.to]: [options.exportName], ...(localDeps.length > 0 ? { [options.file]: localDeps } : {}) } });
+  ], { extracted: entryNames(selected.map((item) => item.node as t.ObjectExpression)), importsAdded: { [options.to]: [...importNames, ...localTypeDeps], [options.file]: [factoryName] }, exportsAdded: { [options.to]: [factoryName], ...(localTypeDeps.length > 0 ? { [options.file]: localTypeDeps } : {}) } });
 }
 
 type Model = {
@@ -322,9 +344,85 @@ function arrayElements(path: NodePath<t.Node>): NodePath<t.Node>[] {
   return initPath.get("elements").filter((element) => !Array.isArray(element) && Boolean(element.node)) as unknown as NodePath<t.Node>[];
 }
 
+function arrayTypeAnnotation(model: Model, symbol: SymbolInfo): string | undefined {
+  const node = symbol.path.node;
+  if (!t.isVariableDeclaration(node)) return undefined;
+  const id = node.declarations[0]?.id;
+  if (!t.isIdentifier(id) || !t.isTSTypeAnnotation(id.typeAnnotation)) return undefined;
+  return model.source.slice(nodeStart(id.typeAnnotation.typeAnnotation), nodeEnd(id.typeAnnotation.typeAnnotation));
+}
+
+function typeNames(typeText: string): string[] {
+  const keywords = new Set(["readonly", "keyof", "typeof", "import", "type", "string", "number", "boolean", "unknown", "any", "never", "void", "null", "undefined"]);
+  return [...new Set(typeText.match(/\b[A-Za-z_$][\w$]*\b/g) ?? [])].filter((name) => !keywords.has(name));
+}
+
+function registrySummaries(model: Model): TsModuleGraph["registries"] {
+  return [...model.symbols.values()].filter((symbol) => symbol.kind === "const" || symbol.kind === "let" || symbol.kind === "var").flatMap((symbol) => {
+    const entries = registryEntries(symbol, model);
+    if (entries.length === 0) return [];
+    return [{ name: symbol.name, entries }];
+  });
+}
+
+function registryEntries(symbol: SymbolInfo, model: Model): TsModuleGraph["registries"][number]["entries"] {
+  try {
+    return arrayElements(symbol.path).map((element, index) => {
+      if (!t.isObjectExpression(element.node)) return undefined;
+      const name = literalProp(element.node, "name");
+      if (typeof name !== "string") return undefined;
+      const refs = new Set<string>();
+      collectRefs(element, refs);
+      const category = literalProp(element.node, "category");
+      return {
+        name,
+        index,
+        ...(typeof category === "string" ? { category } : {}),
+        dependsOn: [...refs].filter((ref) => ref !== symbol.name).sort(),
+        range: publicRange({ start: nodeStart(element.node), end: nodeEnd(element.node) }, model.lineStarts),
+      };
+    }).filter((entry): entry is TsModuleGraph["registries"][number]["entries"][number] => Boolean(entry));
+  } catch {
+    return [];
+  }
+}
+
+function registrySuggestedActions(model: Model): TsModuleGraph["suggestedActions"] {
+  return registrySummaries(model).flatMap((registry) => contiguousEntryGroups(registry.entries).map((entries) => ({
+    kind: "extract_array_entries" as const,
+    reason: `${entries.length} contiguous ${entries[0].category ?? "registry"} entries in ${registry.name}`,
+    input: {
+      file: model.file,
+      array: registry.name,
+      to: suggestedRegistryTarget(model.file, entries[0].category ?? "registry"),
+      exportName: `${String(entries[0].category ?? "registry").toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_TOOLS`,
+      entries: entries.map((entry) => entry.name),
+      write: false as const,
+    },
+  })));
+}
+
+function contiguousEntryGroups(entries: TsModuleGraph["registries"][number]["entries"]): Array<TsModuleGraph["registries"][number]["entries"]> {
+  const groups: Array<TsModuleGraph["registries"][number]["entries"]> = [];
+  let group: TsModuleGraph["registries"][number]["entries"] = [];
+  for (const entry of entries) {
+    if (group.length === 0 || (entry.category === group[0].category && entry.index === group[group.length - 1].index + 1)) group.push(entry);
+    else {
+      if (group.length > 1) groups.push(group);
+      group = [entry];
+    }
+  }
+  if (group.length > 1) groups.push(group);
+  return groups;
+}
+
+function suggestedRegistryTarget(file: string, category: string): string {
+  return join(dirname(file), basename(file).replace(/(?:-tools)?\.([cm]?[jt]sx?)$/, `-${category}-tools.$1`));
+}
+
 function entryMatches(node: t.ObjectExpression, options: ExtractArrayEntriesOptions): boolean {
   const name = literalProp(node, "name");
-  if (options.entries && typeof name === "string" && options.entries.includes(name)) return true;
+  if (options.entries) return typeof name === "string" && options.entries.includes(name);
   if (!options.where) return false;
   return Object.entries(options.where).every(([key, value]) => literalProp(node, key) === value);
 }
@@ -496,6 +594,22 @@ function expandDeleteEnd(source: string, end: number): number {
 
 function indent(text: string, prefix: string): string {
   return text.split("\n").map((line) => line ? prefix + line : line).join("\n");
+}
+
+function normalizeEntryIndent(source: string, text: string, node: t.Node, targetIndent: string): string {
+  const baseColumn = columnAt(source, nodeStart(node));
+  return text.split("\n").map((line, index) => {
+    if (!line.trim()) return line;
+    if (index === 0) return targetIndent + line.trimStart();
+    const currentIndent = line.match(/^\s*/)?.[0].length ?? 0;
+    return targetIndent + " ".repeat(Math.max(0, currentIndent - baseColumn)) + line.trimStart();
+  }).join("\n");
+}
+
+function columnAt(source: string, offset: number): number {
+  let cursor = offset;
+  while (cursor > 0 && source[cursor - 1] !== "\n" && source[cursor - 1] !== "\r") cursor--;
+  return offset - cursor;
 }
 
 function entryNames(entries: t.ObjectExpression[]): string[] {

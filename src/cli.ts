@@ -2166,7 +2166,7 @@ Usage:
   tedit backups clean --older-than <duration> [--root <dir>] [--dry-run|--write]
 
 Mutation commands use git-aware default write mode. Pass --dry-run or --write to be explicit.
-Compact output uses --diff-mode off|stats|auto|full. auto inlines small diffs and saves large write diffs under .tedit-cache/diffs.
+Compact output uses --diff-mode off|stats|auto|full. Default stats keeps counts only; auto inlines small diffs and saves large write diffs under .tedit-cache/diffs.
 Use tedit help <command> for short command-specific help.
 `);
 }

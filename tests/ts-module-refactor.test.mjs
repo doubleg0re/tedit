@@ -18,6 +18,8 @@ function sourceFixture() {
     "",
     "const LOCAL_PREFIX = \"tool\";",
     "",
+    "export type TeditMcpTool = { name: string; category: \"edit\" | \"discover\"; handler: () => string };",
+    "",
     "export function runEditTool() {",
     "  return parse(LOCAL_PREFIX + \":edit\");",
     "}",
@@ -30,7 +32,7 @@ function sourceFixture() {
     "  return parse(LOCAL_PREFIX + \":search\");",
     "}",
     "",
-    "export const TEDIT_MCP_ALL_TOOLS = [",
+    "export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [",
     "  { name: \"edit\", category: \"edit\", handler: runEditTool },",
     "  { name: \"patch\", category: \"edit\", handler: runPatchTool },",
     "  { name: \"search_text\", category: \"discover\", handler: runSearchTextTool },",
@@ -54,6 +56,17 @@ test("TS module graph tracks top-level symbols, local deps, and external imports
   const registry = graph.symbols.find((symbol) => symbol.name === "TEDIT_MCP_ALL_TOOLS");
   assert.ok(registry.dependsOn.includes("runEditTool"));
   assert.ok(registry.dependsOn.includes("runPatchTool"));
+  const toolRegistry = graph.registries.find((item) => item.name === "TEDIT_MCP_ALL_TOOLS");
+  assert.deepEqual(toolRegistry.entries.map((entry) => entry.name), ["edit", "patch", "search_text"]);
+  assert.deepEqual(toolRegistry.entries[0].dependsOn, ["runEditTool"]);
+  assert.deepEqual(graph.suggestedActions[0].input, {
+    file,
+    array: "TEDIT_MCP_ALL_TOOLS",
+    to: join(dir, "mcp-edit-tools.ts"),
+    exportName: "EDIT_TOOLS",
+    entries: ["edit", "patch"],
+    write: false,
+  });
 });
 
 test("move_symbols preserves mixed value/type imports on partial import repair", () => {
@@ -108,11 +121,36 @@ test("extract_array_entries writes contiguous registry entries into a new module
   });
   assert.equal(result.changed, true);
   assert.equal(result.written, true);
-  assert.match(readFileSync(file, "utf8"), /import \{ EDIT_TOOLS \} from "\.\/mcp-edit-tools\.js"/);
-  assert.match(readFileSync(file, "utf8"), /\.\.\.EDIT_TOOLS/);
-  assert.match(readFileSync(to, "utf8"), /export const EDIT_TOOLS = \[/);
+  assert.match(readFileSync(file, "utf8"), /import \{ makeEDIT_TOOLS \} from "\.\/mcp-edit-tools\.js"/);
+  assert.match(readFileSync(file, "utf8"), /\.\.\.makeEDIT_TOOLS\(\{ runEditTool, runPatchTool \}\)/);
+  assert.match(readFileSync(to, "utf8"), /import type \{ TeditMcpTool \} from "\.\/mcp-tools\.js"/);
+  assert.match(readFileSync(to, "utf8"), /export function makeEDIT_TOOLS/);
   assert.match(readFileSync(to, "utf8"), /name: "edit"/);
-  assert.match(readFileSync(to, "utf8"), /import \{ runEditTool, runPatchTool \} from "\.\/mcp-tools\.js"/);
+  assert.match(readFileSync(to, "utf8"), /satisfies readonly TeditMcpTool\[\]/);
+  assert.doesNotMatch(readFileSync(to, "utf8"), /import \{ runEditTool, runPatchTool \} from "\.\/mcp-tools\.js"/);
+});
+
+test("extract_array_entries lets explicit entries override broad where filters", () => {
+  const dir = workspace("tedit-ts-extract-entries-precedence-");
+  const file = join(dir, "mcp-tools.ts");
+  const to = join(dir, "mcp-edit-tools.ts");
+  writeFileSync(file, sourceFixture());
+
+  const result = runExtractArrayEntries({
+    file,
+    array: "TEDIT_MCP_ALL_TOOLS",
+    to,
+    exportName: "EDIT_TOOLS",
+    entries: ["edit", "patch"],
+    where: { category: "discover" },
+    write: true,
+    noBackup: true,
+  });
+  assert.equal(result.changed, true);
+  assert.match(readFileSync(file, "utf8"), /\.\.\.makeEDIT_TOOLS\(\{ runEditTool, runPatchTool \}\)/);
+  assert.match(readFileSync(to, "utf8"), /name: "edit"/);
+  assert.match(readFileSync(to, "utf8"), /name: "patch"/);
+  assert.doesNotMatch(readFileSync(to, "utf8"), /search_text/);
 });
 
 test("module-split plans round-trip through apply_plan and MCP refactor facade", () => {

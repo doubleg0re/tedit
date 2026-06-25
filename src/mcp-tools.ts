@@ -19,7 +19,7 @@ import { historyTrace } from "./history-tools.js";
 import { runTsEdit as runTsEditEngine, runTsMove as runTsMoveEngine, runTsSelect } from "./ts-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
-import { formatAgentResult, outputOptionsFromRecord } from "./output.js";
+import { formatAgentResult, outputOptionsFromRecord, readDetailArtifact } from "./output.js";
 import { parseMultieditInput, runMultiedit, runMultieditInput } from "./multiedit.js";
 import { parsePatchInput, runPatchInput } from "./patch.js";
 import { analyzeState, qualityWarnings } from "./quality.js";
@@ -69,6 +69,11 @@ type SingleStepConfig = {
   buildStep: (input: JsonRecord) => WorkspaceFlowStep;
 };
 
+const detailFlagSchema = {
+  detailFieldMaxBytes: z.number().int().positive().optional().describe("Compact output stores individual fields larger than this many JSON bytes as read_detail artifacts. Defaults to 1024."),
+  detailArtifactDir: z.string().min(1).optional().describe("Artifact directory for large compact-output fields; must stay inside the current working directory."),
+} satisfies z.ZodRawShape;
+
 const writeFlagSchema = {
   write: z.boolean().optional().describe("Write changes when true; otherwise git-aware defaults apply."),
   dryRun: z.boolean().optional().describe("Force dry-run mode."),
@@ -77,11 +82,12 @@ const writeFlagSchema = {
   output: z.enum(["compact", "detailed"]).optional().describe("Response shape. MCP defaults to compact; use detailed for legacy full diffs and internals."),
   includeDiffs: z.boolean().optional().describe("Legacy detailed-diff opt-in. Prefer diffMode for compact agent responses."),
   includeDetails: z.boolean().optional().describe("Return the detailed response shape."),
-  diffMode: z.enum(["off", "stats", "auto", "full"]).optional().describe("Compact diff payload policy. auto inlines small diffs and spills large write diffs to .tedit-cache/diffs artifacts."),
+  diffMode: z.enum(["off", "stats", "auto", "full"]).optional().describe("Compact diff payload policy. Defaults to stats. auto inlines small diffs and spills large write diffs to .tedit-cache/diffs artifacts."),
   inlineDiffMaxBytes: z.number().int().positive().optional().describe("Maximum diff bytes to inline when diffMode is auto."),
   inlineDiffMaxHunks: z.number().int().positive().optional().describe("Maximum hunk count to inline when diffMode is auto."),
   diffArtifactDir: z.string().min(1).optional().describe("Artifact directory for large auto diffs; must stay inside the current working directory."),
   diffArtifacts: z.boolean().optional().describe("Allow large diff artifact writes. Dry-runs only write artifacts when this is explicitly true."),
+  ...detailFlagSchema,
   verify: z.unknown().optional().describe("Optional post-write verify command: string, argv array, or {cmd, args, timeoutMs, cwd, rollbackOnFail}. Runs only after files are written."),
   verifyCommand: z.unknown().optional().describe("Alias for verify. Prefer verify.cmd as an argv array for safer execution."),
   verify_command: z.unknown().optional().describe("Alias for verifyCommand."),
@@ -290,6 +296,7 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
     bestFor: ["tool discovery", "choosing an edit strategy", "checking file-specific rule support"],
     inputSchema: {
       file: z.string().optional(),
+      ...detailFlagSchema,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runActionsTool,
@@ -303,6 +310,7 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
     bestFor: ["discovering scaffold templates", "checking project conventions before file generation", "choosing file_write mode=template"],
     inputSchema: {
       cwd: z.string().optional().describe("Project directory used to resolve .tedit/templates. Defaults to process cwd."),
+      ...detailFlagSchema,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runTemplatesTool,
@@ -318,6 +326,7 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       file: fileSchema,
       lines: z.string().min(1).describe("Line range such as 42 or 40:50."),
       context: z.number().int().nonnegative().optional().describe("Additional lines before and after the requested range."),
+      ...detailFlagSchema,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runInspectRangeTool,
@@ -343,9 +352,29 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       includeHidden: z.boolean().optional().describe("Include hidden files and directories except built-in excluded directories."),
       output: z.enum(["compact", "detailed"]).optional().describe("Response shape. Defaults to compact; detailed includes full per-result context and suggestions."),
       includeDetails: z.boolean().optional().describe("Return the detailed response shape."),
+      ...detailFlagSchema,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runSearchTextTool,
+  },
+  {
+    name: "read_detail",
+    title: "Read Detail",
+    description: "Read one large compact-output detail artifact on demand. Supports JSON path, grep, line slicing, and byte limits.",
+    category: "discover",
+    aliases: ["read-detail", "show_detail", "detail"],
+    bestFor: ["reading large compact response fields on demand", "grep/slice artifact data", "avoiding huge MCP responses"],
+    inputSchema: {
+      id: z.string().optional().describe("Detail id returned in a $detail descriptor."),
+      file: z.string().optional().describe("Artifact path returned in a $detail descriptor."),
+      path: z.string().optional().describe("Dot-separated JSON path inside the stored value, e.g. 0.value or symbols.0.name."),
+      grep: z.string().optional().describe("Return only lines containing this string after JSON rendering."),
+      lines: z.string().optional().describe("Line slice N or N:M after JSON rendering."),
+      limitBytes: z.number().int().positive().optional().describe("Maximum response bytes. Defaults to 8000."),
+      detailArtifactDir: z.string().min(1).optional().describe("Artifact directory used with id lookup. Defaults to .tedit-cache/details."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    handler: runReadDetailTool,
   },
   {
     name: "history_trace",
@@ -360,6 +389,7 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       contains: z.string().optional().describe("Literal text to trace with git log -S."),
       regex: z.string().optional().describe("Regex to trace with git log -G."),
       limit: z.number().int().positive().optional().describe("Maximum commits to return. Defaults to 10."),
+      ...detailFlagSchema,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runHistoryTraceTool,
@@ -376,6 +406,7 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       contains: z.string().optional().describe("Only return strings containing this text."),
       includeExcluded: z.boolean().optional().describe("Include technical strings that are normally excluded, with excludeReason."),
       minLength: z.number().int().positive().optional().describe("Minimum string length. Defaults to 1."),
+      ...detailFlagSchema,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runScanStringsTool,
@@ -395,6 +426,7 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       kind: z.enum(["auto", "function", "class", "method", "prop", "var", "import", "jsx", "text"]).optional().describe("Optional route hint. Defaults to auto."),
       context: z.number().int().nonnegative().optional().describe("Context lines for text fallback."),
       maxResults: z.number().int().positive().optional().describe("Maximum normalized matches to return."),
+      ...detailFlagSchema,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runSelectTool,
@@ -409,6 +441,7 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
     inputSchema: {
       file: fileSchema,
       selector: z.string().min(1).describe("AST selector with node type and optional [path=value] filters; supports direct child > combinator."),
+      ...detailFlagSchema,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     handler: runAstSelectTool,
@@ -1054,6 +1087,7 @@ const AGENT_MCP_TOOL_NAMES = new Set([
   "file_write",
   "inspect_range",
   "search_text",
+  "read_detail",
   "verify_file",
   "refactor",
 ]);
@@ -1336,6 +1370,10 @@ function runSearchTextTool(args: unknown): unknown {
     caseSensitive: booleanValue(pick(input, "caseSensitive", "case_sensitive", "case-sensitive")),
     includeHidden: booleanValue(pick(input, "includeHidden", "include_hidden", "include-hidden")),
   }), input);
+}
+
+function runReadDetailTool(args: unknown): unknown {
+  return readDetailArtifact(recordInput(args, "read_detail"));
 }
 
 function runHistoryTraceTool(args: unknown): unknown {
@@ -1811,6 +1849,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "Use select as the common TS/JS/JSX/TSX target discovery facade before choosing edit, ts_edit, or move.",
       "Use inspect_range for sed-style line context plus parse status and edit-ready findLines suggestions.",
       "Use search_text for rg/grep-style raw text discovery when the next step is likely a tedit edit.",
+      "Use read_detail only when a compact response returns a $detail descriptor for a field you actually need.",
       "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
       "Pass verify for optional post-write project checks such as typecheck, lint, test, or build.",
       "Set TEDIT_MCP_PROFILE=all for JSX, TS declaration, AST, history, template, and refactor helpers.",
@@ -1818,7 +1857,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
     profile: {
       current: teditMcpProfileFromEnv(),
-      default_surface: "Agent profile exposes actions, select, edit, multiedit, patch, delete_file, rename_file, ts_select, ts_edit, ts_move, file_write, inspect_range, search_text, and verify_file.",
+      default_surface: "Agent profile exposes actions, select, edit, multiedit, patch, delete_file, rename_file, ts_select, ts_edit, ts_move, file_write, inspect_range, search_text, read_detail, and verify_file.",
       advanced_surface: "Set TEDIT_MCP_PROFILE=all to expose JSX, TS declaration, AST, history, template, extract, plan, and legacy fine-grained tools.",
       refresh_hint: "If actions lists a tool but the host does not expose it as callable, restart or refresh the MCP host; tool schema/name changes are captured only when the host reloads the server.",
     },

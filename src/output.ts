@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { loadQualityConfig } from "./quality.js";
 
@@ -15,6 +15,8 @@ export type OutputOptions = {
   inlineDiffMaxHunks?: number;
   diffArtifactDir?: string;
   diffArtifacts?: boolean;
+  detailFieldMaxBytes?: number;
+  detailArtifactDir?: string;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -59,12 +61,20 @@ type DiffPayload = {
   artifactError?: string;
 };
 
-const DEFAULT_DIFF_MODE: DiffMode = "auto";
+const DEFAULT_DIFF_MODE: DiffMode = "stats";
 const DEFAULT_INLINE_DIFF_MAX_BYTES = 8_000;
 const DEFAULT_INLINE_DIFF_MAX_HUNKS = 10;
 const DEFAULT_DIFF_ARTIFACT_DIR = ".tedit-cache/diffs";
+const DEFAULT_DETAIL_FIELD_MAX_BYTES = 1_024;
+const DEFAULT_DETAIL_ARTIFACT_DIR = ".tedit-cache/details";
 const ARTIFACT_PREVIEW_MAX_BYTES = 2_000;
+const DETAIL_READ_MAX_BYTES = 8_000;
 const DEFAULT_COMPACT_SEARCH_RESULT_LIMIT = 20;
+const DETAIL_INLINE_KEYS = new Set([
+  "ok", "kind", "summary", "path", "file", "count", "query", "regex", "paths", "glob", "context",
+  "truncated", "resultsShown", "resultsTruncated", "changedCount", "writtenCount", "parse_verified", "parser",
+  "parse_skipped", "parse_skip_reason", "suggested", "suggestions", "suggestedActions", "next", "actions", "rules", "profiles",
+]);
 
 export function parseOutputMode(value: unknown, label = "output"): OutputMode | undefined {
   if (value === undefined || value === false) return undefined;
@@ -103,6 +113,8 @@ export function outputOptionsFromRecord(record: JsonRecord): OutputOptions {
     inlineDiffMaxHunks: positiveInteger(pick(record, "inlineDiffMaxHunks", "inline_diff_max_hunks", "inline-diff-max-hunks"), base.inlineDiffMaxHunks),
     diffArtifactDir: stringValue(pick(record, "diffArtifactDir", "diff_artifact_dir", "diff-artifact-dir")) ?? base.diffArtifactDir,
     diffArtifacts: optionalBoolean(pick(record, "diffArtifacts", "diff_artifacts", "diff-artifacts"), base.diffArtifacts),
+    detailFieldMaxBytes: positiveInteger(pick(record, "detailFieldMaxBytes", "detail_field_max_bytes", "detail-field-max-bytes"), undefined),
+    detailArtifactDir: stringValue(pick(record, "detailArtifactDir", "detail_artifact_dir", "detail-artifact-dir")),
   };
 }
 
@@ -135,7 +147,7 @@ export function compactAgentResult(record: JsonRecord, options: OutputOptions = 
   const files = agentFilesFromRecord(record);
   if (record.success === false) return compactErrorResult(record, files, options);
   const kind = compactResultKind(record, files);
-  if (kind !== "mutation") return compactPayloadResult(record, kind);
+  if (kind !== "mutation") return compactPayloadResult(record, kind, options);
   return compactMutationResult(record, files, options);
 }
 
@@ -188,7 +200,7 @@ function compactErrorResult(record: JsonRecord, files: AgentFileSummary[], optio
   return compact;
 }
 
-function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
+function compactPayloadResult(record: JsonRecord, kind: string, options: OutputOptions): JsonRecord {
   const compact: JsonRecord = {
     ok: true,
     kind,
@@ -197,59 +209,195 @@ function compactPayloadResult(record: JsonRecord, kind: string): JsonRecord {
 
   if (kind === "find" && Array.isArray(record.matches)) {
     compact.matches = record.matches;
-    return compact;
+    return externalizeLargeFields(compact, options);
   }
   if (kind === "inspect-range") {
     copyKeys(record, compact, ["file", "requested", "expanded", "byteRange", "lines", "parse_verified", "parser", "parse_skipped", "parse_skip_reason", "suggested", "suggestions"]);
     if (typeof record.file === "string") compact.path = record.file;
-    return compact;
+    return externalizeLargeFields(compact, options);
   }
   if (kind === "search-text") {
-    return compactSearchTextResult(record, compact);
+    return externalizeLargeFields(compactSearchTextResult(record, compact), options);
   }
   if (kind === "history-trace") {
     copyKeys(record, compact, ["file", "target", "git", "latest", "commits", "blame", "commands", "suggestions"]);
     if (typeof record.file === "string") compact.path = record.file;
-    return compact;
+    return externalizeLargeFields(compact, options);
   }
   if (kind === "templates") {
     copyKeys(record, compact, ["cwd", "templates", "count"]);
-    return compact;
+    return externalizeLargeFields(compact, options);
   }
   if (kind === "inspect" && record.node !== undefined) {
     compact.node = record.node;
-    return compact;
+    return externalizeLargeFields(compact, options);
   }
   if (kind === "verify-file") {
     if (typeof record.file === "string") compact.path = record.file;
     const { success: _success, file: _file, summary: _summary, warnings: _warnings, ...payload } = record;
     Object.assign(compact, payload);
     if (Array.isArray(record.warnings) && record.warnings.length > 0) compact.warnings = record.warnings;
-    return compact;
+    return externalizeLargeFields(compact, options);
   }
   if (kind === "verify-files") {
     copyKeys(record, compact, ["count", "verifiedCount", "skippedCount", "warningCount"]);
     if (Array.isArray(record.files)) compact.files = record.files.map(compactVerifyFileEntry).filter(Boolean);
-    return compact;
+    return externalizeLargeFields(compact, options);
   }
   if (kind === "actions") {
     if (typeof record.file === "string") compact.path = record.file;
     copyKeys(record, compact, ["tools", "advanced_tools", "profiles", "rules", "actions", "guidance"]);
-    return compact;
+    return externalizeLargeFields(compact, options);
   }
   if (kind === "rules") {
     copyKeys(record, compact, ["rules"]);
-    return compact;
+    return externalizeLargeFields(compact, options);
   }
   if (kind === "analyze-state") {
     if (typeof record.file === "string") compact.path = record.file;
     copyKeys(record, compact, ["states_total", "handlers_total", "clusters", "guidance", "ambiguous", "ungrouped"]);
     if (record.summary && typeof record.summary === "object" && !Array.isArray(record.summary)) compact.analysis_summary = record.summary;
-    return compact;
+    return externalizeLargeFields(compact, options);
   }
 
   const { success: _success, summary: rawSummary, ...payload } = record;
-  return { ...compact, ...(rawSummary === undefined || typeof rawSummary === "string" ? payload : { ...payload, result_summary: rawSummary }) };
+  return externalizeLargeFields({ ...compact, ...(rawSummary === undefined || typeof rawSummary === "string" ? payload : { ...payload, result_summary: rawSummary }) }, options);
+}
+
+
+export function readDetailArtifact(input: JsonRecord): JsonRecord {
+  const id = stringValue(input.id);
+  const file = stringValue(input.file ?? input.artifact ?? input.artifactPath ?? input.artifact_path);
+  if (!id && !file) throw new Error("read_detail requires id or file.");
+  const artifactPath = file
+    ? resolveDetailArtifactFile(file)
+    : detailPathForId(id as string, stringValue(input.detailArtifactDir ?? input.detail_artifact_dir ?? input["detail-artifact-dir"]));
+  const artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as JsonRecord;
+  let value = artifact.value;
+  const selectedPath = stringValue(input.path ?? input.jsonPath ?? input.json_path);
+  if (selectedPath) value = selectJsonPath(value, selectedPath);
+
+  const grep = stringValue(input.grep ?? input.contains);
+  const lines = stringValue(input.lines);
+  const limit = positiveInteger(input.limitBytes ?? input.limit_bytes ?? input["limit-bytes"], DETAIL_READ_MAX_BYTES) ?? DETAIL_READ_MAX_BYTES;
+  let text = value === undefined ? "undefined" : JSON.stringify(value, null, 2);
+  if (grep) text = text.split(/\r?\n/).filter((line) => line.includes(grep)).join("\n");
+  if (lines) text = sliceTextLines(text, lines);
+  const originalBytes = Buffer.byteLength(text, "utf8");
+  const truncated = originalBytes > limit;
+  if (truncated) text = truncateTextBytes(text, limit);
+
+  return {
+    success: true,
+    kind: "detail",
+    id: typeof artifact.id === "string" ? artifact.id : id,
+    file: artifactPath,
+    field: artifact.field,
+    bytes: artifact.bytes,
+    ...(selectedPath ? { path: selectedPath } : {}),
+    ...(grep ? { grep } : {}),
+    ...(lines ? { lines } : {}),
+    resultBytes: originalBytes,
+    truncated,
+    ...(truncated || grep || lines || selectedPath ? { text } : { data: value }),
+  };
+}
+
+function externalizeLargeFields(record: JsonRecord, options: OutputOptions): JsonRecord {
+  const limit = outputPositive(options.detailFieldMaxBytes, DEFAULT_DETAIL_FIELD_MAX_BYTES);
+  const next: JsonRecord = { ...record };
+  for (const [key, value] of Object.entries(record)) {
+    if (DETAIL_INLINE_KEYS.has(key) || value === undefined || value === null) continue;
+    if (typeof value !== "object" && typeof value !== "string") continue;
+    const bytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+    if (bytes <= limit) continue;
+    next[key] = writeDetailArtifact(key, value, bytes, options);
+  }
+  return next;
+}
+
+function writeDetailArtifact(field: string, value: unknown, bytes: number, options: OutputOptions): JsonRecord {
+  const id = detailId(field, value);
+  const artifactDir = resolveArtifactDir(process.cwd(), options.detailArtifactDir ?? DEFAULT_DETAIL_ARTIFACT_DIR);
+  const artifactPath = resolve(artifactDir, `${id}.json`);
+  mkdirSync(artifactDir, { recursive: true });
+  writeFileSync(artifactPath, JSON.stringify({ id, field, bytes, value }, null, 2));
+  return {
+    $detail: true,
+    id,
+    field,
+    bytes,
+    ...(Array.isArray(value) ? { count: value.length } : {}),
+    path: artifactPath,
+    relPath: relative(process.cwd(), artifactPath) || basename(artifactPath),
+    preview: detailPreview(value),
+    read: { tool: "read_detail", id },
+  };
+}
+
+function detailId(field: string, value: unknown): string {
+  const hash = createHash("sha256").update(field).update("\0").update(JSON.stringify(value)).digest("hex").slice(0, 16);
+  return `${sanitizeArtifactName(field)}-${hash}`;
+}
+
+function detailPathForId(id: string, dirInput?: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error("read_detail id contains unsupported characters.");
+  return resolve(resolveArtifactDir(process.cwd(), dirInput ?? DEFAULT_DETAIL_ARTIFACT_DIR), `${id}.json`);
+}
+
+function resolveDetailArtifactFile(file: string): string {
+  const artifactPath = resolve(process.cwd(), file);
+  const rel = relative(process.cwd(), artifactPath);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) throw new Error("read_detail file must stay inside the current working directory.");
+  return artifactPath;
+}
+
+function detailPreview(value: unknown): unknown {
+  if (Array.isArray(value)) return value.slice(0, 3).map(compactPreviewValue);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as JsonRecord).slice(0, 5).map(([key, item]) => [key, compactPreviewValue(item)]));
+  return compactPreviewValue(value);
+}
+
+function compactPreviewValue(value: unknown): unknown {
+  if (typeof value === "string") return value.length > 160 ? value.slice(0, 157) + "..." : value;
+  if (!value || typeof value !== "object") return value;
+  if (Array.isArray(value)) return { count: value.length, preview: value.slice(0, 3).map(compactPreviewValue) };
+  const record = value as JsonRecord;
+  const keys = ["id", "name", "kind", "type", "file", "path", "summary", "count", "range", "line", "lineRange"];
+  const out: JsonRecord = {};
+  for (const key of keys) if (record[key] !== undefined) out[key] = compactPreviewValue(record[key]);
+  return Object.keys(out).length > 0 ? out : Object.fromEntries(Object.entries(record).slice(0, 3).map(([key, item]) => [key, compactPreviewValue(item)]));
+}
+
+function selectJsonPath(value: unknown, path: string): unknown {
+  if (!path) return value;
+  return path.split(".").filter(Boolean).reduce((current, part) => {
+    if (current === undefined || current === null) return undefined;
+    if (Array.isArray(current)) return current[Number(part)];
+    if (typeof current === "object") return (current as JsonRecord)[part];
+    return undefined;
+  }, value);
+}
+
+function sliceTextLines(text: string, rangeText: string): string {
+  const match = rangeText.match(/^(\d+)(?::(\d+))?$/);
+  if (!match) throw new Error("read_detail lines must be N or N:M.");
+  const start = Math.max(1, Number(match[1]));
+  const end = Math.max(start, Number(match[2] ?? match[1]));
+  return text.split(/\r?\n/).slice(start - 1, end).join("\n");
+}
+
+function truncateTextBytes(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  let bytes = 0;
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const next = Buffer.byteLength(line + "\n", "utf8");
+    if (bytes + next > maxBytes) break;
+    out.push(line);
+    bytes += next;
+  }
+  return (out.length > 0 ? out.join("\n") + "\n" : text.slice(0, maxBytes)) + "... detail truncated ...";
 }
 
 export function collectDiffs(value: unknown): string[] {

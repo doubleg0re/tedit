@@ -126,6 +126,11 @@ function runPlainKnownSingleEdit(workspace, recorder) {
   assert.match(readFileSync(file, "utf8"), /timeout: 5000/);
 }
 
+function detailValue(value) {
+  if (!value || value.$detail !== true || typeof value.path !== "string") return value;
+  return JSON.parse(readFileSync(value.path, "utf8")).value;
+}
+
 function runTeditBulkTextReplace(workspace, recorder, expected) {
   const search = recorder.tedit([
     "search-text",
@@ -138,7 +143,8 @@ function runTeditBulkTextReplace(workspace, recorder, expected) {
     "Delete",
   ]);
   assert.equal(search.ok, true);
-  assert.equal(search.multiedit.edits.length, expected.files);
+  const multiedit = detailValue(search.multiedit);
+  assert.equal(multiedit.edits.length, expected.files);
 
   const write = recorder.tedit([
     "multiedit",
@@ -147,7 +153,7 @@ function runTeditBulkTextReplace(workspace, recorder, expected) {
     "--no-backup",
     "--diff-mode",
     "stats",
-  ], { input: JSON.stringify(search.multiedit) });
+  ], { input: JSON.stringify(multiedit) });
   assert.equal(write.ok, true);
   assert.equal(write.writtenCount, expected.files);
   assertBulkTextReplaced(workspace);

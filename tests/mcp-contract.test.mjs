@@ -5,6 +5,12 @@ import { join } from "node:path";
 import test from "node:test";
 import { runMcpTool, toolsForMcpProfile } from "../dist/mcp-tools.js";
 
+function readDetailValue(descriptor, extra = {}) {
+  const detail = runMcpTool("read_detail", { id: descriptor.id, limitBytes: 50_000, ...extra });
+  if (detail.data !== undefined) return detail.data;
+  return JSON.parse(detail.text);
+}
+
 test("mcp default profile tools share compact agent contracts", () => {
   const workspace = createWorkspace();
   const defaultTools = toolsForMcpProfile("agent").map((tool) => tool.name).sort();
@@ -17,6 +23,7 @@ test("mcp default profile tools share compact agent contracts", () => {
     "inspect_range",
     "multiedit",
     "patch",
+    "read_detail",
     "refactor",
     "rename_file",
     "search_text",
@@ -33,10 +40,12 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(actions.kind, "actions");
   assert.equal(actions.profiles.current, "agent");
   assert.deepEqual(actions.profiles.agent.sort(), defaultTools);
-  assert.ok(actions.guidance.edit_loop.some((row) => row.tool === "edit"));
-  assert.ok(actions.guidance.edit_loop.some((row) => row.tool === "search_text"));
-  assert.ok(actions.guidance.edit_loop.some((row) => row.tool === "select"));
-  assert.ok(actions.guidance.refactor_loop.some((row) => row.tool === "refactor"));
+  assert.equal(actions.guidance.$detail, true);
+  const guidance = readDetailValue(actions.guidance);
+  assert.ok(guidance.edit_loop.some((row) => row.tool === "edit"));
+  assert.ok(guidance.edit_loop.some((row) => row.tool === "search_text"));
+  assert.ok(guidance.edit_loop.some((row) => row.tool === "select"));
+  assert.ok(guidance.refactor_loop.some((row) => row.tool === "refactor"));
 
   const select = runMcpTool("select", { file: workspace.page, selector: "button" });
   assert.equal(select.ok, true);
@@ -266,6 +275,32 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(refactor.files[0].changed, true);
   assert.equal(refactor.files[0].written, false);
   assert.match(refactor.state_object, /State$/);
+});
+
+test("compact output stores large payload fields as read_detail artifacts", () => {
+  const workspace = createWorkspace();
+  const noisy = join(workspace.src, "Many.tsx");
+  writeFileSync(noisy, [
+    "export const labels = [",
+    ...Array.from({ length: 80 }, (_, index) => `  "label-${String(index).padStart(3, "0")}",`),
+    "];",
+    "",
+  ].join("\n"));
+
+  const result = runMcpTool("scan_strings", { file: noisy });
+  assert.equal(result.ok, true);
+  assert.equal(result.kind, "scan-strings");
+  assert.equal(result.strings.$detail, true);
+  assert.ok(result.strings.bytes > 1024);
+  assert.equal(result.strings.count, 80);
+  assert.ok(existsSync(result.strings.path));
+  assert.equal(result.strings.preview[0].id, "str_1");
+
+  assert.equal(readDetailValue(result.strings, { path: "0.value" }), "label-000");
+  const grep = runMcpTool("read_detail", { id: result.strings.id, grep: "label-042", limitBytes: 1000 });
+  assert.equal(grep.kind, "detail");
+  assert.match(grep.text, /label-042/);
+  assert.throws(() => runMcpTool("read_detail", { file: "../outside.json" }), /stay inside/);
 });
 
 function createWorkspace() {
