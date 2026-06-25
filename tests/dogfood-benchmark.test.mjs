@@ -22,6 +22,8 @@ test("dogfood benchmark covers fixed agent adoption scenarios", () => {
   assert.equal(typeof result.metrics.detailDescriptors, "number");
   assert.equal(typeof result.metrics.detailReads, "number");
   assert.equal(typeof result.metrics.detailReadBytes, "number");
+  assert.equal(typeof result.metrics.readNextOffered, "number");
+  assert.equal(typeof result.metrics.readNextReads, "number");
   assert.ok(result.metrics.retryHints >= 2);
   assert.equal(result.metrics.parseGuardrails, 1);
   assert.ok(result.metrics.maxCompactBytes < 12000);

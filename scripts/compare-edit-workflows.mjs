@@ -329,6 +329,7 @@ function createRecorder(workspace, lane) {
         outputBytes,
         elapsedMs,
         detailDescriptors: countDetailDescriptors(parsed),
+        readNextOffered: countReadNextOffers(parsed),
       });
       const expectedStatus = options.expectStatus ?? 0;
       assert.equal(result.status, expectedStatus, `${args.join(" ")}\n${raw}`);
@@ -349,6 +350,7 @@ function createRecorder(workspace, lane) {
         inputBytes,
         outputBytes,
         elapsedMs,
+        readNextRead: typeof descriptor.offset === "number",
       });
       return JSON.parse(raw).value;
     },
@@ -386,6 +388,8 @@ function createRecorder(workspace, lane) {
         estimatedTokens: estimateTokens(inputBytes + outputBytes + detailInputBytes + detailOutputBytes),
         detailDescriptors: sum(steps.map((step) => step.detailDescriptors ?? 0)),
         detailReads: detailReads.length,
+        readNextOffered: sum(steps.map((step) => step.readNextOffered ?? 0)),
+        readNextReads: detailReads.filter((step) => step.readNextRead).length,
         failedSteps: steps.filter((step) => step.status !== 0).length,
         stepNames: [...steps.map((step) => step.name), ...detailReads.map((step) => step.name)],
       };
@@ -404,6 +408,8 @@ function summarizeLane(items) {
     medianEstimatedTokens: Math.round(median(items.map((item) => item.estimatedTokens))),
     medianDetailDescriptors: Math.round(median(items.map((item) => item.detailDescriptors))),
     medianDetailReads: Math.round(median(items.map((item) => item.detailReads))),
+    medianReadNextOffered: Math.round(median(items.map((item) => item.readNextOffered))),
+    medianReadNextReads: Math.round(median(items.map((item) => item.readNextReads))),
     failedSteps: Math.round(median(items.map((item) => item.failedSteps))),
     stepNames: items[0]?.stepNames ?? [],
   };
@@ -414,6 +420,13 @@ function countDetailDescriptors(value) {
   if (Array.isArray(value)) return sum(value.map(countDetailDescriptors));
   if (value.$detail === true) return 1;
   return sum(Object.values(value).map(countDetailDescriptors));
+}
+
+function countReadNextOffers(value) {
+  if (!value || typeof value !== "object") return 0;
+  if (Array.isArray(value)) return sum(value.map(countReadNextOffers));
+  const own = value.readNext && typeof value.readNext === "object" ? 1 : 0;
+  return own + sum(Object.values(value).map(countReadNextOffers));
 }
 
 function compactEnv() {

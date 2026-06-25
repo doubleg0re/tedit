@@ -326,6 +326,11 @@ test("compact output stores large payload fields as read_detail artifacts", () =
   assert.equal(result.strings.preview[0].id, "str_1");
   assert.equal(result.strings.preview[0].value, "label-000");
 
+  const search = runMcpTool("search_text", { query: "label-", path: noisy, maxResults: 10, detailFieldMaxBytes: 4096 });
+  assert.equal(Array.isArray(search.results), true);
+  assert.equal(search.results.length, 10);
+  assert.equal(search.results.$detail, undefined);
+
   assert.equal(readDetailValue(result.strings, { path: "0.value" }), "label-000");
   const nextPage = runMcpTool("read_detail", { id: result.strings.id, offset: result.strings.previewCount, limit: 2 });
   assert.equal(nextPage.kind, "detail");

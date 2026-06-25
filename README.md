@@ -306,7 +306,8 @@ large dry-runs; large writes also save the full diff under `.tedit-cache/diffs`
 and return `files[].diff.path`. Compact output stores individual non-core fields
 larger than `detailFieldMaxBytes` (default 4096 JSON bytes) under
 `.tedit-cache/details` and returns a `$detail` descriptor with a bounded
-`preview`. For arrays, use the descriptor's `readNext` or call `read_detail`
+`preview`; arrays whose compact preview fits are returned inline without an
+artifact. For larger arrays, use the descriptor's `readNext` or call `read_detail`
 with `id`/`file`, optional `path`, `offset`, `limit`, `grep`, `lines`, or
 `limitBytes` to fetch only the needed slice. Pass `output: "detailed"` or
 `includeDetails: true` to retrieve legacy full results and write-policy

@@ -12,6 +12,8 @@ const metrics = {
   detailDescriptors: 0,
   detailReads: 0,
   detailReadBytes: 0,
+  readNextOffered: 0,
+  readNextReads: 0,
   retryHints: 0,
   parseGuardrails: 0,
 };
@@ -180,6 +182,7 @@ function runCompactJson(args, options = {}) {
   metrics.maxCompactBytes = Math.max(metrics.maxCompactBytes, Buffer.byteLength(raw, "utf8"));
   const body = JSON.parse(raw);
   metrics.detailDescriptors += countDetailDescriptors(body);
+  metrics.readNextOffered += countReadNextOffers(body);
   assert.equal(body.success, undefined);
   return body;
 }
@@ -197,6 +200,7 @@ function runFailCompact(args, options = {}) {
   metrics.maxCompactBytes = Math.max(metrics.maxCompactBytes, Buffer.byteLength(raw, "utf8"));
   const body = JSON.parse(raw);
   metrics.detailDescriptors += countDetailDescriptors(body);
+  metrics.readNextOffered += countReadNextOffers(body);
   return {
     status: result.status,
     body,
@@ -207,6 +211,7 @@ function detailValue(value) {
   if (!value || value.$detail !== true || typeof value.path !== "string") return value;
   const raw = readFileSync(value.path, "utf8");
   metrics.detailReads++;
+  if (typeof value.offset === "number") metrics.readNextReads++;
   metrics.detailReadBytes += Buffer.byteLength(raw, "utf8");
   return JSON.parse(raw).value;
 }
@@ -216,6 +221,13 @@ function countDetailDescriptors(value) {
   if (Array.isArray(value)) return value.reduce((total, item) => total + countDetailDescriptors(item), 0);
   if (value.$detail === true) return 1;
   return Object.values(value).reduce((total, item) => total + countDetailDescriptors(item), 0);
+}
+
+function countReadNextOffers(value) {
+  if (!value || typeof value !== "object") return 0;
+  if (Array.isArray(value)) return value.reduce((total, item) => total + countReadNextOffers(item), 0);
+  const own = value.readNext && typeof value.readNext === "object" ? 1 : 0;
+  return own + Object.values(value).reduce((total, item) => total + countReadNextOffers(item), 0);
 }
 
 function run(args, options = {}) {

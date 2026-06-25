@@ -331,6 +331,13 @@ function externalizeLargeFields(record: JsonRecord, options: OutputOptions): Jso
     if (typeof value !== "object" && typeof value !== "string") continue;
     const bytes = Buffer.byteLength(JSON.stringify(value), "utf8");
     if (bytes <= limit) continue;
+    if (Array.isArray(value)) {
+      const preview = detailPreview(value, limit);
+      if (Array.isArray(preview) && preview.length === value.length) {
+        next[key] = preview;
+        continue;
+      }
+    }
     next[key] = writeDetailArtifact(key, value, bytes, options);
   }
   return next;

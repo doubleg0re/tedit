@@ -12,6 +12,7 @@ const mcp = new URL("../dist/mcp.js", import.meta.url).pathname;
 const distDir = new URL("../dist", import.meta.url).pathname;
 
 async function readMcpDetail(client, descriptor, extra = {}) {
+  if (!descriptor || descriptor.$detail !== true) return descriptor;
   const detail = await client.callTool({
     name: "read_detail",
     arguments: { id: descriptor.id, limitBytes: 50_000, ...extra },
@@ -1985,7 +1986,7 @@ test("mcp server lists tools and runs universal edit", async () => {
 
     const actionsDiscovery = await client.callTool({
       name: "actions",
-      arguments: {},
+      arguments: { detailFieldMaxBytes: 1 },
     });
     assert.equal(actionsDiscovery.isError, undefined);
     assert.ok(actionsDiscovery.structuredContent.actions.includes("select"));
@@ -2010,8 +2011,6 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(actionsDiscovery.structuredContent.actions.includes("ast_edit"), false);
     assert.equal(actionsDiscovery.structuredContent.actions.includes("refactor_state_plan"), false);
     assert.equal(actionsDiscovery.structuredContent.actions.includes("class.add"), false);
-    assert.equal(actionsDiscovery.structuredContent.tools.$detail, true);
-    assert.equal(actionsDiscovery.structuredContent.advanced_tools.$detail, true);
     assert.equal(actionsDiscovery.structuredContent.guidance.$detail, true);
     const actionTools = await readMcpDetail(client, actionsDiscovery.structuredContent.tools);
     const advancedTools = await readMcpDetail(client, actionsDiscovery.structuredContent.advanced_tools);
@@ -2307,7 +2306,7 @@ test("mcp server exposes advanced tools when profile is all", async () => {
 
     const actionsDiscovery = await client.callTool({
       name: "actions",
-      arguments: {},
+      arguments: { detailFieldMaxBytes: 1 },
     });
     assert.equal(actionsDiscovery.isError, undefined);
     assert.equal(actionsDiscovery.structuredContent.profiles.current, "all");
