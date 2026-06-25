@@ -164,7 +164,7 @@ function multieditSpecForSearch(options: SearchTextOptions, results: SearchCandi
     const count = countMultieditMatches(readFileSync(file, "utf8"), find);
     if (count === 0) return [];
     return [{
-      file,
+      file: agentPath(file),
       ...find,
       replace,
       replaceAll: true,
@@ -279,14 +279,15 @@ function findMatches(source: string, matcher: RegExp | string, options: SearchTe
 
 function candidateForMatch(index: number, filePath: string, source: string, lines: string[], start: number, end: number, context: number): SearchCandidate {
   const range = rangeForOffsets(source, start, end);
-  const path = relative(process.cwd(), filePath) || basename(filePath);
+  const path = agentPath(relative(process.cwd(), filePath) || basename(filePath));
+  const displayFile = agentPath(filePath);
   const contextRange: LineRange = {
     start: Math.max(1, range.line - context),
     end: Math.min(lines.length, range.endLine + context),
   };
   const candidate: SearchCandidate = {
     id: `text_${index}`,
-    file: filePath,
+    file: displayFile,
     path,
     match: source.slice(start, end),
     range,
@@ -298,8 +299,8 @@ function candidateForMatch(index: number, filePath: string, source: string, line
       replaceHint: "findLines replaces whole lines; include the trailing newline unless replacing the final line.",
     },
     suggestions: [
-      { tool: "inspect_range", cliCommand: "inspect-range", arguments: { file: filePath, lines: range.lineRange, context: context > 0 ? context : 3 } },
-      { tool: "edit", arguments: { file: filePath, findLines: range.lineRange, replace: "<replacement including trailing newline>" } },
+      { tool: "inspect_range", cliCommand: "inspect-range", arguments: { file: displayFile, lines: range.lineRange, context: context > 0 ? context : 3 } },
+      { tool: "edit", arguments: { file: displayFile, findLines: range.lineRange, replace: "<replacement including trailing newline>" } },
     ],
   };
   if (context > 0) {
@@ -400,4 +401,8 @@ function globToRegExp(glob: string): RegExp {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+function agentPath(filePath: string): string {
+  return filePath.split("\\").join("/");
 }

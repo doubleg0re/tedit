@@ -223,7 +223,7 @@ function scanStringCandidates(filePath: string, source: string, parsed: ParsedAs
         kind,
         file: filePath,
         value,
-        raw: source.slice(path.node.start ?? range.start, path.node.end ?? range.end),
+        raw: source.slice(range.start, range.end),
         range,
         context,
         ...(attr ? { attr } : {}),
@@ -243,7 +243,7 @@ function scanStringCandidates(filePath: string, source: string, parsed: ParsedAs
         kind: "template_literal",
         file: filePath,
         value,
-        raw: source.slice(path.node.start ?? range.start, path.node.end ?? range.end),
+        raw: source.slice(range.start, range.end),
         range,
         context: stringContext(path),
         ...parentLabel(path),
@@ -367,30 +367,31 @@ function astMatchForPath(id: string, filePath: string, source: string, parsed: P
   };
 }
 
-function editablePatchForPath(path: NodePath<t.Node>, source: string, replacement: string): EditablePatch | null {
+function editablePatchForPath(path: NodePath<t.Node>, source: string, replacement: string, lineStartOffsets: number[] = lineStarts(source)): EditablePatch | null {
   const node = path.node;
   if (t.isJSXAttribute(node) && t.isStringLiteral(node.value)) {
-    return nodePatch(node.value, quoteString(replacement, quoteAt(source, node.value.start)));
+    return nodePatch(node.value, quoteString(replacement, quoteAt(source, nodeOffsets(node.value, lineStartOffsets).start)), lineStartOffsets);
   }
   if (t.isObjectProperty(node) && t.isStringLiteral(node.value)) {
-    return nodePatch(node.value, quoteString(replacement, quoteAt(source, node.value.start)));
+    return nodePatch(node.value, quoteString(replacement, quoteAt(source, nodeOffsets(node.value, lineStartOffsets).start)), lineStartOffsets);
   }
-  if (t.isStringLiteral(node)) return nodePatch(node, quoteString(replacement, quoteAt(source, node.start)));
+  if (t.isStringLiteral(node)) return nodePatch(node, quoteString(replacement, quoteAt(source, nodeOffsets(node, lineStartOffsets).start)), lineStartOffsets);
   if (t.isJSXText(node)) {
     const trimmed = trimmedTextOffsets(node.value);
-    const start = (node.start ?? 0) + trimmed.leading;
-    const end = (node.end ?? start) - trimmed.trailing;
+    const offsets = nodeOffsets(node, lineStartOffsets);
+    const start = offsets.start + trimmed.leading;
+    const end = offsets.end - trimmed.trailing;
     return { start, end, text: replacement };
   }
   if (t.isTemplateLiteral(node) && node.expressions.length === 0) {
-    return nodePatch(node, quoteTemplate(replacement));
+    return nodePatch(node, quoteTemplate(replacement), lineStartOffsets);
   }
   return null;
 }
 
-function nodePatch(node: t.Node, text: string): EditablePatch {
-  if (typeof node.start !== "number" || typeof node.end !== "number") fail("AST_RANGE_UNAVAILABLE", "AST node does not have source offsets.");
-  return { start: node.start, end: node.end, text };
+function nodePatch(node: t.Node, text: string, lineStartOffsets: number[]): EditablePatch {
+  const { start, end } = nodeOffsets(node, lineStartOffsets);
+  return { start, end, text };
 }
 
 function applySinglePatch(source: string, patch: EditablePatch): string {
@@ -405,14 +406,26 @@ function parseAstSource(source: string): ParsedAstSource {
 }
 
 function nodeRange(node: t.Node, lineStartOffsets: number[]): Range {
+  const { start, end } = nodeOffsets(node, lineStartOffsets);
+  return rangeForOffsets(start, end, lineStartOffsets);
+}
+
+function nodeOffsets(node: t.Node, lineStartOffsets: number[]): { start: number; end: number } {
+  if (node.loc) {
+    return {
+      start: lineStartOffsets[node.loc.start.line - 1] + node.loc.start.column,
+      end: lineStartOffsets[node.loc.end.line - 1] + node.loc.end.column,
+    };
+  }
   if (typeof node.start !== "number" || typeof node.end !== "number") fail("AST_RANGE_UNAVAILABLE", "AST node does not have source offsets.");
-  return rangeForOffsets(node.start, node.end, lineStartOffsets);
+  return { start: node.start, end: node.end };
 }
 
 function jsxTextValueRange(node: t.JSXText, source: string, lineStartOffsets: number[]): Range {
   const trimmed = trimmedTextOffsets(node.value);
-  const start = (node.start ?? 0) + trimmed.leading;
-  const end = (node.end ?? start) - trimmed.trailing;
+  const offsets = nodeOffsets(node, lineStartOffsets);
+  const start = offsets.start + trimmed.leading;
+  const end = offsets.end - trimmed.trailing;
   return rangeForOffsets(start, end, lineStartOffsets);
 }
 

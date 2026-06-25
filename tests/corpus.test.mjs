@@ -4,8 +4,9 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { modulePath } from "../scripts/path-helpers.mjs";
 
-const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+const cli = modulePath("../dist/cli.js", import.meta.url);
 
 const corpusCases = [
   {

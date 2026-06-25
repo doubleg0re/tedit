@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { modulePath } from "../scripts/path-helpers.mjs";
 
-const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+const cli = modulePath("../dist/cli.js", import.meta.url);
 
 test("ast edit shortcuts cover call args jsx attrs jsx text and templates", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-ast-"));

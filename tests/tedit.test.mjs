@@ -6,10 +6,11 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
+import { modulePath } from "../scripts/path-helpers.mjs";
 
-const cli = new URL("../dist/cli.js", import.meta.url).pathname;
-const mcp = new URL("../dist/mcp.js", import.meta.url).pathname;
-const distDir = new URL("../dist", import.meta.url).pathname;
+const cli = modulePath("../dist/cli.js", import.meta.url);
+const mcp = modulePath("../dist/mcp.js", import.meta.url);
+const distDir = modulePath("../dist", import.meta.url);
 
 async function readMcpDetail(client, descriptor, extra = {}) {
   if (!descriptor || descriptor.$detail !== true) return descriptor;
@@ -1867,7 +1868,8 @@ in ${out} prop.set @card data-stdin true
 
 test("npm pack includes CLI and MCP distribution files", () => {
   const root = new URL("..", import.meta.url);
-  const output = execFileSync("npm", ["pack", "--dry-run", "--json"], {
+  const npm = npmInvocation(["pack", "--dry-run", "--json"]);
+  const output = execFileSync(npm.command, npm.args, {
     cwd: root,
     encoding: "utf8",
     env: { ...process.env, FORCE_COLOR: "0" },
@@ -1888,8 +1890,10 @@ test("npm pack includes CLI and MCP distribution files", () => {
   assert.ok(files.every((file) => !file.endsWith(".bak") && !file.endsWith(".tedit.bak")));
   assert.ok(pack.size < 2_000_000);
   assert.equal(pkg.scripts.postinstall, undefined);
-  assert.notEqual(pack.files.find((file) => file.path === "dist/cli.js").mode & 0o111, 0);
-  assert.notEqual(pack.files.find((file) => file.path === "dist/mcp.js").mode & 0o111, 0);
+  if (process.platform !== "win32") {
+    assert.notEqual(pack.files.find((file) => file.path === "dist/cli.js").mode & 0o111, 0);
+    assert.notEqual(pack.files.find((file) => file.path === "dist/mcp.js").mode & 0o111, 0);
+  }
 });
 
 test("mcp server lists tools and runs universal edit", async () => {
@@ -3890,7 +3894,7 @@ test("refactor-state extracts a selected cluster into a custom hook", () => {
   assert.match(created, /export function useCrewImport\(\)/);
   assert.match(created, /const \[crewImportState, setCrewImportState\] = useState\(\{/);
   assert.match(created, /const openImport = \(dayId: string\) =>/);
-  assert.match(created, /return \{\n\s+\.\.\.crewImportState,\n\s+openImport\n\s+\};/);
+  assert.match(normalizeNewlines(created), /return \{\n\s+\.\.\.crewImportState,\n\s+openImport\n\s+\};/);
 });
 
 test("refactor-state custom hook extraction fails atomically on external handler dependencies", () => {
@@ -4092,7 +4096,17 @@ function rawEnv() {
 }
 
 function mkdirp(path) {
-  execFileSync("mkdir", ["-p", path]);
+  mkdirSync(path, { recursive: true });
+}
+
+function npmInvocation(args) {
+  if (process.env.npm_execpath) return { command: process.execPath, args: [process.env.npm_execpath, ...args] };
+  if (process.platform === "win32") return { command: "cmd.exe", args: ["/d", "/s", "/c", "npm", ...args] };
+  return { command: "npm", args };
+}
+
+function normalizeNewlines(value) {
+  return value.replace(/\r\n/g, "\n");
 }
 
 function git(args, cwd) {

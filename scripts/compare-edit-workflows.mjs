@@ -4,8 +4,9 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { modulePath } from "./path-helpers.mjs";
 
-const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+const cli = modulePath("../dist/cli.js", import.meta.url);
 const runs = positiveInteger(process.env.TEDIT_COMPARE_RUNS, 3);
 const keepWorkspaces = process.env.TEDIT_COMPARE_KEEP_WORKSPACES === "true";
 

@@ -487,15 +487,23 @@ function resolvePatchPath(path: string): string {
 }
 
 function normalizePatchPath(path: string): string {
+  const windowsAbsolute = windowsGitPrefixedAbsolutePath(path);
+  if (windowsAbsolute) return windowsAbsolute;
   if (path.startsWith("a/") || path.startsWith("b/")) return path.slice(2);
   return path;
 }
 
 function gitPrefixedAbsolutePath(path: string): string | undefined {
+  const windowsAbsolute = windowsGitPrefixedAbsolutePath(path);
+  if (windowsAbsolute) return windowsAbsolute;
   if (!path.startsWith("a/") && !path.startsWith("b/")) return undefined;
   const stripped = path.slice(2);
   if (!stripped) return undefined;
   return stripped.startsWith("/") ? stripped : `/${stripped}`;
+}
+
+function windowsGitPrefixedAbsolutePath(path: string): string | undefined {
+  return /^[ab][A-Za-z]:[\\/]/.test(path) ? path.slice(1) : undefined;
 }
 
 function splitLines(source: string): string[] {

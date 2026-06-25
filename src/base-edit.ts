@@ -581,20 +581,29 @@ function verifyPythonSyntax(source: string): boolean {
 }
 
 function spawnPython(script: string, source: string): "unavailable" | { status: number | null; stdout: string; stderr: string } {
-  for (const command of ["python3", "python"]) {
-    const result = spawnSync(command, ["-c", script], {
+  const candidates: Array<{ command: string; args: string[] }> = process.platform === "win32"
+    ? [
+        { command: "py", args: ["-3", "-c", script] },
+        { command: "python", args: ["-c", script] },
+        { command: "python3", args: ["-c", script] },
+      ]
+    : [
+        { command: "python3", args: ["-c", script] },
+        { command: "python", args: ["-c", script] },
+      ];
+  for (const candidate of candidates) {
+    const result = spawnSync(candidate.command, candidate.args, {
       input: source,
       encoding: "utf8",
       timeout: 5000,
       maxBuffer: 1024 * 1024,
     });
-    if (result.error && (result.error as NodeJS.ErrnoException).code === "ENOENT") continue;
+    if (result.error && ["ENOENT", "EINVAL"].includes((result.error as NodeJS.ErrnoException).code ?? "")) continue;
     if (result.error) throw result.error;
-    return {
-      status: result.status,
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-    };
+    const stdout = result.stdout ?? "";
+    const stderr = result.stderr ?? "";
+    if (result.status !== 0 && (stderr || stdout).trim() === "Python") continue;
+    return { status: result.status, stdout, stderr };
   }
   return "unavailable";
 }

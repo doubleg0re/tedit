@@ -4,7 +4,7 @@ import test from "node:test";
 import { toolsForMcpProfile } from "../dist/mcp-tools.js";
 
 test("docs: README MCP profile lists match registered profiles", () => {
-  const readme = readFileSync("README.md", "utf8");
+  const readme = readFileSync("README.md", "utf8").replace(/\r\n/g, "\n");
   const agentTools = toolsForMcpProfile("agent").map((tool) => tool.name).sort();
   const allTools = toolsForMcpProfile("all").map((tool) => tool.name).sort();
   const advancedTools = allTools.filter((name) => !agentTools.includes(name)).sort();

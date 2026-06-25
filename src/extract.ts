@@ -191,9 +191,7 @@ export function planExtract(options: ExtractOptions): ExtractPlan {
   if (!t.isJSXElement(targetNode) && !t.isJSXFragment(targetNode)) {
     fail("UNSUPPORTED_EXTRACT", "extract requires a JSX element or fragment target.");
   }
-  if (typeof targetNode.start !== "number" || typeof targetNode.end !== "number") {
-    fail("UNSUPPORTED_EXTRACT", "extract target is missing source positions.");
-  }
+  const targetRange = nodeRange(source, targetNode);
   if (options.autoSlot && options.depth === undefined) {
     fail("INVALID_EXTRACT", "--auto-slot requires --depth.");
   }
@@ -231,7 +229,7 @@ export function planExtract(options: ExtractOptions): ExtractPlan {
   const diagnostics: ExtractDiagnostic[] = [];
   const helperOverrides = parseHelperOverrides(options.helperOverrides ?? []);
   const helperPolicy = options.helpersPolicy ?? "ask";
-  const extractionRanges: SourceRange[] = [{ start: targetNode.start, end: targetNode.end }];
+  const extractionRanges: SourceRange[] = [targetRange];
   const helperPlanByName = new Map<string, HelperPlan>();
 
   for (const name of references) {
@@ -255,7 +253,7 @@ export function planExtract(options: ExtractOptions): ExtractPlan {
       });
       helperPlans.push(helperPlan);
       helperPlanByName.set(name, helperPlan);
-      if (helperPlan.binding && helperPlan.result.action === "moved") extractionRanges.push(nodeRange(helperPlan.binding.node));
+      if (helperPlan.binding && helperPlan.result.action === "moved") extractionRanges.push(nodeRange(source, helperPlan.binding.node));
       if (helperPlan.prop) freeProps.push(helperPlan.prop);
       if (helperPlan.result.action === "passed-as-prop") {
         diagnostics.push({
@@ -295,6 +293,7 @@ export function planExtract(options: ExtractOptions): ExtractPlan {
   enforceExtractPropsGuardrail(options, source, props);
   const transferredImports = summarizeImports(dedupeImports(usedImports));
   const propTypeImports = planPropTypeImports({
+    source,
     props,
     importBindings,
     fileBindings,
@@ -310,7 +309,7 @@ export function planExtract(options: ExtractOptions): ExtractPlan {
     imports: [...transferredImports, ...helperImports, ...propTypeImports.imports],
     movedHelpers: helperPlans
       .filter((plan): plan is HelperPlan & { binding: FileBinding; movedSource: string } => !!plan.binding && !!plan.movedSource)
-      .sort((a, b) => (a.binding.node.start ?? 0) - (b.binding.node.start ?? 0))
+      .sort((a, b) => nodeRange(source, a.binding.node).start - nodeRange(source, b.binding.node).start)
       .map((plan) => plan.movedSource),
     needsReactNode: slotProps.length > 0,
   });
@@ -322,7 +321,7 @@ export function planExtract(options: ExtractOptions): ExtractPlan {
     ...helperPlans.flatMap((plan) => [plan.sourcePatch, plan.sourcePrefixPatch].filter((patch): patch is SourcePatch => !!patch)),
     ...propTypeImports.sourcePatches,
     ...removedImports.patches,
-    { start: targetNode.start, end: targetNode.end, text: buildCallSite(options.name, freeProps, slotPlans) },
+    { start: targetRange.start, end: targetRange.end, text: buildCallSite(options.name, freeProps, slotPlans) },
   ];
   const transformedSource = applySourcePatches(source, sourceTransformPatches);
   const transformedAst = recast.parse(transformedSource, { parser: babelTsParser }) as unknown as t.File;
@@ -732,15 +731,19 @@ function flattenJsxChildren(children: ContainerNode["children"]): IndexedNode[] 
 function getChildrenSource(source: string, node: ContainerNode): string {
   if (t.isJSXElement(node)) {
     if (node.openingElement.selfClosing) return "";
-    if (typeof node.openingElement.end !== "number" || !node.closingElement || typeof node.closingElement.start !== "number") {
+    const open = nodeSourceRange(source, node.openingElement);
+    const close = node.closingElement ? nodeSourceRange(source, node.closingElement) : null;
+    if (!open || !close) {
       fail("UNSUPPORTED_EXTRACT", "Slot node is missing child source positions.");
     }
-    return source.slice(node.openingElement.end, node.closingElement.start);
+    return source.slice(open.end, close.start);
   }
-  if (typeof node.openingFragment.end !== "number" || typeof node.closingFragment.start !== "number") {
+  const open = nodeSourceRange(source, node.openingFragment);
+  const close = nodeSourceRange(source, node.closingFragment);
+  if (!open || !close) {
     fail("UNSUPPORTED_EXTRACT", "Slot fragment is missing child source positions.");
   }
-  return source.slice(node.openingFragment.end, node.closingFragment.start);
+  return source.slice(open.end, close.start);
 }
 
 function collectExternalReferences(root: ContainerNode): string[] {
@@ -840,7 +843,8 @@ function inferReferencePropTypesWithTypeScript(
   const result = new Map<string, InferredPropType>();
   if (!ts) return { mode: "checker-unavailable", types: result };
   if (names.length === 0) return { mode: "with-checker", types: result };
-  if (typeof root.start !== "number" || typeof root.end !== "number") return { mode: "with-checker", types: result };
+  const rootRange = nodeSourceRange(source, root);
+  if (!rootRange) return { mode: "with-checker", types: result };
 
   const sourceFile = ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, scriptKindForFile(ts, filePath));
   const options = {
@@ -866,8 +870,8 @@ function inferReferencePropTypesWithTypeScript(
     if (
       ts.isIdentifier(node) &&
       candidates.has(node.text) &&
-      node.getStart(sourceFile) >= root.start! &&
-      node.getEnd() <= root.end! &&
+      node.getStart(sourceFile) >= rootRange.start &&
+      node.getEnd() <= rootRange.end &&
       isTypeScriptValueReference(ts, node) &&
       !result.has(node.text)
     ) {
@@ -905,10 +909,12 @@ function createSingleFileCompilerHost(
   options: import("typescript").CompilerOptions,
 ): import("typescript").CompilerHost {
   const defaultHost = ts.createCompilerHost(options);
-  const canonical = ts.sys.useCaseSensitiveFileNames ? filePath : filePath.toLowerCase();
-  const sameFile = (candidate: string): boolean => {
-    return (ts.sys.useCaseSensitiveFileNames ? candidate : candidate.toLowerCase()) === canonical;
+  const canonicalFileName = (name: string): string => {
+    const normalized = name.replace(/\\/g, "/");
+    return ts.sys.useCaseSensitiveFileNames ? normalized : normalized.toLowerCase();
   };
+  const canonical = canonicalFileName(filePath);
+  const sameFile = (candidate: string): boolean => canonicalFileName(candidate) === canonical;
 
   return {
     ...defaultHost,
@@ -921,7 +927,7 @@ function createSingleFileCompilerHost(
     getCurrentDirectory: () => dirname(filePath) || defaultHost.getCurrentDirectory(),
     fileExists: (requested) => sameFile(requested) || defaultHost.fileExists(requested),
     readFile: (requested) => sameFile(requested) ? sourceFile.text : defaultHost.readFile(requested),
-    getCanonicalFileName: (name) => ts.sys.useCaseSensitiveFileNames ? name : name.toLowerCase(),
+    getCanonicalFileName: canonicalFileName,
     useCaseSensitiveFileNames: () => ts.sys.useCaseSensitiveFileNames,
     getNewLine: () => "\n",
   };
@@ -1260,7 +1266,7 @@ function planHelper(input: {
   policy: HelperPolicy;
   override?: HelperAction | "move" | "share" | "as-prop";
 }): HelperPlan {
-  const remaining = countIdentifierReferencesOutsideRanges(input.ast, input.binding.name, input.extractionRanges);
+  const remaining = countIdentifierReferencesOutsideRanges(input.source, input.ast, input.binding.name, input.extractionRanges);
   const helperClass: HelperResult["class"] = remaining === 0 ? "shell-only" : "shared";
   const action = resolveHelperAction(input.binding.name, helperClass, input.policy, input.override);
   const baseResult = {
@@ -1285,7 +1291,7 @@ function planHelper(input: {
     return {
       result: { ...baseResult, import_added_to_new_file: { from: importFrom, named: [input.binding.name] } },
       binding: input.binding,
-      sourcePrefixPatch: input.binding.exported ? undefined : buildExportPrefixPatch(input.binding.node),
+      sourcePrefixPatch: input.binding.exported ? undefined : buildExportPrefixPatch(input.source, input.binding.node),
       importForNewFile: { from: importFrom, named: [input.binding.name] },
     };
   }
@@ -1379,7 +1385,7 @@ function expandMovedHelperClosure(input: {
       input.helperPlans.push(dependencyPlan);
       input.helperPlanByName.set(name, dependencyPlan);
       if (dependencyPlan.binding && dependencyPlan.result.action === "moved") {
-        input.extractionRanges.push(nodeRange(dependencyPlan.binding.node));
+        input.extractionRanges.push(nodeRange(input.source, dependencyPlan.binding.node));
       }
     }
   }
@@ -1436,56 +1442,52 @@ function resolveHelperAction(
   return helperClass === "shell-only" ? "moved" : "shared-via-import";
 }
 
-function countIdentifierReferencesOutsideRanges(ast: t.File, name: string, ranges: SourceRange[]): number {
+function countIdentifierReferencesOutsideRanges(source: string, ast: t.File, name: string, ranges: SourceRange[]): number {
   let count = 0;
   traverseAst(ast, {
     Identifier(path) {
       if (path.node.name !== name || !path.isReferencedIdentifier()) return;
-      if (isNodeInsideAnyRange(path.node, ranges)) return;
+      if (isNodeInsideAnyRange(source, path.node, ranges)) return;
       count++;
     },
     JSXElement(path) {
       const tag = jsxNameBase(path.node.openingElement.name);
       if (tag !== name) return;
-      if (isNodeInsideAnyRange(path.node.openingElement.name, ranges)) return;
+      if (isNodeInsideAnyRange(source, path.node.openingElement.name, ranges)) return;
       count++;
     },
   });
   return count;
 }
 
-function isNodeInsideAnyRange(node: t.Node, ranges: SourceRange[]): boolean {
-  const start = node.start;
-  const end = node.end;
-  if (typeof start !== "number" || typeof end !== "number") return false;
-  return ranges.some((range) => start >= range.start && end <= range.end);
+function isNodeInsideAnyRange(source: string, node: t.Node, ranges: SourceRange[]): boolean {
+  const nodeSource = nodeSourceRange(source, node);
+  if (!nodeSource) return false;
+  return ranges.some((range) => nodeSource.start >= range.start && nodeSource.end <= range.end);
 }
 
-function nodeRange(node: t.Node): SourceRange {
-  if (typeof node.start !== "number" || typeof node.end !== "number") {
+function nodeRange(source: string, node: t.Node): SourceRange {
+  const range = nodeSourceRange(source, node);
+  if (!range) {
     fail("UNSUPPORTED_EXTRACT", "Node is missing source positions.");
   }
-  return { start: node.start, end: node.end };
+  return range;
 }
 
 function readNodeSource(source: string, node: t.Node): string {
-  if (typeof node.start !== "number" || typeof node.end !== "number") {
-    fail("UNSUPPORTED_EXTRACT", "Helper is missing source positions.");
-  }
-  return source.slice(node.start, node.end);
+  const range = nodeRange(source, node);
+  return source.slice(range.start, range.end);
 }
 
 function buildRemoveStatementPatch(source: string, node: t.Node): SourcePatch {
-  if (typeof node.start !== "number" || typeof node.end !== "number") {
-    fail("UNSUPPORTED_EXTRACT", "Helper is missing source positions.");
-  }
-  const span = getStatementRemovalSpan(source, node.start, node.end);
+  const range = nodeRange(source, node);
+  const span = getStatementRemovalSpan(source, range.start, range.end);
   return { start: span.start, end: span.end, text: "" };
 }
 
-function buildExportPrefixPatch(node: t.Node): SourcePatch {
-  if (typeof node.start !== "number") fail("UNSUPPORTED_EXTRACT", "Helper is missing source positions.");
-  return { start: node.start, end: node.start, text: "export " };
+function buildExportPrefixPatch(source: string, node: t.Node): SourcePatch {
+  const range = nodeRange(source, node);
+  return { start: range.start, end: range.start, text: "export " };
 }
 
 function planUnusedImportRemoval(
@@ -1494,7 +1496,7 @@ function planUnusedImportRemoval(
   imports: ImportedBinding[],
   extractionRanges: SourceRange[],
 ): { patches: SourcePatch[]; removed: ImportedBinding[] } {
-  const removable = imports.filter((item) => countIdentifierReferencesOutsideRanges(ast, item.local, extractionRanges) === 0);
+  const removable = imports.filter((item) => countIdentifierReferencesOutsideRanges(source, ast, item.local, extractionRanges) === 0);
   if (removable.length === 0) return { patches: [], removed: [] };
 
   const byDeclaration = new Map<t.ImportDeclaration, ImportedBinding[]>();
@@ -1512,7 +1514,7 @@ function planUnusedImportRemoval(
       continue;
     }
     for (const specifier of group.map((item) => item.specifier)) {
-      patches.push(buildRemoveImportSpecifierPatch(declaration, specifier));
+      patches.push(buildRemoveImportSpecifierPatch(source, declaration, specifier));
     }
   }
 
@@ -1520,23 +1522,27 @@ function planUnusedImportRemoval(
 }
 
 function buildRemoveImportSpecifierPatch(
+  source: string,
   declaration: t.ImportDeclaration,
   specifier: t.ImportDeclaration["specifiers"][number],
 ): SourcePatch {
   const index = declaration.specifiers.indexOf(specifier);
-  if (index < 0 || typeof specifier.start !== "number" || typeof specifier.end !== "number") {
+  const specRange = nodeSourceRange(source, specifier);
+  if (index < 0 || !specRange) {
     fail("UNSUPPORTED_EXTRACT", "Import specifier is missing source positions.");
   }
 
   const previous = declaration.specifiers[index - 1];
   const next = declaration.specifiers[index + 1];
-  let start = specifier.start;
-  let end = specifier.end;
+  let start = specRange.start;
+  let end = specRange.end;
 
-  if (previous && typeof previous.end === "number") {
-    start = previous.end;
-  } else if (next && typeof next.start === "number") {
-    end = next.start;
+  const previousRange = previous ? nodeSourceRange(source, previous) : null;
+  const nextRange = next ? nodeSourceRange(source, next) : null;
+  if (previousRange) {
+    start = previousRange.end;
+  } else if (nextRange) {
+    end = nextRange.start;
   }
 
   return { start, end, text: "" };
@@ -1574,6 +1580,7 @@ function summarizeImports(imports: ImportedBinding[]): ExtractResult["imports"][
 }
 
 function planPropTypeImports(input: {
+  source: string;
   props: ExtractPropResult[];
   importBindings: Map<string, ImportedBinding>;
   fileBindings: Map<string, FileBinding>;
@@ -1598,7 +1605,7 @@ function planPropTypeImports(input: {
       const binding = input.fileBindings.get(name);
       if (!binding || (binding.kind !== "type" && binding.kind !== "interface" && binding.kind !== "class")) continue;
       imports.push({ from: relativeImportPath(input.toFile, input.fromFile), named: [name], type: true });
-      if (!binding.exported) sourcePatches.push(buildExportPrefixPatch(binding.node));
+      if (!binding.exported) sourcePatches.push(buildExportPrefixPatch(input.source, binding.node));
     }
   }
 
@@ -1712,15 +1719,17 @@ function buildAddImportPatch(source: string, ast: t.File, spec: { from: string; 
       const missing = names.filter((name) => !existingNames.has(name));
       if (missing.length === 0) return { start: 0, end: 0, text: "" };
       const lastNamed = named.at(-1);
-      if (lastNamed && typeof lastNamed.end === "number") return { start: lastNamed.end, end: lastNamed.end, text: `, ${missing.join(", ")}` };
+      const lastNamedRange = lastNamed ? nodeSourceRange(source, lastNamed) : null;
+      if (lastNamedRange) return { start: lastNamedRange.end, end: lastNamedRange.end, text: `, ${missing.join(", ")}` };
       const defaultSpecifier = existing.specifiers.find((item): item is t.ImportDefaultSpecifier => t.isImportDefaultSpecifier(item));
-      if (defaultSpecifier && typeof defaultSpecifier.end === "number") {
-        return { start: defaultSpecifier.end, end: defaultSpecifier.end, text: `, { ${missing.join(", ")} }` };
+      const defaultRange = defaultSpecifier ? nodeSourceRange(source, defaultSpecifier) : null;
+      if (defaultRange) {
+        return { start: defaultRange.end, end: defaultRange.end, text: `, { ${missing.join(", ")} }` };
       }
     }
     if (spec.default && !existing.specifiers.some((item) => t.isImportDefaultSpecifier(item))) {
       const first = existing.specifiers[0];
-      const start = first?.start ?? existing.source.start;
+      const start = first ? nodeSourceRange(source, first)?.start : nodeSourceRange(source, existing.source)?.start;
       if (typeof start === "number") return { start, end: start, text: `${spec.default}, ` };
     }
     fail("UNSUPPORTED_EXTRACT", `Cannot add component import to existing import ${spec.from}.`);
@@ -1728,7 +1737,7 @@ function buildAddImportPatch(source: string, ast: t.File, spec: { from: string; 
 
   const imports = ast.program.body.filter((statement): statement is t.ImportDeclaration => t.isImportDeclaration(statement));
   const last = imports.at(-1);
-  const insertionPoint = last?.end ?? 0;
+  const insertionPoint = last ? nodeSourceRange(source, last)?.end ?? 0 : 0;
   const prefix = insertionPoint === 0 ? "" : "\n";
   return {
     start: insertionPoint,
@@ -1750,6 +1759,31 @@ function relativeImportPath(fromFile: string, toFile: string): string {
   let value = relative(dirname(fromFile), toFile).replace(/\\/g, "/").replace(/\.[^/.]+$/, "");
   if (!value.startsWith(".")) value = `./${value}`;
   return value;
+}
+
+function sourceForRange(source: string, node: t.Node): string | null {
+  const range = nodeSourceRange(source, node);
+  return range ? source.slice(range.start, range.end) : null;
+}
+
+function nodeSourceRange(source: string, node: t.Node): SourceRange | null {
+  if (node.loc) {
+    const starts = lineStartOffsets(source);
+    return {
+      start: (starts[node.loc.start.line - 1] ?? 0) + node.loc.start.column,
+      end: (starts[node.loc.end.line - 1] ?? 0) + node.loc.end.column,
+    };
+  }
+  if (typeof node.start !== "number" || typeof node.end !== "number") return null;
+  return { start: node.start, end: node.end };
+}
+
+function lineStartOffsets(source: string): number[] {
+  const starts = [0];
+  for (let index = 0; index < source.length; index++) {
+    if (source[index] === "\n") starts.push(index + 1);
+  }
+  return starts;
 }
 
 function applySourcePatches(source: string, patches: SourcePatch[]): string {

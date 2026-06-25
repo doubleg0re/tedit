@@ -3,8 +3,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { modulePath } from "./path-helpers.mjs";
 
-const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+const cli = modulePath("../dist/cli.js", import.meta.url);
 const workspace = mkdtempSync(join(tmpdir(), "tedit-dogfood-agent-"));
 
 setupWorkspace(workspace);

@@ -190,8 +190,7 @@ for full file contents. Use `verify_file` for parser coverage and validity,
 and use `select` when a file-type-aware TS/JS/Python/JSX/TSX target hint is
 more useful than raw text.
 
-The default MCP profile is `agent`, which keeps the callable tool list small
-and intent-oriented:
+The default MCP profile is `agent`, which keeps the callable tool list small and intent-oriented:
 
 `actions`, `select`, `edit`, `multiedit`, `patch`, `flow`, `delete_file`,
 `rename_file`, `ts_select`, `ts_edit`, `ts_move`, `file_write`,

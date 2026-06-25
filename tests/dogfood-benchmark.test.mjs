@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
+import { modulePath } from "../scripts/path-helpers.mjs";
 
-const script = new URL("../scripts/dogfood-benchmark.mjs", import.meta.url).pathname;
+const script = modulePath("../scripts/dogfood-benchmark.mjs", import.meta.url);
 
 test("dogfood benchmark covers fixed agent adoption scenarios", () => {
   const result = JSON.parse(execFileSync(process.execPath, [script], {

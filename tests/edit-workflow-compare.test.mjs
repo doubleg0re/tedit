@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
+import { modulePath } from "../scripts/path-helpers.mjs";
 
-const script = new URL("../scripts/compare-edit-workflows.mjs", import.meta.url).pathname;
+const script = modulePath("../scripts/compare-edit-workflows.mjs", import.meta.url);
 
 test("edit workflow comparison reports tedit and plain workload metrics", () => {
   const output = execFileSync(process.execPath, [script], {

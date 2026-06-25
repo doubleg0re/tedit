@@ -297,18 +297,19 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
     const removedSpecifiers = declaration.specifiers.filter((specifier) => shouldRemoveImportSpecifier(specifier, normalized));
     if (nextSpecifiers.length === declaration.specifiers.length) return { changed: false, from: normalized.from };
 
-    if (typeof declaration.start !== "number" || typeof declaration.end !== "number") {
+    const declarationRange = nodeSourceRange(this.source, declaration);
+    if (!declarationRange) {
       this.disableSourcePatches();
       return { changed: true, from: normalized.from };
     }
 
     if (nextSpecifiers.length > 0 && removedSpecifiers.length === 1) {
-      addRemoveImportSpecifierPatch(this.patches, declaration, removedSpecifiers[0]);
+      addRemoveImportSpecifierPatch(this.patches, declaration, removedSpecifiers[0], this.source);
       return { changed: true, from: normalized.from, removed: normalized.named };
     }
 
     const text = nextSpecifiers.length === 0 ? "" : buildImportDeclarationFromSpecifiers(normalized.from, nextSpecifiers);
-    this.patches.push({ start: declaration.start, end: declaration.end, text });
+    this.patches.push({ start: declarationRange.start, end: declarationRange.end, text });
     return { changed: true, from: normalized.from, removed: normalized.named };
   }
 
@@ -322,7 +323,7 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
     if (!declaration) return { changed: false, from: normalized.from };
 
     for (const specifier of declaration.specifiers) {
-      if (addRenameImportPatch(this.patches, specifier, fromName, toName)) {
+      if (addRenameImportPatch(this.patches, specifier, fromName, toName, this.source)) {
         return { changed: true, from: normalized.from, name: fromName, to: toName };
       }
     }
@@ -452,7 +453,7 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
       attributes: props,
       props,
       childCount,
-      preview: compactPreview(this.source.slice(node.start ?? 0, node.end ?? 0)),
+      preview: compactPreview(sourceForRange(this.source, node) ?? this.source.slice(node.start ?? 0, node.end ?? 0)),
     };
   }
 
@@ -512,8 +513,8 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
   private findImportInsertionPoint(): number {
     const imports = this.ast.program.body.filter((statement): statement is t.ImportDeclaration => t.isImportDeclaration(statement));
     const last = imports.at(-1);
-    if (!last || typeof last.end !== "number") return 0;
-    return last.end;
+    if (!last) return 0;
+    return nodeSourceRange(this.source, last)?.end ?? 0;
   }
 
   private addToExistingImport(declaration: t.ImportDeclaration, spec: NormalizedImportSpec): unknown {
@@ -521,16 +522,18 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
 
     if (spec.defaultName && !declaration.specifiers.some((item) => t.isImportDefaultSpecifier(item))) {
       const firstSpecifier = declaration.specifiers[0];
-      if (firstSpecifier && typeof firstSpecifier.start === "number") {
-        this.patches.push({ start: firstSpecifier.start, end: firstSpecifier.start, text: `${spec.defaultName}, ` });
+      const firstRange = firstSpecifier ? nodeSourceRange(this.source, firstSpecifier) : null;
+      if (firstRange) {
+        this.patches.push({ start: firstRange.start, end: firstRange.start, text: `${spec.defaultName}, ` });
       }
     }
 
     if (spec.namespace && !declaration.specifiers.some((item) => t.isImportNamespaceSpecifier(item))) {
       if (declaration.specifiers.length > 0) {
+        const insertion = nodeSourceRange(this.source, declaration.specifiers[0])?.start ?? nodeSourceRange(this.source, declaration)?.start ?? 0;
         this.patches.push({
-          start: declaration.specifiers[0].start ?? declaration.start ?? 0,
-          end: declaration.specifiers[0].start ?? declaration.start ?? 0,
+          start: insertion,
+          end: insertion,
           text: `* as ${spec.namespace}, `,
         });
       }
@@ -551,14 +554,16 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
     const named = declaration.specifiers.filter((item): item is t.ImportSpecifier => t.isImportSpecifier(item));
     const lastNamed = named.at(-1);
 
-    if (lastNamed && typeof lastNamed.end === "number") {
-      this.patches.push({ start: lastNamed.end, end: lastNamed.end, text: `, ${text}` });
+    const lastNamedRange = lastNamed ? nodeSourceRange(this.source, lastNamed) : null;
+    if (lastNamedRange) {
+      this.patches.push({ start: lastNamedRange.end, end: lastNamedRange.end, text: `, ${text}` });
       return;
     }
 
     const defaultSpecifier = declaration.specifiers.find((item): item is t.ImportDefaultSpecifier => t.isImportDefaultSpecifier(item));
-    if (defaultSpecifier && typeof defaultSpecifier.end === "number") {
-      this.patches.push({ start: defaultSpecifier.end, end: defaultSpecifier.end, text: `, { ${text} }` });
+    const defaultRange = defaultSpecifier ? nodeSourceRange(this.source, defaultSpecifier) : null;
+    if (defaultRange) {
+      this.patches.push({ start: defaultRange.end, end: defaultRange.end, text: `, { ${text} }` });
       return;
     }
 
@@ -575,13 +580,14 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
   }
 
   private addReplaceExpressionPatch(node: t.JSXExpressionContainer, code: string): void {
-    if (typeof node.start !== "number" || typeof node.end !== "number") {
+    const range = nodeSourceRange(this.source, node);
+    if (!range) {
       this.disableSourcePatches();
       return;
     }
 
-    const openBrace = this.source.indexOf("{", node.start);
-    const closeBrace = this.source.lastIndexOf("}", node.end - 1);
+    const openBrace = this.source.indexOf("{", range.start);
+    const closeBrace = this.source.lastIndexOf("}", range.end - 1);
     if (openBrace < 0 || closeBrace < 0 || closeBrace <= openBrace) {
       this.disableSourcePatches();
       return;
@@ -610,20 +616,21 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
   }
 
   private addSelfClosingInsertChildPatch(node: t.JSXElement, childText: string): void {
-    if (typeof node.openingElement.start !== "number" || typeof node.openingElement.end !== "number") {
+    const openingRange = nodeSourceRange(this.source, node.openingElement);
+    if (!openingRange) {
       this.disableSourcePatches();
       return;
     }
 
-    const opening = this.source.slice(node.openingElement.start, node.openingElement.end);
+    const opening = this.source.slice(openingRange.start, openingRange.end);
     const nextOpening = opening.replace(/\s*\/>$/, ">");
     if (nextOpening === opening) {
       this.disableSourcePatches();
       return;
     }
     this.patches.push({
-      start: node.openingElement.start,
-      end: node.openingElement.end,
+      start: openingRange.start,
+      end: openingRange.end,
       text: `${nextOpening}${childText}</${jsxNameToString(node.openingElement.name)}>`,
     });
   }
@@ -634,46 +641,40 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
         this.addRemoveNodePatch(node);
         return;
       }
-      if (
-        typeof node.openingElement.start !== "number" ||
-        typeof node.openingElement.end !== "number" ||
-        !node.closingElement ||
-        typeof node.closingElement.start !== "number" ||
-        typeof node.closingElement.end !== "number"
-      ) {
+      const open = nodeSourceRange(this.source, node.openingElement);
+      const close = node.closingElement ? nodeSourceRange(this.source, node.closingElement) : null;
+      if (!open || !close) {
         this.disableSourcePatches();
         return;
       }
 
       this.patches.push(
-        { start: node.openingElement.start, end: node.openingElement.end, text: "" },
-        { start: node.closingElement.start, end: node.closingElement.end, text: "" },
+        { start: open.start, end: open.end, text: "" },
+        { start: close.start, end: close.end, text: "" },
       );
       return;
     }
 
-    if (
-      typeof node.openingFragment.start !== "number" ||
-      typeof node.openingFragment.end !== "number" ||
-      typeof node.closingFragment.start !== "number" ||
-      typeof node.closingFragment.end !== "number"
-    ) {
+    const open = nodeSourceRange(this.source, node.openingFragment);
+    const close = nodeSourceRange(this.source, node.closingFragment);
+    if (!open || !close) {
       this.disableSourcePatches();
       return;
     }
     this.patches.push(
-      { start: node.openingFragment.start, end: node.openingFragment.end, text: "" },
-      { start: node.closingFragment.start, end: node.closingFragment.end, text: "" },
+      { start: open.start, end: open.end, text: "" },
+      { start: close.start, end: close.end, text: "" },
     );
   }
 
   private addRemoveNodePatch(node: IndexedNode): void {
-    if (typeof node.start !== "number" || typeof node.end !== "number") {
+    const range = nodeSourceRange(this.source, node);
+    if (!range) {
       this.disableSourcePatches();
       return;
     }
 
-    const span = getStandaloneNodeRemovalSpan(this.source, node.start, node.end);
+    const span = getStandaloneNodeRemovalSpan(this.source, range.start, range.end);
     this.patches.push({ start: span.start, end: span.end, text: "" });
   }
 
@@ -681,11 +682,12 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
     const commentText = `{/* ${text} */}`;
 
     if (position === "before" || position === "after") {
-      if (typeof path.node.start !== "number" || typeof path.node.end !== "number") {
+      const range = nodeSourceRange(this.source, path.node);
+      if (!range) {
         this.disableSourcePatches();
         return;
       }
-      const point = position === "before" ? path.node.start : path.node.end;
+      const point = position === "before" ? range.start : range.end;
       this.patches.push({ start: point, end: point, text: commentText });
       return;
     }
@@ -710,7 +712,7 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
       return;
     }
 
-    const range = getChildrenSourceRange(path.node);
+    const range = getChildrenSourceRange(path.node, this.source);
     if (!range) {
       this.disableSourcePatches();
       return;
@@ -723,7 +725,8 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
     replacement: t.JSXElement["children"][number],
     value: TextValueSpec,
   ): void {
-    if (typeof child.start !== "number" || typeof child.end !== "number") {
+    const range = nodeSourceRange(this.source, child);
+    if (!range) {
       this.disableSourcePatches();
       return;
     }
@@ -731,39 +734,41 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
     const text = t.isJSXText(child) && value.kind === "text"
       ? preserveTextWhitespace(child.value, value.value)
       : printNodeCode(replacement);
-    this.patches.push({ start: child.start, end: child.end, text });
+    this.patches.push({ start: range.start, end: range.end, text });
   }
 
   private getExpressionSource(node: t.JSXExpressionContainer): string {
-    if (typeof node.start !== "number" || typeof node.end !== "number") return printNodeCode(node.expression);
-    const openBrace = this.source.indexOf("{", node.start);
-    const closeBrace = this.source.lastIndexOf("}", node.end - 1);
+    const range = nodeSourceRange(this.source, node);
+    if (!range) return printNodeCode(node.expression);
+    const openBrace = this.source.indexOf("{", range.start);
+    const closeBrace = this.source.lastIndexOf("}", range.end - 1);
     if (openBrace < 0 || closeBrace < 0 || closeBrace <= openBrace) return printNodeCode(node.expression);
     return this.source.slice(openBrace + 1, closeBrace);
   }
 
   private getNodeSource(node: t.Node): string {
-    if (typeof node.start !== "number" || typeof node.end !== "number") return printNodeCode(node);
-    return this.source.slice(node.start, node.end);
+    return sourceForRange(this.source, node) ?? printNodeCode(node);
   }
 
   private addNamePatch(name: t.JSXIdentifier | t.JSXMemberExpression | t.JSXNamespacedName, text: string): void {
-    if (typeof name.start !== "number" || typeof name.end !== "number") {
+    const range = nodeSourceRange(this.source, name);
+    if (!range) {
       this.disableSourcePatches();
       return;
     }
-    this.patches.push({ start: name.start, end: name.end, text });
+    this.patches.push({ start: range.start, end: range.end, text });
   }
 
   private addWrapPatches(target: IndexedNode, wrapper: t.JSXElement): void {
-    if (typeof target.start !== "number" || typeof target.end !== "number" || !wrapper.closingElement) {
+    const range = nodeSourceRange(this.source, target);
+    if (!range || !wrapper.closingElement) {
       this.disableSourcePatches();
       return;
     }
 
     this.patches.push(
-      { start: target.start, end: target.start, text: printNodeCode(wrapper.openingElement) },
-      { start: target.end, end: target.end, text: printNodeCode(wrapper.closingElement) },
+      { start: range.start, end: range.start, text: printNodeCode(wrapper.openingElement) },
+      { start: range.end, end: range.end, text: printNodeCode(wrapper.closingElement) },
     );
   }
 
@@ -776,11 +781,12 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
     const existing = findAttribute(openingElement, name);
 
     if (existing) {
-      if (typeof existing.start !== "number" || typeof existing.end !== "number") {
+      const range = nodeSourceRange(this.source, existing);
+      if (!range) {
         this.disableSourcePatches();
         return;
       }
-      this.patches.push({ start: existing.start, end: existing.end, text: attrText });
+      this.patches.push({ start: range.start, end: range.end, text: attrText });
       return;
     }
 
@@ -796,14 +802,15 @@ export class JsxDocument extends BaseTreeDocument<IndexedPath> implements Struct
     const existing = findAttribute(openingElement, name);
     if (!existing) return;
 
-    if (typeof existing.start !== "number" || typeof existing.end !== "number") {
+    const range = nodeSourceRange(this.source, existing);
+    if (!range) {
       this.disableSourcePatches();
       return;
     }
 
     this.patches.push({
-      start: findLeadingWhitespaceStart(this.source, existing.start),
-      end: existing.end,
+      start: findLeadingWhitespaceStart(this.source, range.start),
+      end: range.end,
       text: "",
     });
   }
@@ -907,45 +914,50 @@ function addRemoveImportSpecifierPatch(
   patches: SourcePatch[],
   declaration: t.ImportDeclaration,
   specifier: t.ImportDeclaration["specifiers"][number],
+  source = "",
 ): void {
   const index = declaration.specifiers.indexOf(specifier);
-  if (index < 0 || typeof specifier.start !== "number" || typeof specifier.end !== "number") return;
+  const specRange = nodeSourceRange(source, specifier);
+  if (index < 0 || !specRange) return;
 
   const previous = declaration.specifiers[index - 1];
   const next = declaration.specifiers[index + 1];
-  let start = specifier.start;
-  let end = specifier.end;
+  let start = specRange.start;
+  let end = specRange.end;
 
-  if (previous && typeof previous.end === "number") {
-    start = previous.end;
-  } else if (next && typeof next.start === "number") {
-    end = next.start;
+  const previousRange = previous ? nodeSourceRange(source, previous) : null;
+  const nextRange = next ? nodeSourceRange(source, next) : null;
+  if (previousRange) {
+    start = previousRange.end;
+  } else if (nextRange) {
+    end = nextRange.start;
   }
 
   patches.push({ start, end, text: "" });
 }
 
-function addRenameImportPatch(patches: SourcePatch[], specifier: t.ImportDeclaration["specifiers"][number], fromName: string, toName: string): boolean {
+function addRenameImportPatch(patches: SourcePatch[], specifier: t.ImportDeclaration["specifiers"][number], fromName: string, toName: string, source = ""): boolean {
   if (t.isImportSpecifier(specifier)) {
     const imported = importedNameToString(specifier.imported);
     if (imported === fromName && specifier.local.name === fromName) {
-      return addNodeTextPatch(patches, specifier, toName);
+      return addNodeTextPatch(patches, specifier, toName, source);
     }
-    if (imported === fromName) return addNodeTextPatch(patches, specifier.imported, toName);
-    if (specifier.local.name === fromName) return addNodeTextPatch(patches, specifier.local, toName);
+    if (imported === fromName) return addNodeTextPatch(patches, specifier.imported, toName, source);
+    if (specifier.local.name === fromName) return addNodeTextPatch(patches, specifier.local, toName, source);
     return false;
   }
 
   if ((t.isImportDefaultSpecifier(specifier) || t.isImportNamespaceSpecifier(specifier)) && specifier.local.name === fromName) {
-    return addNodeTextPatch(patches, specifier.local, toName);
+    return addNodeTextPatch(patches, specifier.local, toName, source);
   }
 
   return false;
 }
 
-function addNodeTextPatch(patches: SourcePatch[], node: t.Node, text: string): boolean {
-  if (typeof node.start !== "number" || typeof node.end !== "number") return false;
-  patches.push({ start: node.start, end: node.end, text });
+function addNodeTextPatch(patches: SourcePatch[], node: t.Node, text: string, source = ""): boolean {
+  const range = nodeSourceRange(source, node);
+  if (!range) return false;
+  patches.push({ start: range.start, end: range.end, text });
   return true;
 }
 
@@ -1086,8 +1098,7 @@ function normalizeExpressionCode(code: string): string {
 }
 
 function getChildSource(child: t.JSXElement["children"][number], source: string): string {
-  if (typeof child.start === "number" && typeof child.end === "number") return source.slice(child.start, child.end);
-  return printNodeCode(child);
+  return sourceForRange(source, child) ?? printNodeCode(child);
 }
 
 function describeTextMatch(match: TextMatchSpec): string {
@@ -1101,16 +1112,44 @@ function preserveTextWhitespace(original: string, next: string): string {
   return `${leading}${next}${trailing}`;
 }
 
-function getChildrenSourceRange(node: ContainerNode): SourceRange | null {
-  if (t.isJSXElement(node)) {
-    if (node.openingElement.selfClosing) return null;
-    if (typeof node.openingElement.end !== "number" || !node.closingElement || typeof node.closingElement.start !== "number") {
-      return null;
-    }
-    return { start: node.openingElement.end, end: node.closingElement.start };
+
+function lineStarts(source: string): number[] {
+  const starts = [0];
+  for (let index = 0; index < source.length; index++) {
+    if (source[index] === "\n") starts.push(index + 1);
   }
-  if (typeof node.openingFragment.end !== "number" || typeof node.closingFragment.start !== "number") return null;
-  return { start: node.openingFragment.end, end: node.closingFragment.start };
+  return starts;
+}
+
+function sourceForRange(source: string, node: t.Node): string | null {
+  const range = nodeSourceRange(source, node);
+  return range ? source.slice(range.start, range.end) : null;
+}
+
+function nodeSourceRange(source: string, node: t.Node): SourceRange | null {
+  if (node.loc) {
+    const starts = lineStarts(source);
+    return {
+      start: starts[node.loc.start.line - 1] + node.loc.start.column,
+      end: starts[node.loc.end.line - 1] + node.loc.end.column,
+    };
+  }
+  if (typeof node.start !== "number" || typeof node.end !== "number") return null;
+  return { start: node.start, end: node.end };
+}
+
+function getChildrenSourceRange(node: ContainerNode, source = ""): SourceRange | null {
+  if (t.isJSXElement(node)) {
+    if (node.openingElement.selfClosing || !node.closingElement) return null;
+    const open = nodeSourceRange(source, node.openingElement);
+    const close = nodeSourceRange(source, node.closingElement);
+    if (!open || !close) return null;
+    return { start: open.end, end: close.start };
+  }
+  const open = nodeSourceRange(source, node.openingFragment);
+  const close = nodeSourceRange(source, node.closingFragment);
+  if (!open || !close) return null;
+  return { start: open.end, end: close.start };
 }
 
 function isEmptyAlternate(node: t.Expression): boolean {
@@ -1312,9 +1351,10 @@ function findAttribute(openingElement: t.JSXOpeningElement, name: string): t.JSX
 }
 
 function findAttributeInsertionPoint(source: string, openingElement: t.JSXOpeningElement): number | null {
-  if (typeof openingElement.end !== "number") return null;
+  const range = nodeSourceRange(source, openingElement);
+  if (!range) return null;
 
-  let index = openingElement.end - 1;
+  let index = range.end - 1;
   while (index >= 0 && /\s/.test(source[index])) index--;
   if (source[index] !== ">") return null;
   if (source[index - 1] === "/") return index - 1;
@@ -1339,9 +1379,11 @@ function getChildInsertionBoundary(
   node: ContainerNode,
   position: "append" | "prepend",
 ): { start: number; end: number; textBefore: string; textAfter: string } | null {
-  const openEnd = t.isJSXElement(node) ? node.openingElement.end : node.openingFragment.end;
-  const closeStart = t.isJSXElement(node) ? node.closingElement?.start : node.closingFragment.start;
-  if (typeof openEnd !== "number" || typeof closeStart !== "number") return null;
+  const open = t.isJSXElement(node) ? nodeSourceRange(source, node.openingElement) : nodeSourceRange(source, node.openingFragment);
+  const close = t.isJSXElement(node) ? node.closingElement ? nodeSourceRange(source, node.closingElement) : null : nodeSourceRange(source, node.closingFragment);
+  if (!open || !close) return null;
+  const openEnd = open.end;
+  const closeStart = close.start;
 
   if (position === "prepend") {
     const indent = readIndentAfterNewline(source, openEnd);

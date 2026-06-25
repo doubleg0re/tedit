@@ -139,11 +139,15 @@ type MovePlan = {
   };
 };
 
+type LocPosition = { line: number; column: number };
+type LocRange = { start: LocPosition; end: LocPosition };
+
 type BabelComment = {
   type: string;
   value: string;
   start?: number | null;
   end?: number | null;
+  loc?: LocRange | null;
 };
 
 type BabelToken = {
@@ -151,22 +155,23 @@ type BabelToken = {
   value?: unknown;
   start?: number | null;
   end?: number | null;
+  loc?: LocRange | null;
 };
 
 type DirectiveNode = {
   value?: { value?: string };
   start?: number | null;
   end?: number | null;
+  loc?: LocRange | null;
 };
 
 export function parseTsTriviaMap(source: string): TsTriviaMap {
   const parsed = parseTsSource(source);
   const comments = astComments(parsed.ast)
-    .filter((comment) => typeof comment.start === "number" && typeof comment.end === "number")
     .map((comment) => {
-      const start = sourceOffset(parsed, comment.start as number);
-      const end = sourceOffset(parsed, comment.end as number);
-      const range = rangeForOffsets(start, end, parsed.lineStarts);
+      const range = rangeForLocOrParserOffsets(comment, parsed);
+      if (!range) return null;
+      const { start, end } = range;
       return {
         kind: "comment" as const,
         style: comment.type === "CommentBlock" ? "block" as const : "line" as const,
@@ -175,13 +180,13 @@ export function parseTsTriviaMap(source: string): TsTriviaMap {
         range,
         text: source.slice(start, end),
       };
-    });
+    })
+    .filter((comment): comment is NonNullable<typeof comment> => comment !== null);
   const directives = astDirectives(parsed.ast)
-    .filter((directive) => typeof directive.start === "number" && typeof directive.end === "number")
     .map((directive) => {
-      const start = sourceOffset(parsed, directive.start as number);
-      const end = sourceOffset(parsed, directive.end as number);
-      const range = rangeForOffsets(start, end, parsed.lineStarts);
+      const range = rangeForLocOrParserOffsets(directive, parsed);
+      if (!range) return null;
+      const { start, end } = range;
       return {
         kind: "directive" as const,
         style: "string" as const,
@@ -190,7 +195,8 @@ export function parseTsTriviaMap(source: string): TsTriviaMap {
         range,
         text: source.slice(start, end),
       };
-    });
+    })
+    .filter((directive): directive is NonNullable<typeof directive> => directive !== null);
   const occupiedSpans = [...comments, ...directives].map((item) => ({ start: item.start, end: item.end }));
   const blankLines = parsed.lines
     .filter((line) => line.text.trim().length === 0 && !spansOverlapLine(occupiedSpans, line))
@@ -680,17 +686,33 @@ function declarationRangeNode(path: NodePath<t.Node>): t.Node {
 }
 
 function innerBodyRange(node: t.BlockStatement | t.ClassBody, parsed: ParsedTsSource): Range | undefined {
-  if (typeof node.start !== "number" || typeof node.end !== "number" || node.end < node.start + 2) return undefined;
-  return rangeForParserOffsets(node.start + 1, node.end - 1, parsed);
+  const range = rangeForNode(node, parsed);
+  if (range.end < range.start + 2) return undefined;
+  return rangeForOffsets(range.start + 1, range.end - 1, parsed.lineStarts);
 }
 
 function rangeForNode(node: t.Node, parsed: ParsedTsSource): Range {
-  if (typeof node.start !== "number" || typeof node.end !== "number") fail("TS_RANGE_UNAVAILABLE", "AST node does not have source offsets.");
-  return rangeForParserOffsets(node.start, node.end, parsed);
+  const range = rangeForLocOrParserOffsets(node, parsed);
+  if (!range) fail("TS_RANGE_UNAVAILABLE", "AST node does not have source offsets.");
+  return range;
 }
 
 function rangeForParserOffsets(start: number, end: number, parsed: ParsedTsSource): Range {
   return rangeForOffsets(sourceOffset(parsed, start), sourceOffset(parsed, end), parsed.lineStarts);
+}
+
+function rangeForLocOrParserOffsets(node: { loc?: LocRange | null; start?: number | null; end?: number | null }, parsed: ParsedTsSource): Range | null {
+  if (node.loc) {
+    const start = offsetForLoc(node.loc.start, parsed.lineStarts);
+    const end = offsetForLoc(node.loc.end, parsed.lineStarts);
+    return rangeForOffsets(start, end, parsed.lineStarts);
+  }
+  if (typeof node.start !== "number" || typeof node.end !== "number") return null;
+  return rangeForParserOffsets(node.start, node.end, parsed);
+}
+
+function offsetForLoc(loc: LocPosition, lineStarts: number[]): number {
+  return (lineStarts[loc.line - 1] ?? 0) + loc.column;
 }
 
 function rangeForOffsets(start: number, end: number, lineStarts: number[]): Range {
@@ -784,6 +806,7 @@ function astComments(ast: t.File): BabelComment[] {
       value: typeof token.value === "string" ? token.value : "",
       start: token.start,
       end: token.end,
+      loc: token.loc,
     }));
   const byRange = new Map<string, BabelComment>();
   for (const comment of [...direct, ...tokens]) {

@@ -4,8 +4,9 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { modulePath } from "../scripts/path-helpers.mjs";
 
-const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+const cli = modulePath("../dist/cli.js", import.meta.url);
 
 test("golden: verify-file compact and detailed output contracts", () => {
   const workspace = createWorkspace();
@@ -279,7 +280,10 @@ function runCompactJson(args, workspace) {
 
 function normalize(value, workspace) {
   if (typeof value === "string") {
-    return value.split(workspace.realRoot).join("<tmp>").split(workspace.root).join("<tmp>");
+    const normalized = value.split("\\").join("/");
+    return normalized
+      .split(workspace.realRoot.split("\\").join("/")).join("<tmp>")
+      .split(workspace.root.split("\\").join("/")).join("<tmp>");
   }
   if (Array.isArray(value)) return value.map((item) => normalize(item, workspace));
   if (value && typeof value === "object") {

@@ -144,15 +144,15 @@ export function writePolicyReport(policy: WritePolicy, backup?: BackupResult): R
     write: policy.write,
     git: policy.git,
     notes: policy.notes,
-    ...(backup?.path ? { backup: backup.path } : {}),
+    ...(backup?.path ? { backup: agentPath(backup.path) } : {}),
     ...(backup?.id ? { backup_id: backup.id } : {}),
-    ...(backup?.manifest ? { backup_manifest: backup.manifest } : {}),
+    ...(backup?.manifest ? { backup_manifest: agentPath(backup.manifest) } : {}),
   };
 }
 
 export function formatWritePolicyNotes(policy: WritePolicy, backup?: BackupResult): string {
   const lines = [...policy.notes];
-  if (backup?.path) lines.push("tedit: backup written -> " + backup.path);
+  if (backup?.path) lines.push("tedit: backup written -> " + agentPath(backup.path));
   return lines.join("\n");
 }
 
@@ -304,6 +304,10 @@ function safeRelative(root: string, file: string): string {
   const rel = relative(root, file);
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return basename(file);
   return rel;
+}
+
+function agentPath(filePath: string): string {
+  return filePath.split("\\").join("/");
 }
 
 function backupId(): string {

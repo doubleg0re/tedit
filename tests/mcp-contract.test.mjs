@@ -111,7 +111,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(search.resultsTruncated, undefined);
   assert.equal(search.multiedit.edits.length, 1);
   assert.equal(search.files.length, 1);
-  assert.equal(search.files[0].path, workspace.page);
+  assert.equal(search.files[0].path, agentPath(workspace.page));
   assert.equal(search.results[0].fileId, search.files[0].id);
   assert.equal(search.results[0].lineRange, "2");
   assert.equal(search.results[0].suggested, undefined);
@@ -424,4 +424,8 @@ function assertMutationContract(result, path, expected) {
   assert.ok(result.files.every((file) => file.written === undefined));
   assert.ok(result.files.every((file) => file.persisted === expected.persisted));
   assert.ok(result.files.every((file) => file.diff.mode === "stats"));
+}
+
+function agentPath(value) {
+  return value.split("\\").join("/");
 }
