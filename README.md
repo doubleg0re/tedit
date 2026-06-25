@@ -1077,4 +1077,15 @@ tedit chain src/Page.tsx --from-file ./edit.chain --write
 tedit chain src/Page.tsx --from-stdin --write < ./edit.chain
 ```
 
+MCP uses the default-profile `flow` tool for the same syntax. Pass `file` plus
+`chain` for single-file chains, or omit `file` and use workspace-chain text:
+
+```json
+{
+  "file": "src/Page.tsx",
+  "chain": "find main as root :: wrap @root div.flex.gap-4",
+  "dryRun": true
+}
+```
+
 Quote `$ret` in the shell so it reaches `tedit` unchanged. `@name` does not need shell quoting in normal shells.

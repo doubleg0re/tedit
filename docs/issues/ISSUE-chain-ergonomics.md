@@ -24,6 +24,7 @@ Implemented:
 - Element shorthand for `append`, `prepend`, and `wrap`.
 - `--from-file <path>` and `--from-stdin` chain input.
 - Line-based chain tokenization with blank lines ignored, `#` comments, and implicit `::` between non-empty lines.
+- MCP `flow` accepts the same CLI-style chain text via `{ file, chain }` for single-file chains, or `{ chain }` for workspace-chain syntax.
 
 Covered examples:
 
@@ -47,6 +48,14 @@ wrap @body div.className="flex gap-4"
 
 ```bash
 tedit chain page.tsx --from-file edit.chain --write
+```
+
+```json
+{
+  "file": "page.tsx",
+  "chain": "find main as root :: wrap @root div.flex.gap-4",
+  "dryRun": true
+}
 ```
 
 Element shorthand currently supports:
