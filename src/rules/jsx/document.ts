@@ -7,6 +7,7 @@ import babelTsParser from "recast/parsers/babel-ts.js";
 import { BaseTreeDocument } from "../../core/base-tree-document.js";
 import type { CommentPosition, ImportEditSpec, StructuredDocument, TextMatchSpec, TextValueSpec, TreeNodeInfo, TreeNodeSpec, ValueSpec } from "../../core/document.js";
 import { fail } from "../../errors.js";
+import { lineStartOffsets, sourceRangeForLocOrOffsets } from "../../source-range.js";
 
 const traverseAst = ((traverseModule as unknown as { default?: unknown }).default ?? traverseModule) as (
   parent: t.Node,
@@ -1113,29 +1114,13 @@ function preserveTextWhitespace(original: string, next: string): string {
 }
 
 
-function lineStarts(source: string): number[] {
-  const starts = [0];
-  for (let index = 0; index < source.length; index++) {
-    if (source[index] === "\n") starts.push(index + 1);
-  }
-  return starts;
-}
-
 function sourceForRange(source: string, node: t.Node): string | null {
   const range = nodeSourceRange(source, node);
   return range ? source.slice(range.start, range.end) : null;
 }
 
 function nodeSourceRange(source: string, node: t.Node): SourceRange | null {
-  if (node.loc) {
-    const starts = lineStarts(source);
-    return {
-      start: starts[node.loc.start.line - 1] + node.loc.start.column,
-      end: starts[node.loc.end.line - 1] + node.loc.end.column,
-    };
-  }
-  if (typeof node.start !== "number" || typeof node.end !== "number") return null;
-  return { start: node.start, end: node.end };
+  return sourceRangeForLocOrOffsets(node, lineStartOffsets(source));
 }
 
 function getChildrenSourceRange(node: ContainerNode, source = ""): SourceRange | null {

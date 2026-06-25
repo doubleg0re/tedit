@@ -1,6 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
+import { agentPath, relativeAgentPath } from "./agent-path.js";
 import { parseLineRange, parseVerificationFields, verifyParseForFile } from "./base-edit.js";
+import { lineStartOffsets } from "./source-range.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -279,7 +281,7 @@ function findMatches(source: string, matcher: RegExp | string, options: SearchTe
 
 function candidateForMatch(index: number, filePath: string, source: string, lines: string[], start: number, end: number, context: number): SearchCandidate {
   const range = rangeForOffsets(source, start, end);
-  const path = agentPath(relative(process.cwd(), filePath) || basename(filePath));
+  const path = relativeAgentPath(process.cwd(), filePath);
   const displayFile = agentPath(filePath);
   const contextRange: LineRange = {
     start: Math.max(1, range.line - context),
@@ -335,14 +337,6 @@ function lineObjects(lines: string[], range: LineRange): SourceLine[] {
   return output;
 }
 
-function lineStartOffsets(source: string): number[] {
-  const starts = [0];
-  for (let index = 0; index < source.length; index++) {
-    if (source[index] === "\n") starts.push(index + 1);
-  }
-  return starts;
-}
-
 function offsetLoc(offset: number, starts: number[]): { line: number; column: number } {
   let low = 0;
   let high = starts.length - 1;
@@ -364,7 +358,7 @@ function byteRangeForLines(source: string, range: LineRange): SourceRange {
 
 function matchesGlob(filePath: string, glob: string): boolean {
   const normalized = filePath.split("\\").join("/");
-  const cwdRelative = relative(process.cwd(), filePath).split("\\").join("/");
+  const cwdRelative = relativeAgentPath(process.cwd(), filePath);
   const regex = globToRegExp(glob);
   return regex.test(normalized) || regex.test(cwdRelative) || regex.test(basename(filePath));
 }
@@ -401,8 +395,4 @@ function globToRegExp(glob: string): RegExp {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
-}
-
-function agentPath(filePath: string): string {
-  return filePath.split("\\").join("/");
 }

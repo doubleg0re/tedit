@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
+import { agentPath, relativeAgentPath } from "./agent-path.js";
 import { loadQualityConfig } from "./quality.js";
 
 export type OutputMode = "compact" | "detailed";
@@ -362,7 +363,7 @@ function writeDetailArtifact(field: string, value: unknown, bytes: number, optio
     ...(previewCount === undefined ? {} : { previewCount }),
     ...(remaining && remaining > 0 ? { remaining } : {}),
     path: artifactPath,
-    relPath: agentPath(relative(process.cwd(), artifactPath) || basename(artifactPath)),
+    relPath: relativeAgentPath(process.cwd(), artifactPath),
     preview,
     read: { tool: "read_detail", id },
     ...(remaining && remaining > 0 ? { readNext: { tool: "read_detail", id, offset: previewCount, limit: previewCount || 20 } } : {}),
@@ -835,7 +836,7 @@ function writeDiffArtifact(diff: string, file: AgentFileSummary, options: Output
     const artifactPath = resolve(artifactDir, `${safeBase}-${hash}.diff`);
     mkdirSync(artifactDir, { recursive: true });
     writeFileSync(artifactPath, diff);
-    return { ok: true, path: artifactPath, relPath: agentPath(relative(cwd, artifactPath) || basename(artifactPath)) };
+    return { ok: true, path: artifactPath, relPath: relativeAgentPath(cwd, artifactPath) };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -848,10 +849,6 @@ function resolveArtifactDir(cwd: string, dirInput: string): string {
     throw new Error("diffArtifactDir must stay inside the current working directory.");
   }
   return resolved;
-}
-
-function agentPath(filePath: string): string {
-  return filePath.split("\\").join("/");
 }
 
 function sanitizeArtifactName(name: string): string {

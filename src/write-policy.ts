@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { agentPath } from "./agent-path.js";
 import { fail } from "./errors.js";
 import { loadQualityConfig } from "./quality.js";
 
@@ -304,10 +305,6 @@ function safeRelative(root: string, file: string): string {
   const rel = relative(root, file);
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return basename(file);
   return rel;
-}
-
-function agentPath(filePath: string): string {
-  return filePath.split("\\").join("/");
 }
 
 function backupId(): string {

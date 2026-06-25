@@ -5,11 +5,13 @@ import traverseModule, { type NodePath, type TraverseOptions } from "@babel/trav
 import * as t from "@babel/types";
 import * as recast from "recast";
 import babelTsParser from "recast/parsers/babel-ts.js";
+import { agentPath } from "./agent-path.js";
 import { parseDocumentForFile } from "./core/registry.js";
 import { fail } from "./errors.js";
 import { analyzeState, loadQualityConfig } from "./quality.js";
 import { JsxDocument } from "./rules/jsx/document.js";
 import { matchesSimpleSelector, parseSelector, selectorHasScope, type ParsedSelector, type SelectorCombinator, type SimpleSelector } from "./rules/jsx/selector.js";
+import { lineStartOffsets, sourceRangeForLocOrOffsets } from "./source-range.js";
 
 const traverseAst = ((traverseModule as unknown as { default?: unknown }).default ?? traverseModule) as (
   parent: t.Node,
@@ -1756,7 +1758,7 @@ function formatImport(spec: ImportSpec): string {
 }
 
 function relativeImportPath(fromFile: string, toFile: string): string {
-  let value = relative(dirname(fromFile), toFile).replace(/\\/g, "/").replace(/\.[^/.]+$/, "");
+  let value = agentPath(relative(dirname(fromFile), toFile)).replace(/\.[^/.]+$/, "");
   if (!value.startsWith(".")) value = `./${value}`;
   return value;
 }
@@ -1767,23 +1769,7 @@ function sourceForRange(source: string, node: t.Node): string | null {
 }
 
 function nodeSourceRange(source: string, node: t.Node): SourceRange | null {
-  if (node.loc) {
-    const starts = lineStartOffsets(source);
-    return {
-      start: (starts[node.loc.start.line - 1] ?? 0) + node.loc.start.column,
-      end: (starts[node.loc.end.line - 1] ?? 0) + node.loc.end.column,
-    };
-  }
-  if (typeof node.start !== "number" || typeof node.end !== "number") return null;
-  return { start: node.start, end: node.end };
-}
-
-function lineStartOffsets(source: string): number[] {
-  const starts = [0];
-  for (let index = 0; index < source.length; index++) {
-    if (source[index] === "\n") starts.push(index + 1);
-  }
-  return starts;
+  return sourceRangeForLocOrOffsets(node, lineStartOffsets(source));
 }
 
 function applySourcePatches(source: string, patches: SourcePatch[]): string {

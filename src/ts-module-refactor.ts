@@ -4,10 +4,12 @@ import { basename, dirname, join, relative } from "node:path";
 import { parse } from "@babel/parser";
 import traverseModule, { type NodePath, type TraverseOptions } from "@babel/traverse";
 import * as t from "@babel/types";
+import { agentPath } from "./agent-path.js";
 import { parseVerificationFields, verifyParseForFile } from "./base-edit.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { qualityWarnings } from "./quality.js";
+import { lineStartOffsets } from "./source-range.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult, type WritePolicyFlags } from "./write-policy.js";
 
 const traverseAst = ((traverseModule as unknown as { default?: unknown }).default ?? traverseModule) as (
@@ -547,7 +549,7 @@ function newlineAfter(source: string, offset: number): number {
 }
 
 function moduleSpecifier(fromFile: string, toFile: string): string {
-  let spec = relative(dirname(fromFile), toFile).replace(/\\/g, "/").replace(/\.[cm]?[jt]sx?$/, ".js");
+  let spec = agentPath(relative(dirname(fromFile), toFile)).replace(/\.[cm]?[jt]sx?$/, ".js");
   if (!spec.startsWith(".")) spec = `./${spec}`;
   return spec;
 }
@@ -562,12 +564,6 @@ function loc(offset: number, lineStarts: number[]): { line: number } {
   let line = 1;
   for (let index = 0; index < lineStarts.length; index++) if (lineStarts[index] <= offset) line = index + 1;
   return { line };
-}
-
-function lineStartOffsets(source: string): number[] {
-  const starts = [0];
-  for (let index = 0; index < source.length; index++) if (source[index] === "\n") starts.push(index + 1);
-  return starts;
 }
 
 function nodeStart(node: t.Node): number {

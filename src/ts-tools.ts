@@ -8,6 +8,7 @@ import { parseVerificationFields, verifyParseForFile } from "./base-edit.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { qualityWarnings } from "./quality.js";
+import { lineStartOffsets, sourceRangeForLocOrOffsets, type SourceLocRange } from "./source-range.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult, type WritePolicyFlags } from "./write-policy.js";
 
 const traverseAst = ((traverseModule as unknown as { default?: unknown }).default ?? traverseModule) as (
@@ -139,8 +140,7 @@ type MovePlan = {
   };
 };
 
-type LocPosition = { line: number; column: number };
-type LocRange = { start: LocPosition; end: LocPosition };
+type LocRange = SourceLocRange;
 
 type BabelComment = {
   type: string;
@@ -697,22 +697,9 @@ function rangeForNode(node: t.Node, parsed: ParsedTsSource): Range {
   return range;
 }
 
-function rangeForParserOffsets(start: number, end: number, parsed: ParsedTsSource): Range {
-  return rangeForOffsets(sourceOffset(parsed, start), sourceOffset(parsed, end), parsed.lineStarts);
-}
-
 function rangeForLocOrParserOffsets(node: { loc?: LocRange | null; start?: number | null; end?: number | null }, parsed: ParsedTsSource): Range | null {
-  if (node.loc) {
-    const start = offsetForLoc(node.loc.start, parsed.lineStarts);
-    const end = offsetForLoc(node.loc.end, parsed.lineStarts);
-    return rangeForOffsets(start, end, parsed.lineStarts);
-  }
-  if (typeof node.start !== "number" || typeof node.end !== "number") return null;
-  return rangeForParserOffsets(node.start, node.end, parsed);
-}
-
-function offsetForLoc(loc: LocPosition, lineStarts: number[]): number {
-  return (lineStarts[loc.line - 1] ?? 0) + loc.column;
+  const range = sourceRangeForLocOrOffsets(node, parsed.lineStarts, (offset) => sourceOffset(parsed, offset));
+  return range ? rangeForOffsets(range.start, range.end, parsed.lineStarts) : null;
 }
 
 function rangeForOffsets(start: number, end: number, lineStarts: number[]): Range {
@@ -739,14 +726,6 @@ function offsetLoc(offset: number, lineStarts: number[]): { line: number; column
   }
   const index = Math.max(0, high);
   return { line: index + 1, column: offset - lineStarts[index] + 1 };
-}
-
-function lineStartOffsets(source: string): number[] {
-  const starts = [0];
-  for (let index = 0; index < source.length; index++) {
-    if (source[index] === "\n") starts.push(index + 1);
-  }
-  return starts;
 }
 
 function normalizedOffsetMap(source: string): number[] {

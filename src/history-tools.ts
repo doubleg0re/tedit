@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { agentPath } from "./agent-path.js";
 import { parseLineRange } from "./base-edit.js";
 import { fail } from "./errors.js";
 
@@ -29,7 +30,7 @@ export function historyTrace(filePath: string, options: HistoryTraceOptions = {}
   const resolvedFile = resolve(filePath);
   const file = existsSync(resolvedFile) ? realpathSync(resolvedFile) : resolvedFile;
   const repoRoot = gitRootForFile(file);
-  const repoPath = relative(repoRoot, file);
+  const repoPath = agentPath(relative(repoRoot, file));
   const limit = options.limit ?? 10;
   const mode = traceMode(options);
   const target = targetForOptions(file, repoPath, options, mode);

@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, parse, relative } from "node:path";
+import { dirname, join, parse } from "node:path";
 import traverseModule, { type NodePath, type TraverseOptions } from "@babel/traverse";
 import * as t from "@babel/types";
 import * as recast from "recast";
 import babelTsParser from "recast/parsers/babel-ts.js";
+import { relativeAgentPath } from "./agent-path.js";
 import { fail } from "./errors.js";
 
 const traverseAst = ((traverseModule as unknown as { default?: unknown }).default ?? traverseModule) as (
@@ -1203,7 +1204,7 @@ function suggestHookPath(filePath: string, clusterName: string): string {
   const parsed = parse(filePath);
   const hookFile = `use-${kebabCase(clusterName)}.ts`;
   const target = join(parsed.dir, hookFile);
-  return relative(process.cwd(), target) || target;
+  return relativeAgentPath(process.cwd(), target);
 }
 
 function kebabCase(value: string): string {

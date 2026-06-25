@@ -3,6 +3,7 @@ import { parseVerificationFields, verifyParseForFile } from "./base-edit.js";
 import { unifiedDiff } from "./diff.js";
 import { fail } from "./errors.js";
 import { qualityWarnings } from "./quality.js";
+import { lineStartOffsets, requireSourceRangeForLocOrOffsets } from "./source-range.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult, type WritePolicyFlags } from "./write-policy.js";
 import traverseModule, { type NodePath, type TraverseOptions } from "@babel/traverse";
 import * as t from "@babel/types";
@@ -367,24 +368,24 @@ function astMatchForPath(id: string, filePath: string, source: string, parsed: P
   };
 }
 
-function editablePatchForPath(path: NodePath<t.Node>, source: string, replacement: string, lineStartOffsets: number[] = lineStarts(source)): EditablePatch | null {
+function editablePatchForPath(path: NodePath<t.Node>, source: string, replacement: string, starts: number[] = lineStartOffsets(source)): EditablePatch | null {
   const node = path.node;
   if (t.isJSXAttribute(node) && t.isStringLiteral(node.value)) {
-    return nodePatch(node.value, quoteString(replacement, quoteAt(source, nodeOffsets(node.value, lineStartOffsets).start)), lineStartOffsets);
+    return nodePatch(node.value, quoteString(replacement, quoteAt(source, nodeOffsets(node.value, starts).start)), starts);
   }
   if (t.isObjectProperty(node) && t.isStringLiteral(node.value)) {
-    return nodePatch(node.value, quoteString(replacement, quoteAt(source, nodeOffsets(node.value, lineStartOffsets).start)), lineStartOffsets);
+    return nodePatch(node.value, quoteString(replacement, quoteAt(source, nodeOffsets(node.value, starts).start)), starts);
   }
-  if (t.isStringLiteral(node)) return nodePatch(node, quoteString(replacement, quoteAt(source, nodeOffsets(node, lineStartOffsets).start)), lineStartOffsets);
+  if (t.isStringLiteral(node)) return nodePatch(node, quoteString(replacement, quoteAt(source, nodeOffsets(node, starts).start)), starts);
   if (t.isJSXText(node)) {
     const trimmed = trimmedTextOffsets(node.value);
-    const offsets = nodeOffsets(node, lineStartOffsets);
+    const offsets = nodeOffsets(node, starts);
     const start = offsets.start + trimmed.leading;
     const end = offsets.end - trimmed.trailing;
     return { start, end, text: replacement };
   }
   if (t.isTemplateLiteral(node) && node.expressions.length === 0) {
-    return nodePatch(node, quoteTemplate(replacement), lineStartOffsets);
+    return nodePatch(node, quoteTemplate(replacement), starts);
   }
   return null;
 }
@@ -401,24 +402,17 @@ function applySinglePatch(source: string, patch: EditablePatch): string {
 function parseAstSource(source: string): ParsedAstSource {
   return {
     ast: recast.parse(source, { parser: babelTsParser }) as unknown as t.File,
-    lineStarts: lineStarts(source),
+    lineStarts: lineStartOffsets(source),
   };
 }
 
-function nodeRange(node: t.Node, lineStartOffsets: number[]): Range {
-  const { start, end } = nodeOffsets(node, lineStartOffsets);
-  return rangeForOffsets(start, end, lineStartOffsets);
+function nodeRange(node: t.Node, starts: number[]): Range {
+  const { start, end } = nodeOffsets(node, starts);
+  return rangeForOffsets(start, end, starts);
 }
 
-function nodeOffsets(node: t.Node, lineStartOffsets: number[]): { start: number; end: number } {
-  if (node.loc) {
-    return {
-      start: lineStartOffsets[node.loc.start.line - 1] + node.loc.start.column,
-      end: lineStartOffsets[node.loc.end.line - 1] + node.loc.end.column,
-    };
-  }
-  if (typeof node.start !== "number" || typeof node.end !== "number") fail("AST_RANGE_UNAVAILABLE", "AST node does not have source offsets.");
-  return { start: node.start, end: node.end };
+function nodeOffsets(node: t.Node, starts: number[]): { start: number; end: number } {
+  return requireSourceRangeForLocOrOffsets(node, starts, "AST_RANGE_UNAVAILABLE", fail);
 }
 
 function jsxTextValueRange(node: t.JSXText, source: string, lineStartOffsets: number[]): Range {
@@ -453,14 +447,6 @@ function offsetLoc(offset: number, lineStartOffsets: number[]): { line: number; 
   }
   const index = Math.max(0, high);
   return { line: index + 1, column: offset - lineStartOffsets[index] };
-}
-
-function lineStarts(source: string): number[] {
-  const starts = [0];
-  for (let index = 0; index < source.length; index++) {
-    if (source[index] === "\n") starts.push(index + 1);
-  }
-  return starts;
 }
 
 function trimmedTextOffsets(value: string): { leading: number; trailing: number } {

@@ -4,6 +4,7 @@ import traverseModule, { type NodePath, type TraverseOptions } from "@babel/trav
 import * as t from "@babel/types";
 import * as recast from "recast";
 import babelTsParser from "recast/parsers/babel-ts.js";
+import { agentPath } from "./agent-path.js";
 import { parseVerificationFields, verifyParseForFile } from "./base-edit.js";
 import { fail } from "./errors.js";
 import { analyzeState, type StateCluster } from "./quality.js";
@@ -552,7 +553,7 @@ function addHookImport(ast: t.File, sourceFile: string, hookFile: string, hookNa
 }
 
 function hookImportPath(sourceFile: string, hookFile: string): string {
-  const raw = relative(dirname(sourceFile), hookFile).replace(/\\/g, "/").replace(/\.(tsx?|jsx?)$/, "");
+  const raw = agentPath(relative(dirname(sourceFile), hookFile)).replace(/\.(tsx?|jsx?)$/, "");
   return raw.startsWith(".") ? raw : `./${raw}`;
 }
 
