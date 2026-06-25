@@ -271,10 +271,11 @@ export function parseApplyPatch(input: string): ParsedPatchFile[] {
         moveTo = lines[index].slice("*** Move to: ".length).trim();
         index++;
       }
-      const hunkLines: string[] = [];
+      const hunks: string[][] = [[]];
       while (index < lines.length && !lines[index].startsWith("*** ")) {
         const current = lines[index];
         if (current.startsWith("@@")) {
+          if (hunks[hunks.length - 1].length > 0) hunks.push([]);
           index++;
           continue;
         }
@@ -282,10 +283,10 @@ export function parseApplyPatch(input: string): ParsedPatchFile[] {
           index++;
           continue;
         }
-        hunkLines.push(current);
+        hunks[hunks.length - 1].push(current);
         index++;
       }
-      files.push(buildApplyPatchUpdate(file, hunkLines, moveTo));
+      files.push(buildApplyPatchUpdate(file, hunks, moveTo));
       continue;
     }
     fail("INVALID_PATCH", `Unknown apply-patch directive at patch line ${index + 1}: ${line}`);
@@ -298,17 +299,28 @@ export function parseApplyPatch(input: string): ParsedPatchFile[] {
   return files;
 }
 
-function buildApplyPatchUpdate(file: string, lines: string[], moveTo?: string): ParsedPatchFile {
-  const hunkLines = lines
-    .filter((line) => line !== "")
-    .map((line, index): PatchLine => {
-      if (line.startsWith(" ")) return { kind: "context", text: line.slice(1) };
-      if (line.startsWith("-")) return { kind: "delete", text: line.slice(1) };
-      if (line.startsWith("+")) return { kind: "add", text: line.slice(1) };
-      fail("INVALID_PATCH", `Update File lines for ${file} must start with space, -, +, or @@ near hunk line ${index + 1}.`);
-    });
+function buildApplyPatchUpdate(file: string, hunks: string[][], moveTo?: string): ParsedPatchFile {
+  const patchHunks = hunks.flatMap((lines, hunkIndex): PatchHunk[] => {
+    const hunkLines = lines
+      .filter((line) => line !== "")
+      .map((line, index): PatchLine => {
+        if (line.startsWith(" ")) return { kind: "context", text: line.slice(1) };
+        if (line.startsWith("-")) return { kind: "delete", text: line.slice(1) };
+        if (line.startsWith("+")) return { kind: "add", text: line.slice(1) };
+        fail("INVALID_PATCH", `Update File lines for ${file} must start with space, -, +, or @@ near hunk ${hunkIndex + 1} line ${index + 1}.`);
+      });
 
-  if (hunkLines.length === 0 && !moveTo) fail("INVALID_PATCH", `Patch for ${file} has no update lines.`);
+    if (hunkLines.length === 0) return [];
+    return [{
+      oldStart: 0,
+      oldCount: hunkLines.filter((line) => line.kind !== "add").length,
+      newStart: 0,
+      newCount: hunkLines.filter((line) => line.kind !== "delete").length,
+      lines: hunkLines,
+    }];
+  });
+
+  if (patchHunks.length === 0 && !moveTo) fail("INVALID_PATCH", `Patch for ${file} has no update lines.`);
   return {
     oldPath: file,
     newPath: moveTo ?? file,
@@ -316,13 +328,7 @@ function buildApplyPatchUpdate(file: string, lines: string[], moveTo?: string): 
     added: false,
     deleted: false,
     renamed: Boolean(moveTo && normalizePatchPath(moveTo) !== normalizePatchPath(file)),
-    hunks: hunkLines.length === 0 ? [] : [{
-      oldStart: 0,
-      oldCount: hunkLines.filter((line) => line.kind !== "add").length,
-      newStart: 0,
-      newCount: hunkLines.filter((line) => line.kind !== "delete").length,
-      lines: hunkLines,
-    }],
+    hunks: patchHunks,
   };
 }
 

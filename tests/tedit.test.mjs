@@ -1745,6 +1745,9 @@ test("workspace-flow does not write any file when a later step fails", () => {
 
   assert.equal(failed.status, 1);
   assert.equal(failed.body.code, "NODE_NOT_FOUND");
+  assert.match(failed.body.error, /Step 1 \(chain\) failed: No JSX node matched "Missing"/);
+  assert.deepEqual(failed.body.details.workspace_step, { step: 1, action: "chain", file: out });
+  assert.equal(failed.body.details.cause.code, "NODE_NOT_FOUND");
   assert.equal(readFileSync(file, "utf8"), original);
   assert.equal(existsSync(out), false);
 });
@@ -3298,6 +3301,28 @@ test("patch accepts apply-patch format from --stdin", () => {
   assert.equal(result.success, true);
   assert.equal(result.patches[0].file, file);
   assert.equal(readFileSync(file, "utf8"), "new\nkeep\n");
+});
+
+test("patch accepts multiple apply-patch hunks in one file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "notes.txt");
+  writeFileSync(file, "one\ntwo\nthree\nfour\n");
+
+  const result = JSON.parse(runWithInput(["patch", "--stdin", "--write"], `*** Begin Patch
+*** Update File: ${file}
+@@
+-one
++ONE
+ two
+@@
+-four
++FOUR
+*** End Patch
+`));
+
+  assert.equal(result.success, true);
+  assert.equal(result.patches[0].hunks, 2);
+  assert.equal(readFileSync(file, "utf8"), "ONE\ntwo\nthree\nFOUR\n");
 });
 
 test("patch apply-patch format can add and update files atomically", () => {

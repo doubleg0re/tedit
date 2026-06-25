@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { parseLineRange, parseVerificationFields, planBaseEdit, type BaseEditMutation, type BaseFindStrategy } from "./base-edit.js";
 import { parseDocumentForFile } from "./core/registry.js";
 import { unifiedDiff } from "./diff.js";
-import { fail } from "./errors.js";
+import { fail, TeditError } from "./errors.js";
 import { planExtract, type HelperPolicy } from "./extract.js";
 import { runFlow, type FlowStep } from "./flow.js";
 import { qualityWarnings, type QualityWarning } from "./quality.js";
@@ -113,7 +113,7 @@ export function runWorkspaceFlow(steps: WorkspaceFlowStep[], options: WorkspaceF
     if (!step.action && step.comment) return;
     if (!step.action) fail("INVALID_WORKSPACE_FLOW", `Step ${index}: step has no action.`);
 
-    const data = runWorkspaceStep(tx, vars, step, index);
+    const data = runWorkspaceStepWithContext(tx, vars, step, index);
     if (step.out) vars.set(step.out, data);
     vars.set("$ret", data);
     results.push({ step: index, action: step.action, success: true, ...(data === undefined ? {} : { data }) });
@@ -150,6 +150,34 @@ function runWorkspaceStep(tx: WorkspaceTransaction, vars: WorkspaceVarStore, ste
   if (step.action === "edit") return runBaseEditStep(tx, vars, step, index);
   if (step.file) return runFileScopedStep(tx, vars, step, index);
   fail("INVALID_WORKSPACE_FLOW", `Step ${index}: action "${step.action}" requires "file", or use "extract"/"chain".`);
+}
+
+function runWorkspaceStepWithContext(tx: WorkspaceTransaction, vars: WorkspaceVarStore, step: WorkspaceFlowStep, index: number): unknown {
+  try {
+    return runWorkspaceStep(tx, vars, step, index);
+  } catch (error) {
+    throw withWorkspaceStepContext(error, step, index);
+  }
+}
+
+function withWorkspaceStepContext(error: unknown, step: WorkspaceFlowStep, index: number): never {
+  if (!(error instanceof TeditError)) throw error;
+
+  const action = typeof step.action === "string" ? step.action : "unknown";
+  if (error.message.startsWith(`Step ${index}:`)) throw error;
+
+  throw new TeditError(error.code, `Step ${index} (${action}) failed: ${error.message}`, {
+    workspace_step: {
+      step: index,
+      action,
+      ...(typeof step.file === "string" ? { file: step.file } : {}),
+    },
+    cause: {
+      code: error.code,
+      error: error.message,
+      ...(error.details === undefined ? {} : { details: error.details }),
+    },
+  });
 }
 
 function runWriteStep(tx: WorkspaceTransaction, vars: WorkspaceVarStore, step: WorkspaceFlowStep, index: number): unknown {
