@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
+import { createInterface } from "node:readline/promises";
 import {
   BASE_ACTIONS,
   parseLineRange,
@@ -99,6 +101,15 @@ async function main(): Promise<void> {
       return;
     case "actions":
       commandActions(args);
+      return;
+    case "setup":
+      commandSetup(args);
+      return;
+    case "doctor":
+      commandDoctor(args);
+      return;
+    case "update":
+      await commandUpdate(args);
       return;
     case "inspect-range":
     case "inspect_range":
@@ -326,6 +337,60 @@ function commandActions(args: ParsedArgs): void {
   };
 
   output(args, result, actions.join("\n"));
+}
+
+function commandSetup(args: ParsedArgs): void {
+  const target = args.positionals[0] ?? "print";
+  if (target === "print") {
+    process.stdout.write(JSON.stringify({ mcpServers: { tedit: { command: "tedit-mcp" } } }, null, 2) + "\n");
+    return;
+  }
+  if (target !== "codex" && target !== "claude") throw new Error("setup target must be codex, claude, or print.");
+  const command = [target, "mcp", "add", "tedit", "--", "tedit-mcp"];
+  if (args.flags["dry-run"]) {
+    process.stdout.write(command.join(" ") + "\n");
+    return;
+  }
+  if (!commandExists(target)) {
+    process.stdout.write(`${target} CLI not found. Add this MCP config manually:\n`);
+    commandSetup({ ...args, positionals: ["print"] });
+    return;
+  }
+  const result = spawnSync(command[0], command.slice(1), { stdio: "inherit" });
+  if (result.status !== 0) throw new Error(`${target} MCP setup failed.`);
+}
+
+function commandDoctor(args: ParsedArgs): void {
+  const latest = args.flags["skip-update"] ? undefined : latestNpmVersion(false);
+  const checks = [
+    { name: "tedit", ok: true, detail: packageVersion() },
+    { name: "tedit-mcp", ok: commandExists("tedit-mcp"), detail: commandPath("tedit-mcp") ?? "not found" },
+    { name: "actions", ok: true, detail: String(BASE_ACTIONS.length + listRules().flatMap((rule) => rule.actions).length) + " actions" },
+  ];
+  const ok = checks.every((check) => check.ok);
+  if (args.flags.json) {
+    process.stdout.write(JSON.stringify({ ok, version: packageVersion(), latest, checks }, null, 2) + "\n");
+  } else {
+    process.stdout.write(checks.map((check) => `${check.ok ? "✓" : "✗"} ${check.name}: ${check.detail}`).join("\n") + "\n");
+    if (latest && latest !== packageVersion()) process.stdout.write(`ℹ update available: ${packageVersion()} -> ${latest}\n  run: tedit update\n`);
+  }
+  if (!ok) process.exitCode = 1;
+}
+
+async function commandUpdate(args: ParsedArgs): Promise<void> {
+  const latest = latestNpmVersion(true);
+  const current = packageVersion();
+  if (latest === current) {
+    process.stdout.write(`tedit is up to date (${current}).\n`);
+    return;
+  }
+  process.stdout.write(`update available: ${current} -> ${latest}\n`);
+  process.stdout.write("run: npm install -g tedit@latest\n");
+  if (args.flags.check) return;
+  const yes = Boolean(args.flags.yes || args.flags.y);
+  if (!yes && !(await confirm("Run update now? [y/N] "))) return;
+  const result = spawnSync("npm", ["install", "-g", "tedit@latest"], { stdio: "inherit" });
+  if (result.status !== 0) throw new Error("npm install -g tedit@latest failed.");
 }
 
 function commandInspectRange(args: ParsedArgs): void {
@@ -2072,6 +2137,34 @@ function printVersion(): void {
   process.stdout.write("tedit " + packageVersion() + "\n");
 }
 
+function commandPath(command: string): string | undefined {
+  if (!/^[A-Za-z0-9_.-]+$/.test(command)) return undefined;
+  const result = spawnSync("sh", ["-c", `command -v ${command}`], { encoding: "utf8", timeout: 2000 });
+  return result.status === 0 ? result.stdout.trim() || undefined : undefined;
+}
+
+function commandExists(command: string): boolean {
+  return commandPath(command) !== undefined;
+}
+
+function latestNpmVersion(required: boolean): string | undefined {
+  if (process.env.TEDIT_TEST_LATEST_VERSION) return process.env.TEDIT_TEST_LATEST_VERSION;
+  const result = spawnSync("npm", ["view", "tedit", "version"], { encoding: "utf8", timeout: 5000 });
+  if (result.status === 0) return result.stdout.trim();
+  if (required) throw new Error("Could not check npm latest version.");
+  return undefined;
+}
+
+async function confirm(question: string): Promise<boolean> {
+  if (!process.stdin.isTTY) return false;
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(question)).trim().toLowerCase();
+    return answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
 
 function printHelp(command?: string): void {
   if (command) {
@@ -2104,6 +2197,9 @@ Usage:
   tedit patch --from-stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit patch --stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
   tedit actions [file] [--json]
+  tedit setup codex|claude|print [--dry-run]
+  tedit doctor [--skip-update] [--json]
+  tedit update [--check|--yes]
   tedit inspect-range <file> --lines N:M [--context N] [--json]
   tedit search-text <query> [path...] [--regex] [--glob <glob>] [--context N] [--multiedit-spec --replace <text>] [--max-results N] [--json]
   tedit history-trace <file> [--lines N:M|--contains <text>|--regex <pattern>] [--limit N] [--json]
@@ -2230,6 +2326,12 @@ function shortHelp(command: string): string | null {
       return "tedit refactor-state\nUsage:\n  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--plan-out <plan-json>|--dry-run|--write]";
     case "actions":
       return "tedit actions\nUsage:\n  tedit actions [file] [--json]\n\nLists universal base actions and file-specific language actions.";
+    case "setup":
+      return "tedit setup\nUsage:\n  tedit setup codex|claude [--dry-run]\n  tedit setup print\n\nRegisters tedit-mcp through the host CLI when available, or prints manual MCP config.";
+    case "doctor":
+      return "tedit doctor\nUsage:\n  tedit doctor [--skip-update] [--json]\n\nChecks tedit, tedit-mcp, actions, and available npm updates.";
+    case "update":
+      return "tedit update\nUsage:\n  tedit update [--check|--yes]\n\nChecks npm for a newer tedit and installs it only after confirmation or --yes.";
     case "inspect-range":
     case "inspect_range":
       return "tedit inspect-range\nUsage:\n  tedit inspect-range <file> --lines N:M [--context N] [--json]\n\nShows line context, byte range, parser status, and edit-ready suggestions.";

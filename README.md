@@ -89,8 +89,11 @@ Install from npm for normal CLI and MCP usage:
 ```bash
 npm install -g tedit
 tedit --version
-tedit actions --json
+tedit setup codex   # or: tedit setup claude
+tedit doctor
 ```
+
+`tedit setup print` emits the manual MCP JSON. If tedit tools do not appear after setup, restart or refresh your MCP host. `tedit update --check` reports newer npm versions; `tedit update` asks before running `npm install -g tedit@latest`.
 
 For MCP hosts, register the installed bin:
 

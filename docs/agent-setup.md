@@ -30,7 +30,7 @@ node /path/to/tedit/dist/cli.js --version
 
 ## MCP Registration
 
-Use the installed package when possible:
+Use the installed package when possible. If tedit tools do not appear after setup, restart or refresh your MCP host:
 
 ```json
 {
