@@ -13,6 +13,7 @@ test("mcp default profile tools share compact agent contracts", () => {
     "delete_file",
     "edit",
     "file_write",
+    "flow",
     "inspect_range",
     "multiedit",
     "patch",
@@ -206,6 +207,23 @@ test("mcp default profile tools share compact agent contracts", () => {
     diffMode: "stats",
   });
   assertMutationContract(patch, workspace.notes, { changedCount: 1, writtenCount: 0, persisted: false });
+
+  const flowFromChain = runMcpTool("flow", {
+    file: workspace.page,
+    chain: "find button as btn :: wrap @btn div.inline-flex",
+    dryRun: true,
+    diffMode: "stats",
+  });
+  assertMutationContract(flowFromChain, workspace.page, { changedCount: 1, writtenCount: 0, persisted: false });
+
+  const flowFromSteps = runMcpTool("flow", {
+    steps: [
+      { action: "edit", file: workspace.notes, find: "draft", replace: "flowed" },
+    ],
+    dryRun: true,
+    diffMode: "stats",
+  });
+  assertMutationContract(flowFromSteps, workspace.notes, { changedCount: 1, writtenCount: 0, persisted: false });
 
   const deleted = runMcpTool("delete_file", {
     file: workspace.deleteMe,

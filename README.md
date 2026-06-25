@@ -190,7 +190,7 @@ more useful than raw text.
 The default MCP profile is `agent`, which keeps the callable tool list small
 and intent-oriented:
 
-`actions`, `select`, `edit`, `multiedit`, `patch`, `delete_file`,
+`actions`, `select`, `edit`, `multiedit`, `patch`, `flow`, `delete_file`,
 `rename_file`, `ts_select`, `ts_edit`, `ts_move`, `file_write`,
 `inspect_range`, `search_text`, `verify_file`, and `refactor`.
 
@@ -199,6 +199,8 @@ JSX/TSX elements, and text fallback hints. `inspect_range` and `search_text`
 bridge `sed`/`rg` style workflows into tedit's edit-ready structured results.
 `verify_file` accepts either `file` or `files` and gives parser coverage plus
 validity checks without trying to replace native Read.
+
+`flow` runs ordered workflow steps from either JSON `steps` or CLI-style `chain` text; use it when a find-then-mutate sequence should stay in one transaction.
 
 Use `file_write` with a required `mode` for whole-file writes:
 `mode: "write"` for complete source replacement, `mode: "scaffold"` for

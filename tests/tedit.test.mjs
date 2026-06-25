@@ -1863,6 +1863,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "delete_file",
       "edit",
       "file_write",
+      "flow",
       "inspect_range",
       "multiedit",
       "patch",
@@ -1884,6 +1885,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "ts_edit"));
     assert.ok(tools.tools.some((tool) => tool.name === "ts_move"));
     assert.ok(tools.tools.some((tool) => tool.name === "file_write"));
+    assert.ok(tools.tools.some((tool) => tool.name === "flow"));
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "inspect_range"));
     assert.ok(tools.tools.some((tool) => tool.name === "search_text"));
@@ -1965,6 +1967,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "delete_file",
       "edit",
       "file_write",
+      "flow",
       "inspect_range",
       "multiedit",
       "patch",

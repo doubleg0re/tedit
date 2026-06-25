@@ -11,7 +11,7 @@ import {
   type BaseFindStrategy,
   type ParseVerificationFields,
 } from "./base-edit.js";
-import { parseElementShorthand } from "./chain.js";
+import { fileChainToWorkspaceFlow, parseChainSegments, parseChainText, parseElementShorthand, workspaceChainToFlow } from "./chain.js";
 import { getOptionalAdapterForFile } from "./core/registry.js";
 import { runAstEdit as runAstEditEngine, runAstSelect, runScanStrings } from "./ast-tools.js";
 import { inspectRange, searchText } from "./search-tools.js";
@@ -149,6 +149,23 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
       ...writeFlagSchema,
     },
     handler: runPatchTool,
+  },
+  {
+    name: "flow",
+    title: "Flow",
+    description: "Run a multi-step edit transaction. Pass JSON steps/flow, or pass CLI-style chain with optional file for single-file chain syntax.",
+    category: "workflow",
+    aliases: ["chain", "workflow"],
+    bestFor: ["find-then-mutate edits", "CLI-style chain from MCP", "coordinated structural edits"],
+    inputSchema: {
+      file: fileSchema.optional().describe("Target file for single-file CLI-style chain input."),
+      steps: z.array(z.record(z.string(), z.unknown())).optional().describe("Workspace-flow steps. Use for JSON-native MCP calls."),
+      flow: z.array(z.record(z.string(), z.unknown())).optional().describe("Alias for steps."),
+      chain: z.union([z.string(), z.array(z.string())]).optional().describe("CLI-style chain, either a shell-like string or argv token array. With file, uses `tedit chain <file> ...`; without file, uses workspace-chain syntax."),
+      params: z.record(z.string(), z.unknown()).optional().describe("Optional flow parameters."),
+      ...writeFlagSchema,
+    },
+    handler: runFlowTool,
   },
   {
     name: "delete_file",
@@ -1021,6 +1038,7 @@ const AGENT_MCP_TOOL_NAMES = new Set([
   "edit",
   "multiedit",
   "patch",
+  "flow",
   "delete_file",
   "rename_file",
   "ts_select",
@@ -1186,6 +1204,30 @@ function runPatchTool(args: unknown): unknown {
   const patch = requiredString(input.patch, "patch requires patch.");
   const restorePoints = captureRestorePoints(patchFilesForRestore(patch));
   return withVerifiedAgentFields(runPatchInput(patch, writeFlagsFromInput(input)), input, restorePoints);
+}
+
+function runFlowTool(args: unknown): unknown {
+  const input = recordInput(args, "flow");
+  const steps = flowStepsFromInput(input);
+  return withAgentFields(runWorkspaceFlow(steps, {
+    params: recordOrUndefined(input.params, "flow params"),
+    ...writeFlagsFromInput(input),
+  }), input);
+}
+
+function flowStepsFromInput(input: JsonRecord): WorkspaceFlowStep[] {
+  const steps = input.steps ?? input.flow;
+  const chain = input.chain;
+  if (steps !== undefined && chain !== undefined) fail("INVALID_MCP_INPUT", "flow accepts either steps/flow or chain, not both.");
+  if (Array.isArray(steps)) return steps as WorkspaceFlowStep[];
+  if (steps !== undefined) fail("INVALID_MCP_INPUT", "flow steps/flow must be an array.");
+  if (chain === undefined) fail("INVALID_MCP_INPUT", "flow requires steps, flow, or chain.");
+
+  const segments = Array.isArray(chain)
+    ? parseChainSegments(chain.map((part) => String(part)))
+    : parseChainText(requiredString(chain, "flow chain must be a string or string array."));
+  const file = optionalString(input.file);
+  return file ? fileChainToWorkspaceFlow(file, segments) : workspaceChainToFlow(segments);
 }
 
 function runDeleteFileTool(args: unknown): unknown {
@@ -1838,6 +1880,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       edit: { file: "src/Page.tsx", find: "oldLabel", replace: "newLabel", dryRun: true },
       multiedit: { edits: [{ file: "src/Page.tsx", find: "삭제", replace: "Delete", replaceAll: true, expectCount: 2 }], dryRun: true },
       patch: { patch: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ ...", dryRun: true },
+      flow: { file: "src/Page.tsx", chain: "find button as login :: wrap @login div.inline-flex", dryRun: true },
       delete_file: { file: "src/generated/LoginButtons.tsx", dryRun: true },
       rename_file: { file: "src/old.ts", to: "src/new.ts", dryRun: true },
       edit_with_verify: { file: "src/Page.tsx", find: "oldLabel", replace: "newLabel", write: true, verify: { cmd: ["npx", "tsc", "-p", "apps/web/tsconfig.json", "--noEmit"], timeoutMs: 30000, rollbackOnFail: false } },
