@@ -356,8 +356,8 @@ function commandSetup(args: ParsedArgs): void {
     commandSetup({ ...args, positionals: ["print"] });
     return;
   }
-  const result = spawnSync(command[0], command.slice(1), { stdio: "inherit" });
-  if (result.status !== 0) throw new Error(`${target} MCP setup failed.`);
+  const result = spawnCommand(command[0], command.slice(1), { stdio: "inherit" });
+  if (result.status !== 0) throw new Error(`${target} MCP setup failed.${result.error ? ` ${result.error.message}` : ""}`);
 }
 
 function commandDoctor(args: ParsedArgs): void {
@@ -389,7 +389,7 @@ async function commandUpdate(args: ParsedArgs): Promise<void> {
   if (args.flags.check) return;
   const yes = Boolean(args.flags.yes || args.flags.y);
   if (!yes && !(await confirm("Run update now? [y/N] "))) return;
-  const result = spawnSync("npm", ["install", "-g", "tedit@latest"], { stdio: "inherit" });
+  const result = spawnCommand("npm", ["install", "-g", "tedit@latest"], { stdio: "inherit" });
   if (result.status !== 0) throw new Error("npm install -g tedit@latest failed.");
 }
 
@@ -2139,6 +2139,12 @@ function printVersion(): void {
 
 function commandPath(command: string): string | undefined {
   if (!/^[A-Za-z0-9_.-]+$/.test(command)) return undefined;
+  if (process.platform === "win32") {
+    const result = spawnSync("where.exe", [command], { encoding: "utf8", timeout: 2000 });
+    if (result.status !== 0) return undefined;
+    const paths = result.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return paths.find((path) => /\.(?:cmd|exe|bat)$/i.test(path)) ?? paths.find((path) => !/\.ps1$/i.test(path)) ?? paths[0];
+  }
   const result = spawnSync("sh", ["-c", `command -v ${command}`], { encoding: "utf8", timeout: 2000 });
   return result.status === 0 ? result.stdout.trim() || undefined : undefined;
 }
@@ -2147,10 +2153,35 @@ function commandExists(command: string): boolean {
   return commandPath(command) !== undefined;
 }
 
+function spawnCommand(command: string, args: string[], options: Parameters<typeof spawnSync>[2]) {
+  const executable = commandPath(command) ?? command;
+  if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(executable)) {
+    return spawnSync(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", windowsCommandLine([executable, ...args])], {
+      ...options,
+      windowsVerbatimArguments: true,
+    });
+  }
+  return spawnSync(executable, args, options);
+}
+
+function windowsCommandLine(args: string[]): string {
+  const [command, ...rest] = args;
+  return [quoteWindowsCommand(command ?? ""), ...rest.map(quoteWindowsArg)].join(" ");
+}
+
+function quoteWindowsCommand(arg: string): string {
+  return `"${arg.replace(/"/g, '""')}"`;
+}
+
+function quoteWindowsArg(arg: string): string {
+  return arg === "" || /\s/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg;
+}
+
 function latestNpmVersion(required: boolean): string | undefined {
   if (process.env.TEDIT_TEST_LATEST_VERSION) return process.env.TEDIT_TEST_LATEST_VERSION;
-  const result = spawnSync("npm", ["view", "tedit", "version"], { encoding: "utf8", timeout: 5000 });
-  if (result.status === 0) return result.stdout.trim();
+  const result = spawnCommand("npm", ["view", "tedit", "version"], { encoding: "utf8", timeout: 5000 });
+  const stdout = typeof result.stdout === "string" ? result.stdout : result.stdout?.toString("utf8") ?? "";
+  if (result.status === 0) return stdout.trim();
   if (required) throw new Error("Could not check npm latest version.");
   return undefined;
 }

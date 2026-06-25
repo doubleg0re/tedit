@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { modulePath } from "../scripts/path-helpers.mjs";
@@ -18,7 +18,7 @@ test("setup prints MCP config and host CLI command dry-runs", () => {
 
 test("doctor reports local MCP availability without network when requested", () => {
   const bin = fakeBin();
-  const doctor = JSON.parse(run(["doctor", "--skip-update", "--json"], { PATH: `${bin}:${process.env.PATH ?? ""}` }));
+  const doctor = JSON.parse(run(["doctor", "--skip-update", "--json"], { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }));
 
   assert.equal(doctor.ok, true);
   assert.equal(doctor.checks.find((check) => check.name === "tedit-mcp").ok, true);
@@ -34,9 +34,9 @@ test("update check reports newer npm version without installing", () => {
 
 function fakeBin() {
   const dir = mkdtempSync(join(tmpdir(), "tedit-cli-bin-"));
-  const file = join(dir, "tedit-mcp");
-  writeFileSync(file, "#!/bin/sh\nexit 0\n");
-  chmodSync(file, 0o755);
+  const file = join(dir, process.platform === "win32" ? "tedit-mcp.cmd" : "tedit-mcp");
+  writeFileSync(file, process.platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
+  if (process.platform !== "win32") chmodSync(file, 0o755);
   return dir;
 }
 
