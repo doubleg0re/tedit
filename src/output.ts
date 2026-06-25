@@ -73,7 +73,7 @@ const DETAIL_READ_MAX_BYTES = 8_000;
 const DEFAULT_COMPACT_SEARCH_RESULT_LIMIT = 20;
 const DETAIL_INLINE_KEYS = new Set([
   "ok", "kind", "summary", "path", "file", "count", "query", "regex", "paths", "glob", "context",
-  "truncated", "resultsShown", "resultsTruncated", "changedCount", "writtenCount", "parse_verified", "parser",
+  "matchCount", "fileCount", "editCount", "truncated", "resultsShown", "resultsTruncated", "changedCount", "writtenCount", "parse_verified", "parser",
   "parse_skipped", "parse_skip_reason", "suggested", "suggestions", "suggestedActions", "next", "actions", "rules", "profiles",
 ]);
 
@@ -162,6 +162,8 @@ function compactMutationResult(record: JsonRecord, files: AgentFileSummary[], op
   };
 
   if (files.length > 0) {
+    if (typeof record.editCount === "number") compact.editCount = record.editCount;
+    if (typeof record.fileCount === "number") compact.fileCount = record.fileCount;
     compact.changedCount = countFiles(files, (file) => file.changed === true);
     compact.writtenCount = countFiles(files, (file) => file.written === true);
     compact.files = compactFiles(record, options);
@@ -479,7 +481,7 @@ function collectWarnings(record: JsonRecord, files: AgentFileSummary[]): unknown
 }
 
 function compactSearchTextResult(record: JsonRecord, compact: JsonRecord): JsonRecord {
-  copyKeys(record, compact, ["query", "regex", "paths", "glob", "context", "count", "truncated"]);
+  copyKeys(record, compact, ["query", "regex", "paths", "glob", "context", "count", "matchCount", "fileCount", "truncated"]);
   if (record.multiedit && typeof record.multiedit === "object" && !Array.isArray(record.multiedit)) compact.multiedit = record.multiedit;
   if (Array.isArray(record.results)) {
     const shown = record.results.slice(0, DEFAULT_COMPACT_SEARCH_RESULT_LIMIT);
@@ -696,7 +698,7 @@ function payloadSummary(record: JsonRecord, kind: string): string {
   if (typeof record.summary === "string") return record.summary;
   if (kind === "find" && Array.isArray(record.matches)) return String(record.matches.length) + " " + plural("match", record.matches.length);
   if (kind === "inspect-range" && Array.isArray(record.lines)) return String(record.lines.length) + " " + plural("line", record.lines.length);
-  if (kind === "search-text" && Array.isArray(record.results)) return String(record.results.length) + " text " + plural("match", record.results.length);
+  if (kind === "search-text" && Array.isArray(record.results)) return searchTextSummary(record);
   if (kind === "history-trace" && Array.isArray(record.commits)) return String(record.commits.length) + " history " + plural("commit", record.commits.length);
   if (kind === "templates" && Array.isArray(record.templates)) return String(record.templates.length) + " " + plural("template", record.templates.length);
   if (kind === "scan-strings" && Array.isArray(record.strings)) return String(record.strings.length) + " string " + plural("candidate", record.strings.length);
@@ -713,6 +715,33 @@ function payloadSummary(record: JsonRecord, kind: string): string {
   }
   if (kind === "workflow" && Array.isArray(record.results)) return String(record.results.length) + " workflow " + plural("step", record.results.length) + " completed";
   return "operation succeeded";
+}
+
+function searchTextSummary(record: JsonRecord): string {
+  const matchCount = typeof record.matchCount === "number" ? record.matchCount : Array.isArray(record.results) ? record.results.length : 0;
+  const fileCount = typeof record.fileCount === "number" ? record.fileCount : searchResultFileCount(record.results);
+  const shown = Math.min(Array.isArray(record.results) ? record.results.length : matchCount, DEFAULT_COMPACT_SEARCH_RESULT_LIMIT);
+  const parts = [`${matchCount} text ${plural("match", matchCount)} across ${fileCount} ${plural("file", fileCount)}`];
+  if (matchCount > shown) parts.push(`showing ${shown}`);
+  if (record.multiedit && typeof record.multiedit === "object" && !Array.isArray(record.multiedit)) {
+    const multiedit = record.multiedit as JsonRecord;
+    const editCount = typeof multiedit.editCount === "number" ? multiedit.editCount : Array.isArray(multiedit.edits) ? multiedit.edits.length : undefined;
+    const specFileCount = typeof multiedit.fileCount === "number" ? multiedit.fileCount : undefined;
+    const specMatchCount = typeof multiedit.matchCount === "number" ? multiedit.matchCount : undefined;
+    if (editCount !== undefined && specFileCount !== undefined) {
+      parts.push(`multiedit covers ${editCount} ${plural("edit", editCount)} across ${specFileCount} ${plural("file", specFileCount)}${specMatchCount === undefined ? "" : ` (${specMatchCount} ${plural("match", specMatchCount)})`}`);
+    }
+  }
+  return parts.join("; ");
+}
+
+function searchResultFileCount(results: unknown): number {
+  if (!Array.isArray(results)) return 0;
+  return new Set(results.flatMap((result) => {
+    if (!result || typeof result !== "object" || Array.isArray(result)) return [];
+    const record = result as JsonRecord;
+    return typeof record.file === "string" ? [record.file] : [];
+  })).size;
 }
 
 function parseResultSummary(record: JsonRecord): string {
@@ -935,6 +964,7 @@ function deterministicNextSteps(files: AgentFileSummary[], options: OutputOption
 }
 
 function plural(word: string, count: number): string {
+  if (word === "match") return count === 1 ? "match" : "matches";
   return count === 1 ? word : word + "s";
 }
 

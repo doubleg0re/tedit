@@ -13,6 +13,8 @@ import { commitWorkspaceUpdates, type WorkspaceFileChange, type WorkspaceFlowOpt
 
 export type MultieditResult = {
   success: true;
+  editCount: number;
+  fileCount: number;
   results: MultieditStepResult[];
   parse: Array<{ file: string } & ParseVerificationFields>;
   files: WorkspaceFileChange[];
@@ -129,7 +131,7 @@ export function runMultiedit(edits: unknown[], options: WorkspaceFlowOptions = {
     options,
   );
 
-  return { success: true, results, parse, files };
+  return { success: true, editCount: results.length, fileCount: states.size, results, parse, files };
 }
 
 function normalizeEdit(rawEdit: unknown, index: number): {

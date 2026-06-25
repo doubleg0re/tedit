@@ -66,6 +66,9 @@ type SearchCandidate = {
 type MultieditSpec = {
   edits: JsonRecord[];
   count: number;
+  editCount: number;
+  fileCount: number;
+  matchCount: number;
   replace: string;
   truncated: boolean;
 };
@@ -154,6 +157,8 @@ export function searchText(options: SearchTextOptions): JsonRecord {
     ...(options.multieditSpec ? { multiedit: multieditSpecForSearch(options, results, results.length >= maxResults) } : {}),
     results,
     count: results.length,
+    matchCount: results.length,
+    fileCount: uniqueFileCount(results),
     truncated: results.length >= maxResults,
   };
 }
@@ -162,9 +167,11 @@ function multieditSpecForSearch(options: SearchTextOptions, results: SearchCandi
   const replace = options.replace ?? "<replacement>";
   const find = multieditFindForSearch(options);
   const files = new Set(results.map((result) => result.file));
+  let matchCount = 0;
   const edits = [...files].flatMap((file) => {
     const count = countMultieditMatches(readFileSync(file, "utf8"), find);
     if (count === 0) return [];
+    matchCount += count;
     return [{
       file: agentPath(file),
       ...find,
@@ -173,7 +180,11 @@ function multieditSpecForSearch(options: SearchTextOptions, results: SearchCandi
       expectCount: count,
     }];
   });
-  return { edits, count: edits.length, replace, truncated };
+  return { edits, count: edits.length, editCount: edits.length, fileCount: files.size, matchCount, replace, truncated };
+}
+
+function uniqueFileCount(results: SearchCandidate[]): number {
+  return new Set(results.map((result) => result.file)).size;
 }
 
 function multieditFindForSearch(options: SearchTextOptions): JsonRecord {

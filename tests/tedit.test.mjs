@@ -154,8 +154,13 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   const search = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.tsx", "--context", "1", "--multiedit-spec", "--replace", "Delete", "--json"]));
   assert.equal(search.kind, "search-text");
   assert.equal(search.count, 1);
+  assert.equal(search.matchCount, 1);
+  assert.equal(search.fileCount, 1);
   assert.equal(search.context, 1);
   assert.equal(search.multiedit.edits.length, 1);
+  assert.equal(search.multiedit.editCount, 1);
+  assert.equal(search.multiedit.fileCount, 1);
+  assert.equal(search.multiedit.matchCount, 1);
   assert.equal(search.multiedit.edits[0].findExact, "삭제");
   assert.equal(search.multiedit.edits[0].flags, undefined);
   assert.equal(search.multiedit.edits[0].replace, "Delete");
@@ -175,6 +180,8 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
 
   const braceGlobSearch = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.{tsx, ts}", "--multiedit-spec", "--replace", "Delete", "--json"]));
   assert.equal(braceGlobSearch.count, 2);
+  assert.equal(braceGlobSearch.matchCount, 2);
+  assert.equal(braceGlobSearch.fileCount, 2);
   assert.equal(braceGlobSearch.multiedit.edits.length, 2);
   assert.deepEqual(braceGlobSearch.results.map((result) => basename(result.file)).sort(), ["Page.tsx", "labels.ts"]);
 
@@ -188,7 +195,12 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   ].join("\n"));
   const renameSearch = JSON.parse(run(["search-text", "User", renameFile, "--multiedit-spec", "--replace", "Member", "--json"]));
   assert.equal(renameSearch.count, 7);
+  assert.equal(renameSearch.matchCount, 7);
+  assert.equal(renameSearch.fileCount, 1);
   assert.equal(renameSearch.multiedit.edits.length, 1);
+  assert.equal(renameSearch.multiedit.editCount, 1);
+  assert.equal(renameSearch.multiedit.fileCount, 1);
+  assert.equal(renameSearch.multiedit.matchCount, 3);
   assert.equal(renameSearch.multiedit.edits[0].findRegex, "\\bUser\\b");
   assert.equal(renameSearch.multiedit.edits[0].flags, undefined);
   assert.equal(renameSearch.multiedit.edits[0].expectCount, 3);

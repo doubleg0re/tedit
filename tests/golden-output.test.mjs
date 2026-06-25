@@ -136,6 +136,9 @@ test("golden: search-text detailed output contract", () => {
         expectCount: 2,
       }],
       count: 1,
+      editCount: 1,
+      fileCount: 1,
+      matchCount: 2,
       replace: "Delete",
       truncated: false,
     },
@@ -208,6 +211,8 @@ test("golden: search-text detailed output contract", () => {
       },
     ],
     count: 2,
+    matchCount: 2,
+    fileCount: 1,
     truncated: false,
   });
 });

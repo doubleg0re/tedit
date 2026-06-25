@@ -31,16 +31,23 @@ test("stability: agent workflow keeps compact and detailed output contracts", ()
   assert.equal(detailedSearch.success, true);
   assert.equal(detailedSearch.ok, undefined);
   assert.equal(detailedSearch.count, 3);
+  assert.equal(detailedSearch.matchCount, 3);
+  assert.equal(detailedSearch.fileCount, 2);
   assert.equal(detailedSearch.results[0].range.line, 2);
   assert.equal(detailedSearch.results[0].suggestions[0].tool, "inspect_range");
   assert.equal(detailedSearch.results[0].suggestions[0].cliCommand, "inspect-range");
   assert.equal(detailedSearch.multiedit.edits.length, 2);
+  assert.equal(detailedSearch.multiedit.editCount, 2);
+  assert.equal(detailedSearch.multiedit.fileCount, 2);
+  assert.equal(detailedSearch.multiedit.matchCount, 3);
 
   const compactSearch = JSON.parse(runCompact(["search-text", "삭제", "src", "--glob", "src/{components, utils}/*.{tsx, ts}"], { cwd: dir }));
   assert.equal(compactSearch.ok, true);
   assert.equal(compactSearch.success, undefined);
   assert.equal(compactSearch.kind, "search-text");
   assert.equal(compactSearch.count, 3);
+  assert.equal(compactSearch.matchCount, 3);
+  assert.equal(compactSearch.fileCount, 2);
   assert.equal(compactSearch.resultsShown, 3);
   assert.equal(compactSearch.resultsTruncated, undefined);
   assert.equal(compactSearch.results[0].suggested, undefined);
@@ -77,6 +84,30 @@ test("stability: agent workflow keeps compact and detailed output contracts", ()
   assert.equal(compactVerify.path.endsWith("src/utils/labels.ts"), true);
   assert.equal(compactVerify.file, undefined);
   assert.equal(compactVerify.parser, "typescript");
+});
+
+test("stability: compact search clarifies truncated display and multiedit coverage", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-stability-many-"));
+  mkdirSync(join(dir, "src"), { recursive: true });
+  for (let index = 0; index < 4; index++) {
+    writeFileSync(join(dir, "src", `File${index}.ts`), Array.from({ length: 6 }, (_, line) => {
+      return `export const label${index}_${line} = "삭제";`;
+    }).join("\n") + "\n");
+  }
+
+  const search = JSON.parse(runCompact([
+    "search-text", "삭제", "src", "--glob", "src/*.ts", "--multiedit-spec", "--replace", "Delete",
+  ], { cwd: dir }));
+
+  assert.equal(search.count, 24);
+  assert.equal(search.matchCount, 24);
+  assert.equal(search.fileCount, 4);
+  assert.equal(search.resultsShown, 20);
+  assert.equal(search.resultsTruncated, true);
+  assert.match(search.summary, /24 text matches across 4 files; showing 20/);
+  assert.equal(search.multiedit.editCount, 4);
+  assert.equal(search.multiedit.fileCount, 4);
+  assert.equal(search.multiedit.matchCount, 24);
 });
 
 test("stability: search-text full result piped to multiedit gives recovery hint", () => {
