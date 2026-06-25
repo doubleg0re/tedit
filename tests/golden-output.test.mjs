@@ -129,8 +129,7 @@ test("golden: search-text detailed output contract", () => {
     multiedit: {
       edits: [{
         file: "<tmp>/src/Page.tsx",
-        findRegex: "삭제",
-        flags: "i",
+        findExact: "삭제",
         replace: "Delete",
         replaceAll: true,
         expectCount: 2,

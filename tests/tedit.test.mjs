@@ -154,6 +154,8 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   assert.equal(search.count, 1);
   assert.equal(search.context, 1);
   assert.equal(search.multiedit.edits.length, 1);
+  assert.equal(search.multiedit.edits[0].findExact, "삭제");
+  assert.equal(search.multiedit.edits[0].flags, undefined);
   assert.equal(search.multiedit.edits[0].replace, "Delete");
   assert.equal(search.multiedit.edits[0].replaceAll, true);
   assert.equal(search.multiedit.edits[0].expectCount, 1);
@@ -173,6 +175,21 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   assert.equal(braceGlobSearch.count, 2);
   assert.equal(braceGlobSearch.multiedit.edits.length, 2);
   assert.deepEqual(braceGlobSearch.results.map((result) => basename(result.file)).sort(), ["Page.tsx", "labels.ts"]);
+
+  const renameFile = join(src, "users.ts");
+  writeFileSync(renameFile, [
+    "type User = { name: string };",
+    "const user = {} as User;",
+    "export function UserCard() { return user; }",
+    "const INITIAL_USERS: User[] = [];",
+    "",
+  ].join("\n"));
+  const renameSearch = JSON.parse(run(["search-text", "User", renameFile, "--multiedit-spec", "--replace", "Member", "--json"]));
+  assert.equal(renameSearch.count, 7);
+  assert.equal(renameSearch.multiedit.edits.length, 1);
+  assert.equal(renameSearch.multiedit.edits[0].findRegex, "\\bUser\\b");
+  assert.equal(renameSearch.multiedit.edits[0].flags, undefined);
+  assert.equal(renameSearch.multiedit.edits[0].expectCount, 3);
 
   const helperVerify = JSON.parse(run(["verify-file", helper, "--json"]));
   assert.equal(helperVerify.parse_verified, true);

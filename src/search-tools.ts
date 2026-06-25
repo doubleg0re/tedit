@@ -158,27 +158,50 @@ export function searchText(options: SearchTextOptions): JsonRecord {
 
 function multieditSpecForSearch(options: SearchTextOptions, results: SearchCandidate[], truncated: boolean): MultieditSpec {
   const replace = options.replace ?? "<replacement>";
-  const byFile = new Map<string, number>();
-  for (const result of results) byFile.set(result.file, (byFile.get(result.file) ?? 0) + 1);
-  const edits = [...byFile.entries()].map(([file, count]) => ({
-    file,
-    ...multieditFindForSearch(options),
-    replace,
-    replaceAll: true,
-    expectCount: count,
-  }));
+  const find = multieditFindForSearch(options);
+  const files = new Set(results.map((result) => result.file));
+  const edits = [...files].flatMap((file) => {
+    const count = countMultieditMatches(readFileSync(file, "utf8"), find);
+    if (count === 0) return [];
+    return [{
+      file,
+      ...find,
+      replace,
+      replaceAll: true,
+      expectCount: count,
+    }];
+  });
   return { edits, count: edits.length, replace, truncated };
 }
 
 function multieditFindForSearch(options: SearchTextOptions): JsonRecord {
-  if (options.regex) {
-    return {
-      findRegex: options.query,
-      ...(options.caseSensitive ? {} : { flags: "i" }),
-    };
+  if (options.regex) return { findRegex: options.query };
+  if (isAsciiIdentifier(options.query)) return { findRegex: `\\b${escapeRegExp(options.query)}\\b` };
+  return { findExact: options.query };
+}
+
+function countMultieditMatches(source: string, find: JsonRecord): number {
+  if (typeof find.findExact === "string") return countExactMatches(source, find.findExact);
+  if (typeof find.findRegex !== "string") return 0;
+  const flags = typeof find.flags === "string" ? find.flags : "";
+  const regex = new RegExp(find.findRegex, flags.includes("g") ? flags : `${flags}g`);
+  let count = 0;
+  for (let match = regex.exec(source); match; match = regex.exec(source)) {
+    count += 1;
+    if (match[0] === "") regex.lastIndex += 1;
   }
-  if (options.caseSensitive) return { findExact: options.query };
-  return { findRegex: escapeRegExp(options.query), flags: "i" };
+  return count;
+}
+
+function countExactMatches(source: string, query: string): number {
+  if (query === "") return 0;
+  let count = 0;
+  for (let index = source.indexOf(query); index >= 0; index = source.indexOf(query, index + query.length)) count += 1;
+  return count;
+}
+
+function isAsciiIdentifier(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
 function filesForSearchPath(pathInput: string, options: SearchTextOptions): string[] {
