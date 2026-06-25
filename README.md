@@ -192,7 +192,7 @@ and intent-oriented:
 
 `actions`, `select`, `edit`, `multiedit`, `patch`, `delete_file`,
 `rename_file`, `ts_select`, `ts_edit`, `ts_move`, `file_write`,
-`inspect_range`, `search_text`, and `verify_file`.
+`inspect_range`, `search_text`, `verify_file`, and `refactor`.
 
 `select` is the common facade for TS/JS declarations, Python functions/classes,
 JSX/TSX elements, and text fallback hints. `inspect_range` and `search_text`
@@ -222,8 +222,10 @@ loop is:
 - `verify_file` before or after edits when parser coverage matters; pass
   `files` to check several related files in one call. `.py` receives a
   syntax-only guard (`parser: "python-syntax"`), not structural Python rewriting.
-- `TEDIT_MCP_PROFILE=all` for AST, TS declaration targeting, JSX/markup
-  structural actions, templates, history, extract, and refactor helpers.
+- `refactor` for existing CLI refactor workflows from the default MCP profile:
+  `kind: "state"`, `kind: "extract"`, or `kind: "apply-plan"`.
+- `TEDIT_MCP_PROFILE=all` for AST, JSX/markup structural actions, templates,
+  history, and fine-grained extract/refactor helpers.
 
 Failure responses are part of the workflow: `MATCH_NONE`,
 `MATCH_NOT_UNIQUE`, `PARSE_BROKEN_AFTER_EDIT`, `AST_MATCH_NONE`, and

@@ -1866,6 +1866,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "inspect_range",
       "multiedit",
       "patch",
+      "refactor",
       "rename_file",
       "search_text",
       "select",
@@ -1878,6 +1879,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "select"));
     assert.ok(tools.tools.some((tool) => tool.name === "delete_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "rename_file"));
+    assert.ok(tools.tools.some((tool) => tool.name === "refactor"));
     assert.ok(tools.tools.some((tool) => tool.name === "ts_select"));
     assert.ok(tools.tools.some((tool) => tool.name === "ts_edit"));
     assert.ok(tools.tools.some((tool) => tool.name === "ts_move"));
@@ -1916,6 +1918,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("delete_file"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("rename_file"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("refactor"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("ts_select"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("ts_edit"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("ts_move"));
@@ -1965,6 +1968,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "inspect_range",
       "multiedit",
       "patch",
+      "refactor",
       "rename_file",
       "search_text",
       "select",

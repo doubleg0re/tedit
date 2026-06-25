@@ -470,6 +470,33 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
     handler: runTsMoveTool,
   },
   {
+    name: "refactor",
+    title: "Refactor",
+    description: "Small facade for existing refactor workflows. kind=state applies or plans refactor-state; kind=extract extracts or plans JSX component extraction; kind=apply-plan applies a saved plan.",
+    category: "refactor",
+    aliases: ["refactor_state", "extract_component", "apply_plan"],
+    bestFor: ["agent default access to CLI refactors", "React state refactors", "JSX component extraction", "reviewable refactor plans"],
+    inputSchema: {
+      kind: z.enum(["state", "refactor-state", "extract", "extract-component", "apply-plan"]).describe("Which existing refactor workflow to run."),
+      mode: z.enum(["apply", "plan", "direct"]).optional().describe("state: apply/plan. extract: direct/plan. apply-plan ignores mode."),
+      file: z.string().optional().describe("State refactor source file, or apply-plan alias for plan."),
+      plan: z.string().optional().describe("Plan path for kind=apply-plan."),
+      path: z.string().optional().describe("Plan path alias for kind=apply-plan."),
+      planOut: z.string().optional().describe("Required for mode=plan."),
+      cluster: z.string().optional(),
+      to: z.string().optional(),
+      name: z.string().optional(),
+      externalDeps: z.enum(["fail", "params"]).optional(),
+      from: fileSchema.optional().describe("Source JSX/TSX file for kind=extract."),
+      selector: selectorSchema.optional().describe("JSX selector for kind=extract."),
+      overwrite: z.boolean().optional(),
+      only: z.union([z.string(), z.array(z.string())]).optional(),
+      skip: z.union([z.string(), z.array(z.string())]).optional(),
+      ...writeFlagSchema,
+    },
+    handler: runRefactorTool,
+  },
+  {
     name: "analyze_state",
     title: "Analyze State",
     description: "Analyze React useState clusters and refactor recommendations without modifying files.",
@@ -1003,6 +1030,7 @@ const AGENT_MCP_TOOL_NAMES = new Set([
   "inspect_range",
   "search_text",
   "verify_file",
+  "refactor",
 ]);
 
 export function teditMcpProfileFromEnv(env: NodeJS.ProcessEnv = process.env): TeditMcpProfile {
@@ -1803,7 +1831,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "large or risky JSX component extraction", tool: "extract_component then apply_plan", required: ["mode=plan", "from", "selector", "to", "name", "planOut"], reason: "reviewable plan file before applying file creation, call-site replacement, and helper movement" },
       { intent: "extract and then mutate the created component in one transaction", tool: "chain_workspace", reason: "workspace-flow can run extract plus follow-up per-file structural steps atomically" },
       { intent: "React state cluster diagnosis", tool: "analyze_state", reason: "read-only state structure insight; not a code review substitute" },
-      { intent: "React state cluster cleanup or hook extraction", tool: "analyze_state then refactor_state", reason: "inspect clusters first, then apply directly or request mode=plan" },
+      { intent: "React state cluster cleanup, hook extraction, or component extraction", tool: "refactor", reason: "default-profile facade over existing refactor-state, extract, and apply-plan workflows" },
     ],
     examples: {
       select: { file: "src/Page.tsx", selector: "LoginButtons" },
@@ -1893,6 +1921,23 @@ function verifyFileEntry(filePath: string): VerifyFileEntry {
     ...parseVerificationFields(verification),
     warnings: qualityWarnings(filePath, source, source),
   };
+}
+
+function runRefactorTool(args: unknown): unknown {
+  const input = recordInput(args, "refactor");
+  const kind = requiredString(pick(input, "kind", "type", "action"), "refactor requires kind: state, extract, or apply-plan.");
+  const normalized = kind.replace(/_/g, "-");
+
+  if (normalized === "state" || normalized === "refactor-state") return runRefactorStateTool(input);
+  if (normalized === "extract" || normalized === "extract-component") {
+    const mode = optionalString(input.mode);
+    if (mode === "plan" || (mode === undefined && pick(input, "planOut", "plan_out", "plan-out") !== undefined)) return runExtractPlanTool(input);
+    if (mode === undefined || mode === "apply" || mode === "direct") return runExtractTool(input);
+    fail("INVALID_MCP_INPUT", "refactor kind=extract mode must be direct or plan.");
+  }
+  if (normalized === "apply-plan") return runApplyPlanTool(input);
+
+  fail("INVALID_MCP_INPUT", "refactor kind must be state, extract, or apply-plan.");
 }
 
 function runRefactorStateTool(args: unknown): unknown {

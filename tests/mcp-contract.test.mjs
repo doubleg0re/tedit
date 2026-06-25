@@ -16,6 +16,7 @@ test("mcp default profile tools share compact agent contracts", () => {
     "inspect_range",
     "multiedit",
     "patch",
+    "refactor",
     "rename_file",
     "search_text",
     "select",
@@ -34,6 +35,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.ok(actions.guidance.edit_loop.some((row) => row.tool === "edit"));
   assert.ok(actions.guidance.edit_loop.some((row) => row.tool === "search_text"));
   assert.ok(actions.guidance.edit_loop.some((row) => row.tool === "select"));
+  assert.ok(actions.guidance.refactor_loop.some((row) => row.tool === "refactor"));
 
   const select = runMcpTool("select", { file: workspace.page, selector: "button" });
   assert.equal(select.ok, true);
@@ -234,6 +236,18 @@ test("mcp default profile tools share compact agent contracts", () => {
   assertMutationContract(written, workspace.generated, { changedCount: 1, writtenCount: 0, persisted: false });
   assert.equal(written.parser, "json");
   assert.equal(written.files[0].change, "created");
+
+  const refactor = runMcpTool("refactor", {
+    kind: "state",
+    file: workspace.statePage,
+    dryRun: true,
+    diffMode: "stats",
+  });
+  assert.equal(refactor.success, true);
+  assert.equal(refactor.files[0].file, workspace.statePage);
+  assert.equal(refactor.files[0].changed, true);
+  assert.equal(refactor.files[0].written, false);
+  assert.match(refactor.state_object, /State$/);
 });
 
 function createWorkspace() {
@@ -245,12 +259,34 @@ function createWorkspace() {
   const config = join(root, "config.json");
   const python = join(root, "train.py");
   const generated = join(root, "generated.json");
+  const statePage = join(src, "StatePage.tsx");
   const deleteMe = join(root, "delete-me.txt");
   const renameOld = join(root, "old-name.txt");
   const renameNew = join(root, "new-name.txt");
   const verifyPass = join(root, "verify-pass.txt");
   const verifyFail = join(root, "verify-fail.txt");
   writeFileSync(page, "export function Page() {\n  return <button>삭제</button>;\n}\n");
+  writeFileSync(statePage, `import { useState } from "react";
+
+export function StatePage() {
+  const [crewImportOpen, setCrewImportOpen] = useState(false);
+  const [crewImportDayId, setCrewImportDayId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  const openImport = (dayId: string) => {
+    setCrewImportOpen(true);
+    setCrewImportDayId(dayId);
+  };
+
+  return (
+    <main>
+      <button onClick={() => openImport("d1")}>Open</button>
+      <span>{crewImportOpen ? crewImportDayId : "closed"}</span>
+      <input value={search} onChange={(event) => setSearch(event.target.value)} />
+    </main>
+  );
+}
+`);
   writeFileSync(python, [
     "import torch",
     "from dataclasses import dataclass",
@@ -275,7 +311,7 @@ function createWorkspace() {
   writeFileSync(renameOld, "move me\n");
   writeFileSync(verifyPass, "before\n");
   writeFileSync(verifyFail, "before\n");
-  return { root, src, page, python, notes, config, generated, deleteMe, renameOld, renameNew, verifyPass, verifyFail };
+  return { root, src, page, statePage, python, notes, config, generated, deleteMe, renameOld, renameNew, verifyPass, verifyFail };
 }
 
 function assertMutationContract(result, path, expected) {
