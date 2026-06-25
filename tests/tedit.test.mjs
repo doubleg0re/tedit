@@ -199,6 +199,16 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   assert.equal(inspect.suggested.findLines, "2:2");
   assert.match(inspect.suggested.replaceHint, /trailing newline/);
 
+  const head = JSON.parse(run(["inspect-range", file, "--head", "2", "--json"]));
+  assert.deepEqual(head.requested, { start: 1, end: 2 });
+  assert.equal(head.lines[0].text, "export function Page() {");
+  assert.equal(head.lines[1].text, "  const label = \"삭제\";");
+
+  const tail = JSON.parse(run(["inspect-range", file, "--tail", "2", "--json"]));
+  assert.deepEqual(tail.requested, { start: 3, end: 4 });
+  assert.equal(tail.lines[0].text, "  return <button>{label}</button>;");
+  assert.equal(tail.lines[1].text, "}");
+
   const edit = JSON.parse(run(["edit", file, "--find-lines", "2", "--replace", "  const label = \"Delete\";\n", "--write", "--json"]));
   assert.equal(edit.written, true);
   assert.match(readFileSync(file, "utf8"), /"Delete"/);

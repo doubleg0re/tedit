@@ -23,7 +23,7 @@ Current anchors:
 
 - P0: done in `feat: expose MCP flow facade`.
 - P1-P5: implemented as a fixture-proven TS module refactor engine in `src/ts-module-refactor.ts`, exposed through `refactor` MCP kinds, integrated with `apply_plan`, and covered by `tests/ts-module-refactor.test.mjs`.
-- P6: intentionally not started; it is the dogfood phase that uses the new engine to split real `src/mcp-tools.ts`.
+- P6: in progress. The first dogfood pass extracted `TEDIT_MCP_ALL_TOOLS` registry entries into `src/mcp/tools/*`; handler/helper moves remain.
 
 ## Roadmap
 
@@ -147,6 +147,14 @@ Acceptance:
 ### P6 — Real `mcp-tools.ts` split
 
 Purpose: use the engine on the real 135KB file.
+
+Current dogfood status: registry entries have been split into `src/mcp/tools/*` factories while handlers/helpers remain in `src/mcp-tools.ts`. This keeps tool names stable and avoids runtime cycles before moving handler closures.
+
+Dogfood gaps found:
+
+- `extract_array_entries` only moved object-literal registry entries; call-expression entries such as `singleStepTool({ name: "wrap", ... })` still needed manual recovery. Next fix: support named call-expression entries by reading the object argument's literal `name` field.
+- `search_text` + `inspect_range` now cover most `grep`/`sed`/`head`/`tail` checks through `lines`, `head`, and `tail` inputs.
+- Typecheck diagnostics are returned, and simple TS7006 fixes can use `edit`/`multiedit` with `findRegex`, but there is no diagnostic-driven autofix helper yet.
 
 Target shape:
 

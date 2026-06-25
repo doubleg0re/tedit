@@ -329,9 +329,11 @@ function commandActions(args: ParsedArgs): void {
 }
 
 function commandInspectRange(args: ParsedArgs): void {
-  const [filePath] = requirePositionals(args, 1, "inspect-range <file> --lines N:M [--context N] [--json]");
+  const [filePath] = requirePositionals(args, 1, "inspect-range <file> (--lines N:M | --head N | --tail N) [--context N] [--json]");
   const result = inspectRange(filePath, {
-    lines: requiredStringFlag(args, "lines", "inspect-range requires --lines N:M."),
+    ...(stringFlag(args, "lines") === undefined ? {} : { lines: stringFlag(args, "lines") }),
+    ...(positiveIntegerFlag(args, "head") === undefined ? {} : { head: positiveIntegerFlag(args, "head") }),
+    ...(positiveIntegerFlag(args, "tail") === undefined ? {} : { tail: positiveIntegerFlag(args, "tail") }),
     context: nonnegativeIntegerFlag(args, "context") ?? 0,
   });
   output(args, result, formatInspectedLines(result.lines as unknown[]));

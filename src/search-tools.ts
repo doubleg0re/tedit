@@ -25,7 +25,9 @@ type SourceRange = {
 };
 
 type InspectRangeOptions = {
-  lines: string;
+  lines?: string;
+  head?: number;
+  tail?: number;
   context?: number;
 };
 
@@ -76,7 +78,7 @@ const TEXT_EXTENSIONS = new Set([
 export function inspectRange(filePath: string, options: InspectRangeOptions): JsonRecord {
   const source = readFileSync(filePath, "utf8");
   const lines = source.split(/\r?\n/);
-  const requested = parseLineRange(options.lines);
+  const requested = inspectRequestedRange(lines, options);
   const context = Math.max(0, options.context ?? 0);
   const expanded: LineRange = {
     start: Math.max(1, requested.start - context),
@@ -104,6 +106,21 @@ export function inspectRange(filePath: string, options: InspectRangeOptions): Js
       { tool: "edit", arguments: { file: filePath, findLines: `${requested.start}:${requested.end}`, replace: "<replacement including trailing newline>" } },
     ],
   };
+}
+
+function inspectRequestedRange(lines: string[], options: InspectRangeOptions): LineRange {
+  const requestedModes = [options.lines !== undefined, options.head !== undefined, options.tail !== undefined].filter(Boolean).length;
+  if (requestedModes !== 1) throw new Error("inspect_range requires exactly one of lines, head, or tail.");
+  if (options.lines !== undefined) return parseLineRange(options.lines);
+
+  const lineCount = lines.length > 1 && lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
+  if (options.head !== undefined) {
+    const count = Math.max(0, Math.min(lineCount, options.head));
+    return { start: 1, end: count };
+  }
+
+  const count = Math.max(0, Math.min(lineCount, options.tail ?? 0));
+  return { start: Math.max(1, lineCount - count + 1), end: lineCount };
 }
 
 export function searchText(options: SearchTextOptions): JsonRecord {

@@ -1,0 +1,108 @@
+import { z } from "zod/v4";
+import type { TeditMcpTool } from "../../mcp-tools.js";
+
+// ponytail: explicit any avoids runtime imports from the source module; tighten when dependency typing matters.
+export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
+  const { fileSchema, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runPatchTool, runRenameFileTool, writeFlagSchema } = deps;
+  return [
+    {
+      name: "edit",
+      title: "Universal Edit",
+      description: "Safer replacement for routine Edit calls: exact, fuzzy, anchor, regex, or line-range edits with dry-run, git-aware write policy, parse verification, and retry hints.",
+      category: "edit",
+      aliases: ["safe_edit", "base_edit", "edit.replace"],
+      bestFor: ["single localized text/code edit", "retryable exact/fuzzy match", "line-range or regex replacement"],
+      inputSchema: {
+        file: fileSchema,
+        find: z.string().optional(),
+        findExact: z.string().optional(),
+        findFuzzy: z.string().optional(),
+        findAnchorAfter: z.string().optional(),
+        contains: z.string().optional(),
+        findRegex: z.string().optional(),
+        flags: z.string().optional(),
+        findLines: z.string().optional(),
+        replace: z.string().optional(),
+        insertBefore: z.string().optional(),
+        insertAfter: z.string().optional(),
+        delete: z.boolean().optional(),
+        replaceAll: z.boolean().optional(),
+        expectCount: z.number().int().nonnegative().optional(),
+        noFuzzyFallback: z.boolean().optional(),
+        ...writeFlagSchema,
+      },
+      handler: runEditTool,
+    },
+    {
+      name: "multiedit",
+      title: "Atomic Multiedit",
+      description: "Safer replacement for multiple Edit calls: apply many universal base edits atomically across one or more files with parse verification.",
+      category: "edit",
+      aliases: ["multi_edit", "bulk_edit"],
+      bestFor: ["coordinated repeated edits", "same-file sequential edits", "cross-file atomic text changes"],
+      inputSchema: {
+        edits: z.array(z.record(z.string(), z.unknown())).optional(),
+        input: z.string().optional().describe("Raw multiedit JSON string; use when forwarding existing CLI input."),
+        ...writeFlagSchema,
+      },
+      handler: runMultieditTool,
+    },
+    {
+      name: "patch",
+      title: "Patch",
+      description: "Safer replacement for patch/apply_patch when the change is already a diff: apply unified diff or Codex apply-patch input atomically with verification.",
+      category: "edit",
+      aliases: ["apply_patch", "unified_diff"],
+      bestFor: ["large generated diffs", "file additions/deletions/renames", "Codex apply-patch envelopes"],
+      inputSchema: {
+        patch: z.string().min(1).describe("Unified diff or apply-patch envelope."),
+        ...writeFlagSchema,
+      },
+      handler: runPatchTool,
+    },
+    {
+      name: "flow",
+      title: "Flow",
+      description: "Run a multi-step edit transaction. Pass JSON steps/flow, or pass CLI-style chain with optional file for single-file chain syntax.",
+      category: "workflow",
+      aliases: ["chain", "workflow"],
+      bestFor: ["find-then-mutate edits", "CLI-style chain from MCP", "coordinated structural edits"],
+      inputSchema: {
+        file: fileSchema.optional().describe("Target file for single-file CLI-style chain input."),
+        steps: z.array(z.record(z.string(), z.unknown())).optional().describe("Workspace-flow steps. Use for JSON-native MCP calls."),
+        flow: z.array(z.record(z.string(), z.unknown())).optional().describe("Alias for steps."),
+        chain: z.union([z.string(), z.array(z.string())]).optional().describe("CLI-style chain, either a shell-like string or argv token array. With file, uses `tedit chain <file> ...`; without file, uses workspace-chain syntax."),
+        params: z.record(z.string(), z.unknown()).optional().describe("Optional flow parameters."),
+        ...writeFlagSchema,
+      },
+      handler: runFlowTool,
+    },
+    {
+      name: "delete_file",
+      title: "Delete File",
+      description: "Delete one existing file through tedit's atomic workspace transaction and write policy. Use patch for coordinated delete+edit batches.",
+      category: "edit",
+      aliases: ["file_delete", "remove_file"],
+      bestFor: ["deleting generated files", "small rollback cleanup", "dry-run delete confirmation"],
+      inputSchema: {
+        file: fileSchema,
+        ...writeFlagSchema,
+      },
+      handler: runDeleteFileTool,
+    },
+    {
+      name: "rename_file",
+      title: "Rename File",
+      description: "Rename one existing file through tedit's atomic workspace transaction and write policy. Use patch for coordinated rename+edit batches.",
+      category: "edit",
+      aliases: ["file_rename", "move_file"],
+      bestFor: ["renaming generated files", "moving one file", "dry-run rename confirmation"],
+      inputSchema: {
+        file: fileSchema,
+        to: z.string().min(1).describe("Destination file path."),
+        ...writeFlagSchema,
+      },
+      handler: runRenameFileTool,
+    }
+  ] satisfies readonly TeditMcpTool[];
+}
