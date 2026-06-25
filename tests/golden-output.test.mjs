@@ -214,7 +214,7 @@ test("golden: search-text detailed output contract", () => {
 test("golden: edit compact mutation output contract", () => {
   const workspace = createWorkspace();
   const compact = runCompactJson([
-    "edit", "src/Page.tsx", "--find", "삭제", "--replace", "Delete", "--replace-all", "--dry-run", "--diff-mode", "stats",
+    "edit", "src/Page.tsx", "--find", "삭제", "--replace", "Delete", "--replace-all", "--dry-run",
   ], workspace);
 
   assert.deepEqual(compact, {
@@ -232,7 +232,13 @@ test("golden: edit compact mutation output contract", () => {
       diffAvailable: true,
       hunks: 1,
       bytesDelta: 8,
-      diff: { mode: "stats", bytes: 245, hunks: 1, bytesDelta: 8 },
+      diff: {
+        mode: "inline",
+        bytes: 245,
+        hunks: 1,
+        bytesDelta: 8,
+        preview: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ -1,4 +1,4 @@\n export function Page() {\n-  const label = \"삭제\";\n-  return <button aria-label=\"삭제\">{label}</button>;\n+  const label = \"Delete\";\n+  return <button aria-label=\"Delete\">{label}</button>;\n }\n",
+      },
     }],
     path: "src/Page.tsx",
     parse_verified: true,

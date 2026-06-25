@@ -23,5 +23,10 @@ test("edit workflow comparison reports tedit and plain workload metrics", () => 
     assert.ok(scenario.plain.medianOperations >= 1);
     assert.ok(scenario.tedit.medianEstimatedTokens > 0);
     assert.ok(scenario.plain.medianEstimatedTokens > 0);
+    assert.equal(typeof scenario.tedit.medianDetailDescriptors, "number");
+    assert.equal(typeof scenario.tedit.medianDetailReads, "number");
+    assert.equal(typeof scenario.tedit.medianDetailReadBytes, "number");
+    assert.equal(typeof scenario.plain.medianDetailDescriptors, "number");
+    assert.equal(typeof scenario.plain.medianDetailReads, "number");
   }
 });

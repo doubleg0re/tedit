@@ -2096,8 +2096,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(result.structuredContent.parse_skip_reason, "unsupported_extension");
     assert.equal(result.structuredContent.files[0].parse_skipped, true);
     assert.equal(result.structuredContent.files[0].diffAvailable, true);
-    assert.equal(result.structuredContent.files[0].diff.mode, "stats");
-    assert.equal(result.structuredContent.files[0].diff.preview, undefined);
+    assert.equal(result.structuredContent.files[0].diff.mode, "inline");
+    assert.match(result.structuredContent.files[0].diff.preview, /\+new value/);
     assert.equal(result.structuredContent.diff, undefined);
     assert.equal(result.structuredContent.write_policy, undefined);
     assert.equal(result.structuredContent.next, undefined);
@@ -2134,7 +2134,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(multieditResult.structuredContent.files.every((item) => item.written === undefined));
     assert.ok(multieditResult.structuredContent.files.every((item) => item.status === undefined));
     assert.ok(multieditResult.structuredContent.files.every((item) => item.diffAvailable === true));
-    assert.ok(multieditResult.structuredContent.files.every((item) => item.diff.mode === "stats"));
+    assert.ok(multieditResult.structuredContent.files.every((item) => item.diff.mode === "inline"));
     const multieditText = JSON.parse(multieditResult.content[0].text);
     assert.deepEqual(multieditText, multieditResult.structuredContent);
     assert.equal(multieditText.results, undefined);
@@ -2142,7 +2142,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(multieditText.write_policy, undefined);
     assert.ok(multieditText.files.every((item) => item.file === undefined));
     assert.ok(multieditText.files.every((item) => item.change === "modified"));
-    assert.ok(multieditText.files.every((item) => item.diff.mode === "stats"));
+    assert.ok(multieditText.files.every((item) => item.diff.mode === "inline"));
     assert.equal(readFileSync(file, "utf8"), "# Title\nnew value\n");
 
     const detailedEdit = await client.callTool({
@@ -3001,9 +3001,9 @@ test("cli non-tty defaults to compact output and detailed override keeps legacy 
   assert.equal(compact.files[0].path, file);
   assert.equal(compact.files[0].status, undefined);
   assert.equal(compact.files[0].diffAvailable, true);
-  assert.equal(compact.files[0].diff.mode, "stats");
+  assert.equal(compact.files[0].diff.mode, "inline");
   assert.equal(compact.files[0].diff.hunks, 1);
-  assert.equal(compact.files[0].diff.preview, undefined);
+  assert.match(compact.files[0].diff.preview, /\+new/);
   assert.equal(compact.diff, undefined);
   assert.deepEqual(compact.next, ["rerun with write=true to apply"]);
   assert.equal(readFileSync(file, "utf8"), "old\n");
@@ -3035,8 +3035,8 @@ test("config file can choose the default CLI output mode", () => {
   assert.equal(compact.files[0].change, "modified");
   assert.equal(compact.files[0].persisted, false);
   assert.equal(compact.files[0].diffAvailable, true);
-  assert.equal(compact.files[0].diff.mode, "stats");
-  assert.equal(compact.files[0].diff.preview, undefined);
+  assert.equal(compact.files[0].diff.mode, "inline");
+  assert.match(compact.files[0].diff.preview, /\+new/);
 });
 
 test("compact diffMode auto inlines small diffs and spills large write diffs to artifacts", () => {

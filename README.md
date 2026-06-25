@@ -299,11 +299,12 @@ is a deterministic follow-up such as applying a dry-run. Compact discovery
 output preserves primary payloads such as
 `matches`, `node`, `actions`, `rules`, and parse verification fields. Pass
 `diffMode: "off" | "stats" | "auto" | "full"` to control compact diff
-verbosity; the default is `stats` so routine MCP edits return counts instead of
-inline patches. `auto` inlines small diffs and returns a truncated preview for
+verbosity; the default is `auto`, which inlines small diffs so agents can see
+what changed without another round trip. `stats` keeps counts only. `auto`
+returns a truncated preview for
 large dry-runs; large writes also save the full diff under `.tedit-cache/diffs`
 and return `files[].diff.path`. Compact output stores individual non-core fields
-larger than `detailFieldMaxBytes` (default 1024 JSON bytes) under
+larger than `detailFieldMaxBytes` (default 4096 JSON bytes) under
 `.tedit-cache/details` and returns a `$detail` descriptor; call `read_detail`
 with the descriptor `id`/`file`, optional `path`, `grep`, `lines`, or
 `limitBytes` to fetch only the needed slice. Pass `output: "detailed"` or
@@ -868,8 +869,8 @@ directory. `output.defaultMode` controls the CLI default when `--output`,
 `TEDIT_OUTPUT`, and `--json` are not set. Use `compact` for agent-first
 loops, `detailed` for legacy full-diff terminal output, or `auto` to keep
 the built-in TTY/non-TTY behavior. `output.diffMode` controls compact diff
-payloads: `off` omits them, `stats` keeps counts only (the default), `auto`
-inlines small diffs and spills large write diffs to artifacts, and `full`
+payloads: `off` omits them, `auto` inlines small diffs and spills large write
+diffs to artifacts (the default), `stats` keeps counts only, and `full`
 includes full inline text.
 
 ```json
@@ -889,7 +890,7 @@ includes full inline text.
   "defaultWrite": "auto",
   "output": {
     "defaultMode": "compact",
-    "diffMode": "stats",
+    "diffMode": "auto",
     "inlineDiffMaxBytes": 8000,
     "inlineDiffMaxHunks": 10,
     "diffArtifactDir": ".tedit-cache/diffs"

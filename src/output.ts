@@ -61,7 +61,7 @@ type DiffPayload = {
   artifactError?: string;
 };
 
-const DEFAULT_DIFF_MODE: DiffMode = "stats";
+const DEFAULT_DIFF_MODE: DiffMode = "auto";
 const DEFAULT_INLINE_DIFF_MAX_BYTES = 8_000;
 const DEFAULT_INLINE_DIFF_MAX_HUNKS = 10;
 const DEFAULT_DIFF_ARTIFACT_DIR = ".tedit-cache/diffs";
@@ -327,6 +327,7 @@ function writeDetailArtifact(field: string, value: unknown, bytes: number, optio
     id,
     field,
     bytes,
+    summary: detailSummary(value),
     ...(Array.isArray(value) ? { count: value.length } : {}),
     path: artifactPath,
     relPath: relative(process.cwd(), artifactPath) || basename(artifactPath),
@@ -358,12 +359,22 @@ function detailPreview(value: unknown): unknown {
   return compactPreviewValue(value);
 }
 
+function detailSummary(value: unknown): string {
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}; preview shows first ${Math.min(3, value.length)}`;
+  if (typeof value === "string") return `${Buffer.byteLength(value, "utf8")} byte string`;
+  if (value && typeof value === "object") {
+    const keys = Object.keys(value as JsonRecord);
+    return `${keys.length} key object${keys.length > 0 ? `: ${keys.slice(0, 5).join(", ")}` : ""}`;
+  }
+  return typeof value;
+}
+
 function compactPreviewValue(value: unknown): unknown {
   if (typeof value === "string") return value.length > 160 ? value.slice(0, 157) + "..." : value;
   if (!value || typeof value !== "object") return value;
   if (Array.isArray(value)) return { count: value.length, preview: value.slice(0, 3).map(compactPreviewValue) };
   const record = value as JsonRecord;
-  const keys = ["id", "name", "kind", "type", "file", "path", "summary", "count", "range", "line", "lineRange"];
+  const keys = ["id", "name", "kind", "type", "file", "path", "summary", "count", "line", "column", "range", "lineRange", "match", "value", "preview"];
   const out: JsonRecord = {};
   for (const key of keys) if (record[key] !== undefined) out[key] = compactPreviewValue(record[key]);
   return Object.keys(out).length > 0 ? out : Object.fromEntries(Object.entries(record).slice(0, 3).map(([key, item]) => [key, compactPreviewValue(item)]));

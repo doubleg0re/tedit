@@ -19,6 +19,9 @@ test("dogfood benchmark covers fixed agent adoption scenarios", () => {
   assert.ok(result.checks.includes("PatchAndFileWrite"));
   assert.ok(result.checks.includes("RecoveryAndGuardrails"));
   assert.ok(result.metrics.compactResponses >= 10);
+  assert.equal(typeof result.metrics.detailDescriptors, "number");
+  assert.equal(typeof result.metrics.detailReads, "number");
+  assert.equal(typeof result.metrics.detailReadBytes, "number");
   assert.ok(result.metrics.retryHints >= 2);
   assert.equal(result.metrics.parseGuardrails, 1);
   assert.ok(result.metrics.maxCompactBytes < 12000);

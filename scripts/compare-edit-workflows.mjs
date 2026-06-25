@@ -44,7 +44,7 @@ const results = scenarios.map(runScenario);
 const summary = {
   ok: true,
   runs,
-  tokenEstimateMethod: "ceil((recorded input bytes + recorded output bytes) / 4); proxy only, not model usage",
+  tokenEstimateMethod: "ceil((recorded input bytes + recorded output bytes + read_detail bytes) / 4); proxy only, not model usage",
   timingMethod: "local wall-clock time around each command/tool-like operation; not model latency",
   scenarios: results,
 };
@@ -103,8 +103,6 @@ function runTeditKnownSingleEdit(workspace, recorder) {
     "timeout: 5000",
     "--write",
     "--no-backup",
-    "--diff-mode",
-    "stats",
   ]);
   assert.equal(result.ok, true);
   assert.equal(result.changedCount, 1);
@@ -126,9 +124,9 @@ function runPlainKnownSingleEdit(workspace, recorder) {
   assert.match(readFileSync(file, "utf8"), /timeout: 5000/);
 }
 
-function detailValue(value) {
+function detailValue(value, recorder) {
   if (!value || value.$detail !== true || typeof value.path !== "string") return value;
-  return JSON.parse(readFileSync(value.path, "utf8")).value;
+  return recorder?.detail(value) ?? JSON.parse(readFileSync(value.path, "utf8")).value;
 }
 
 function runTeditBulkTextReplace(workspace, recorder, expected) {
@@ -143,7 +141,7 @@ function runTeditBulkTextReplace(workspace, recorder, expected) {
     "Delete",
   ]);
   assert.equal(search.ok, true);
-  const multiedit = detailValue(search.multiedit);
+  const multiedit = detailValue(search.multiedit, recorder);
   assert.equal(multiedit.edits.length, expected.files);
 
   const write = recorder.tedit([
@@ -151,8 +149,6 @@ function runTeditBulkTextReplace(workspace, recorder, expected) {
     "--from-stdin",
     "--write",
     "--no-backup",
-    "--diff-mode",
-    "stats",
   ], { input: JSON.stringify(multiedit) });
   assert.equal(write.ok, true);
   assert.equal(write.writtenCount, expected.files);
@@ -304,6 +300,7 @@ function assertBulkTextReplaced(workspace) {
 
 function createRecorder(workspace, lane) {
   const steps = [];
+  const detailReads = [];
   return {
     tedit(args, options = {}) {
       const payload = { command: "tedit", args, stdin: options.input ?? "" };
@@ -318,6 +315,12 @@ function createRecorder(workspace, lane) {
       const elapsedMs = performance.now() - started;
       const raw = result.stdout || result.stderr;
       const outputBytes = byteLength(raw);
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = undefined;
+      }
       steps.push({
         lane,
         name: args[0],
@@ -325,10 +328,29 @@ function createRecorder(workspace, lane) {
         inputBytes,
         outputBytes,
         elapsedMs,
+        detailDescriptors: countDetailDescriptors(parsed),
       });
       const expectedStatus = options.expectStatus ?? 0;
       assert.equal(result.status, expectedStatus, `${args.join(" ")}\n${raw}`);
-      return JSON.parse(raw);
+      return parsed ?? JSON.parse(raw);
+    },
+    detail(descriptor) {
+      if (!descriptor || descriptor.$detail !== true || typeof descriptor.path !== "string") return descriptor;
+      const payload = { command: "read_detail", id: descriptor.id ?? "", path: descriptor.path };
+      const inputBytes = byteLength(JSON.stringify(payload));
+      const started = performance.now();
+      const raw = readFileSync(descriptor.path, "utf8");
+      const elapsedMs = performance.now() - started;
+      const outputBytes = byteLength(raw);
+      detailReads.push({
+        lane,
+        name: "read_detail",
+        status: 0,
+        inputBytes,
+        outputBytes,
+        elapsedMs,
+      });
+      return JSON.parse(raw).value;
     },
     plain(name, payload, fn) {
       const inputBytes = byteLength(JSON.stringify({ operation: name, ...payload }));
@@ -349,16 +371,23 @@ function createRecorder(workspace, lane) {
     finish(workspacePath) {
       const inputBytes = sum(steps.map((step) => step.inputBytes));
       const outputBytes = sum(steps.map((step) => step.outputBytes));
-      const elapsedMs = sum(steps.map((step) => step.elapsedMs));
+      const detailInputBytes = sum(detailReads.map((step) => step.inputBytes));
+      const detailOutputBytes = sum(detailReads.map((step) => step.outputBytes));
+      const elapsedMs = sum(steps.map((step) => step.elapsedMs)) + sum(detailReads.map((step) => step.elapsedMs));
       return {
         workspace: keepWorkspaces ? workspacePath : undefined,
-        operations: steps.length,
+        operations: steps.length + detailReads.length,
         inputBytes,
         outputBytes,
+        detailReadInputBytes: detailInputBytes,
+        detailReadOutputBytes: detailOutputBytes,
+        detailReadBytes: detailInputBytes + detailOutputBytes,
         elapsedMs,
-        estimatedTokens: estimateTokens(inputBytes + outputBytes),
+        estimatedTokens: estimateTokens(inputBytes + outputBytes + detailInputBytes + detailOutputBytes),
+        detailDescriptors: sum(steps.map((step) => step.detailDescriptors ?? 0)),
+        detailReads: detailReads.length,
         failedSteps: steps.filter((step) => step.status !== 0).length,
-        stepNames: steps.map((step) => step.name),
+        stepNames: [...steps.map((step) => step.name), ...detailReads.map((step) => step.name)],
       };
     },
   };
@@ -371,10 +400,20 @@ function summarizeLane(items) {
     medianMs: round(median(items.map((item) => item.elapsedMs))),
     medianInputBytes: Math.round(median(items.map((item) => item.inputBytes))),
     medianOutputBytes: Math.round(median(items.map((item) => item.outputBytes))),
+    medianDetailReadBytes: Math.round(median(items.map((item) => item.detailReadBytes))),
     medianEstimatedTokens: Math.round(median(items.map((item) => item.estimatedTokens))),
+    medianDetailDescriptors: Math.round(median(items.map((item) => item.detailDescriptors))),
+    medianDetailReads: Math.round(median(items.map((item) => item.detailReads))),
     failedSteps: Math.round(median(items.map((item) => item.failedSteps))),
     stepNames: items[0]?.stepNames ?? [],
   };
+}
+
+function countDetailDescriptors(value) {
+  if (!value || typeof value !== "object") return 0;
+  if (Array.isArray(value)) return sum(value.map(countDetailDescriptors));
+  if (value.$detail === true) return 1;
+  return sum(Object.values(value).map(countDetailDescriptors));
 }
 
 function compactEnv() {

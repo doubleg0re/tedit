@@ -9,6 +9,9 @@ const workspace = mkdtempSync(join(tmpdir(), "tedit-dogfood-benchmark-"));
 const metrics = {
   compactResponses: 0,
   maxCompactBytes: 0,
+  detailDescriptors: 0,
+  detailReads: 0,
+  detailReadBytes: 0,
   retryHints: 0,
   parseGuardrails: 0,
 };
@@ -38,7 +41,7 @@ console.log(JSON.stringify({
 }, null, 2));
 
 function scenarioSearchToMultiedit() {
-  const search = runDetailedJson([
+  const search = runCompactJson([
     "search-text",
     "삭제",
     "src",
@@ -47,20 +50,20 @@ function scenarioSearchToMultiedit() {
     "--multiedit-spec",
     "--replace",
     "Delete",
-    "--json",
   ]);
   assert.equal(search.count, 3);
-  assert.equal(search.multiedit.edits.length, 2);
+  const multiedit = detailValue(search.multiedit);
+  assert.equal(multiedit.edits.length, 2);
 
   const dryRun = runCompactJson(["multiedit", "--from-stdin", "--dry-run"], {
-    input: JSON.stringify(search.multiedit),
+    input: JSON.stringify(multiedit),
   });
   assert.equal(dryRun.ok, true);
   assert.equal(dryRun.changedCount, 2);
   assert.equal(dryRun.writtenCount, 0);
 
   const write = runCompactJson(["multiedit", "--from-stdin", "--write", "--no-backup"], {
-    input: JSON.stringify(search.multiedit),
+    input: JSON.stringify(multiedit),
   });
   assert.equal(write.writtenCount, 2);
   assert.equal(readFileSync(join(workspace, "src", "Page.tsx"), "utf8").includes("삭제"), false);
@@ -176,6 +179,7 @@ function runCompactJson(args, options = {}) {
   metrics.compactResponses++;
   metrics.maxCompactBytes = Math.max(metrics.maxCompactBytes, Buffer.byteLength(raw, "utf8"));
   const body = JSON.parse(raw);
+  metrics.detailDescriptors += countDetailDescriptors(body);
   assert.equal(body.success, undefined);
   return body;
 }
@@ -191,10 +195,27 @@ function runFailCompact(args, options = {}) {
   const raw = result.stderr || result.stdout;
   metrics.compactResponses++;
   metrics.maxCompactBytes = Math.max(metrics.maxCompactBytes, Buffer.byteLength(raw, "utf8"));
+  const body = JSON.parse(raw);
+  metrics.detailDescriptors += countDetailDescriptors(body);
   return {
     status: result.status,
-    body: JSON.parse(raw),
+    body,
   };
+}
+
+function detailValue(value) {
+  if (!value || value.$detail !== true || typeof value.path !== "string") return value;
+  const raw = readFileSync(value.path, "utf8");
+  metrics.detailReads++;
+  metrics.detailReadBytes += Buffer.byteLength(raw, "utf8");
+  return JSON.parse(raw).value;
+}
+
+function countDetailDescriptors(value) {
+  if (!value || typeof value !== "object") return 0;
+  if (Array.isArray(value)) return value.reduce((total, item) => total + countDetailDescriptors(item), 0);
+  if (value.$detail === true) return 1;
+  return Object.values(value).reduce((total, item) => total + countDetailDescriptors(item), 0);
 }
 
 function run(args, options = {}) {

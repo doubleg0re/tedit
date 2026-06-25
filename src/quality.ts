@@ -269,7 +269,7 @@ const DEFAULT_CONFIG: QualityConfig = {
   maxExtractProps: 12,
   defaultWrite: "auto",
   defaultOutput: "auto",
-  diffMode: "stats",
+  diffMode: "auto",
   inlineDiffMaxBytes: 8_000,
   inlineDiffMaxHunks: 10,
   diffArtifactDir: ".tedit-cache/diffs",
