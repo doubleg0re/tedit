@@ -1,7 +1,7 @@
 {
   "name": "tedit",
   "version": "0.1.0",
-  "description": "Tree-aware structural editor for JSX/TSX, with JSON flows for AI agents.",
+  "description": "Agent-native safe code editing toolkit with CLI and MCP workflows.",
   "type": "module",
   "bin": {
     "tedit": "./dist/cli.js",

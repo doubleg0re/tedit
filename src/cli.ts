@@ -1752,6 +1752,7 @@ function formatErrorResult(result: ErrorResult): unknown {
   try {
     return formatAgentResult(result, outputOptions(currentArgs));
   } catch {
+    // Formatting errors should not hide the original command failure.
     return result;
   }
 }

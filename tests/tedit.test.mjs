@@ -1426,6 +1426,37 @@ test("extract uses TypeScript checker inference when AST annotations are not exp
   assert.doesNotMatch(created, /TODO\(tedit\): infer type/);
 });
 
+test("extract imports referenced prop types into the new component", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "UserCard.tsx");
+  const out = join(dir, "components", "CardHeader.tsx");
+  writeFileSync(file, typeReferenceExtractFixture());
+
+  const result = JSON.parse(run(["extract", file, "header", "--to", out, "--name", "CardHeader", "--typecheck", "--write"]));
+  const updated = readFileSync(file, "utf8");
+  const created = readFileSync(out, "utf8");
+
+  assert.deepEqual(result.props.map((prop) => [prop.name, prop.type]), [["user", "User"]]);
+  assert.match(updated, /export type User = \{/);
+  assert.match(created, /import type \{ User \} from "\.\.\/UserCard";/);
+  assert.match(created, /user: User;/);
+});
+
+test("extract rebases imported prop type paths for the new component", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "UserCard.tsx");
+  const out = join(dir, "components", "CardHeader.tsx");
+  writeFileSync(join(dir, "types.ts"), "export type User = { name: string };\n");
+  writeFileSync(file, importedTypeReferenceExtractFixture());
+
+  const result = JSON.parse(run(["extract", file, "header", "--to", out, "--name", "CardHeader", "--write"]));
+  const created = readFileSync(out, "utf8");
+
+  assert.deepEqual(result.props.map((prop) => [prop.name, prop.type]), [["user", "User"]]);
+  assert.match(created, /import type \{ User \} from "\.\.\/types";/);
+  assert.match(created, /user: User;/);
+});
+
 test("extract slot mode leaves slot content at the call site", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "Page.tsx");
@@ -4350,6 +4381,40 @@ export function Page({ pageTitle }: { pageTitle: string }) {
         <span>{isLong}</span>
       </Card>
     </main>
+  );
+}
+`;
+}
+
+function typeReferenceExtractFixture() {
+  return `type User = {
+  name: string;
+};
+
+export function UserCard({ user }: { user: User }) {
+  return (
+    <article>
+      <header>
+        <h2>{user.name}</h2>
+      </header>
+      <p>Profile</p>
+    </article>
+  );
+}
+`;
+}
+
+function importedTypeReferenceExtractFixture() {
+  return `import type { User } from "./types";
+
+export function UserCard({ user }: { user: User }) {
+  return (
+    <article>
+      <header>
+        <h2>{user.name}</h2>
+      </header>
+      <p>Profile</p>
+    </article>
   );
 }
 `;

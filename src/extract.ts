@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, relative } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import traverseModule, { type NodePath, type TraverseOptions } from "@babel/traverse";
 import * as t from "@babel/types";
 import * as recast from "recast";
@@ -77,7 +77,7 @@ export type ExtractResult = {
   export: "named" | "default";
   props: ExtractPropResult[];
   imports: {
-    transferred: Array<{ from: string; named?: string[]; default?: string; namespace?: string }>;
+    transferred: Array<{ from: string; named?: string[]; default?: string; namespace?: string; type?: boolean }>;
     removed_from_source: Array<{ from: string; named?: string[]; default?: string; namespace?: string }>;
     added_to_source: Array<{ from: string; named?: string[]; default?: string }>;
   };
@@ -113,6 +113,8 @@ type ImportedBinding = {
   declaration: t.ImportDeclaration;
   specifier: t.ImportDeclaration["specifiers"][number];
 };
+
+type ImportSpec = ExtractResult["imports"]["transferred"][number];
 
 type FileBinding = {
   name: string;
@@ -292,13 +294,20 @@ export function planExtract(options: ExtractOptions): ExtractPlan {
   const props = [...freeProps, ...slotProps];
   enforceExtractPropsGuardrail(options, source, props);
   const transferredImports = summarizeImports(dedupeImports(usedImports));
+  const propTypeImports = planPropTypeImports({
+    props,
+    importBindings,
+    fileBindings,
+    fromFile: options.from,
+    toFile: options.to,
+  });
   const helperImports = helperPlans.flatMap((plan) => plan.importForNewFile ?? []);
   const newSource = buildExtractedSource({
     name: options.name,
     exportKind,
     shellNode,
     props,
-    imports: [...transferredImports, ...helperImports],
+    imports: [...transferredImports, ...helperImports, ...propTypeImports.imports],
     movedHelpers: helperPlans
       .filter((plan): plan is HelperPlan & { binding: FileBinding; movedSource: string } => !!plan.binding && !!plan.movedSource)
       .sort((a, b) => (a.binding.node.start ?? 0) - (b.binding.node.start ?? 0))
@@ -311,6 +320,7 @@ export function planExtract(options: ExtractOptions): ExtractPlan {
   const removedImports = planUnusedImportRemoval(source, ast, dedupeImports(usedImports), extractionRanges);
   const sourceTransformPatches = [
     ...helperPlans.flatMap((plan) => [plan.sourcePatch, plan.sourcePrefixPatch].filter((patch): patch is SourcePatch => !!patch)),
+    ...propTypeImports.sourcePatches,
     ...removedImports.patches,
     { start: targetNode.start, end: targetNode.end, text: buildCallSite(options.name, freeProps, slotPlans) },
   ];
@@ -1563,12 +1573,84 @@ function summarizeImports(imports: ImportedBinding[]): ExtractResult["imports"][
   }));
 }
 
+function planPropTypeImports(input: {
+  props: ExtractPropResult[];
+  importBindings: Map<string, ImportedBinding>;
+  fileBindings: Map<string, FileBinding>;
+  fromFile: string;
+  toFile: string;
+}): { imports: ImportSpec[]; sourcePatches: SourcePatch[] } {
+  const imports: ImportSpec[] = [];
+  const sourcePatches: SourcePatch[] = [];
+  const seen = new Set<string>();
+
+  for (const prop of input.props) {
+    for (const name of collectTypeReferenceNames(prop.type)) {
+      if (GLOBAL_IDENTIFIERS.has(name) || seen.has(name)) continue;
+      seen.add(name);
+
+      const imported = input.importBindings.get(name);
+      if (imported) {
+        imports.push(importedBindingToTypeImport(imported, input.fromFile, input.toFile));
+        continue;
+      }
+
+      const binding = input.fileBindings.get(name);
+      if (!binding || (binding.kind !== "type" && binding.kind !== "interface" && binding.kind !== "class")) continue;
+      imports.push({ from: relativeImportPath(input.toFile, input.fromFile), named: [name], type: true });
+      if (!binding.exported) sourcePatches.push(buildExportPrefixPatch(binding.node));
+    }
+  }
+
+  return { imports, sourcePatches };
+}
+
+function importedBindingToTypeImport(binding: ImportedBinding, fromFile: string, toFile: string): ImportSpec {
+  const source = rebaseImportSourceForExtract(fromFile, toFile, binding.source);
+  if (binding.kind === "default") return { from: source, default: binding.local, type: true };
+  if (binding.kind === "namespace") return { from: source, namespace: binding.local, type: true };
+  return {
+    from: source,
+    named: [binding.imported === binding.local || !binding.imported ? binding.local : `${binding.imported} as ${binding.local}`],
+    type: true,
+  };
+}
+
+function rebaseImportSourceForExtract(fromFile: string, toFile: string, source: string): string {
+  return source.startsWith(".") ? relativeImportPath(toFile, resolve(dirname(fromFile), source)) : source;
+}
+
+function collectTypeReferenceNames(typeCode: string): string[] {
+  const ast = recast.parse(`type __T = ${typeCode};`, { parser: babelTsParser }) as unknown as t.File;
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const add = (name: string): void => {
+    if (seen.has(name)) return;
+    seen.add(name);
+    names.push(name);
+  };
+
+  traverseAst(ast, {
+    TSTypeReference(path) {
+      const name = typeReferenceBaseName(path.node.typeName);
+      if (name) add(name);
+    },
+  });
+
+  return names;
+}
+
+function typeReferenceBaseName(name: t.TSTypeReference["typeName"]): string | null {
+  if (t.isIdentifier(name)) return name.name;
+  return typeReferenceBaseName(name.left);
+}
+
 function buildExtractedSource(input: {
   name: string;
   exportKind: "named" | "default";
   shellNode: ContainerNode;
   props: ExtractPropResult[];
-  imports: ExtractResult["imports"]["transferred"];
+  imports: ImportSpec[];
   movedHelpers: string[];
   needsReactNode: boolean;
 }): string {
@@ -1655,13 +1737,13 @@ function buildAddImportPatch(source: string, ast: t.File, spec: { from: string; 
   };
 }
 
-function formatImport(spec: { from: string; named?: string[]; default?: string; namespace?: string }): string {
+function formatImport(spec: ImportSpec): string {
   const clauses: string[] = [];
   if (spec.default) clauses.push(spec.default);
   if (spec.namespace) clauses.push(`* as ${spec.namespace}`);
   if (spec.named && spec.named.length > 0) clauses.push(`{ ${spec.named.join(", ")} }`);
   if (clauses.length === 0) return "";
-  return `import ${clauses.join(", ")} from ${JSON.stringify(spec.from)};`;
+  return `import ${spec.type ? "type " : ""}${clauses.join(", ")} from ${JSON.stringify(spec.from)};`;
 }
 
 function relativeImportPath(fromFile: string, toFile: string): string {
