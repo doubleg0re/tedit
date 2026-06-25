@@ -8,7 +8,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const MAX_PACKAGE_BYTES = 2_000_000;
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-const output = execFileSync("npm", ["pack", "--dry-run", "--json"], {
+const dryPack = commandInvocation("npm", ["pack", "--dry-run", "--json"]);
+const output = execFileSync(dryPack.command, dryPack.args, {
   encoding: "utf8",
   env: { ...process.env, FORCE_COLOR: "0" },
 });
@@ -50,8 +51,8 @@ for (const [name, binPath] of Object.entries(pkg.bin ?? {})) {
   recordCheck("bin-packed", true, { bin: name, path });
   recordCheck("bin-shebang", source.startsWith("#!/usr/bin/env node"), { bin: name, path });
   const mode = statSync(path).mode;
-  recordCheck("bin-executable", (mode & 0o111) !== 0, { bin: name, path, mode: mode & 0o777 });
-  recordCheck("packed-bin-executable", (packed.mode & 0o111) !== 0, { bin: name, path, mode: packed.mode });
+  if (process.platform !== "win32") recordCheck("bin-executable", (mode & 0o111) !== 0, { bin: name, path, mode: mode & 0o777 });
+  if (process.platform !== "win32") recordCheck("packed-bin-executable", (packed.mode & 0o111) !== 0, { bin: name, path, mode: packed.mode });
 }
 
 let smoke = {};
@@ -70,7 +71,8 @@ async function smokePackedArtifact() {
   const smoke = {};
   const root = mkdtempSync(join(tmpdir(), "tedit-pack-check-"));
   try {
-    const packOutput = execFileSync("npm", ["pack", "--json", "--pack-destination", root], {
+    const packCommand = commandInvocation("npm", ["pack", "--json", "--pack-destination", root]);
+    const packOutput = execFileSync(packCommand.command, packCommand.args, {
       encoding: "utf8",
       env: { ...process.env, FORCE_COLOR: "0" },
     });
@@ -117,7 +119,8 @@ async function smokePackedArtifact() {
 }
 
 async function smokeMcp(command) {
-  const transport = new StdioClientTransport({ command, args: [], stderr: "pipe" });
+  const invocation = commandInvocation(command, []);
+  const transport = new StdioClientTransport({ command: invocation.command, args: invocation.args, stderr: "pipe" });
   const client = new Client({ name: "tedit-pack-check", version: pkg.version });
   const requiredTools = ["actions", "edit", "multiedit", "patch", "file_write", "inspect_range", "search_text", "verify_file"];
   const smoke = { requiredTools };
@@ -148,16 +151,38 @@ function recordCheck(name, ok, details = {}) {
 }
 
 function runCheckedCommand(check, command, args, options = {}) {
+  const invocation = commandInvocation(command, args);
   try {
-    return execFileSync(command, args, {
+    return execFileSync(invocation.command, invocation.args, {
       encoding: "utf8",
       env: { ...process.env, FORCE_COLOR: "0" },
       ...options,
     });
   } catch (error) {
-    recordCheck(check, false, { command: [command, ...args].join(" "), error: commandError(error) });
+    recordCheck(check, false, { command: [invocation.command, ...invocation.args].join(" "), error: commandError(error) });
     return undefined;
   }
+}
+
+function commandInvocation(command, args) {
+  if (command === "npm" && process.env.npm_execpath) return { command: process.execPath, args: [process.env.npm_execpath, ...args] };
+  if (command === "npx" && process.env.npm_execpath) return { command: process.execPath, args: [process.env.npm_execpath, "exec", ...npxArgsForNpmExec(args)] };
+  if (process.platform === "win32" && (command === "npm" || command === "npx" || command.endsWith(".cmd"))) {
+    return { command: "cmd.exe", args: ["/d", "/s", "/c", command, ...args] };
+  }
+  return { command, args };
+}
+
+function npxArgsForNpmExec(args) {
+  const next = [...args];
+  if (next[0] === "-y") next[0] = "--yes";
+  const packageIndex = next.findIndex((arg) => arg === "--package" || arg === "-p");
+  if (packageIndex >= 0 && next[packageIndex + 1]) {
+    const head = next.slice(0, packageIndex + 2);
+    const tail = next.slice(packageIndex + 2);
+    return [...head, "--", ...tail];
+  }
+  return next.includes("--") ? next : ["--", ...next];
 }
 
 function releaseSmokeResult(ok, smoke) {
