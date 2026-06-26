@@ -26,6 +26,7 @@ test("actions guidance gives agents a stable workflow decision table", () => {
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("hardcoded") && row.first_tool === "scan_strings"));
   assert.equal(guide.mutate_cheatsheet.targets.jsx, "jsx:<selector> or id:jsx:<id>");
   assert.equal(guide.mutate_cheatsheet.examples.jsx_prop["prop.set"].name, "disabled");
+  assert.deepEqual(guide.mutate_cheatsheet.opPrefixes["body.replace"], ["fn:", "method:", "class:"]);
   assert.match(guide.mutate_cheatsheet.boundary, /single file \+ single structural transformation/);
 
   const recoveryCodes = guide.failure_recovery.map((row) => row.code);

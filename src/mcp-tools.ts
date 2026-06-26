@@ -1189,6 +1189,13 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
         ast: "objectKey:<key>, call:<callee>, string:<exact>, contains:<text>, jsxText:<text>, jsxAttr:<name>",
         imports: "omit target",
       },
+      opPrefixes: {
+        "prop.set/prop.remove/class.add/class.remove/class.replace/text.set/text.replace/wrap/remove/rename/append/prepend": ["jsx:", "id:jsx:"],
+        "body.replace": ["fn:", "method:", "class:"],
+        "body.insertBefore/body.insertAfter/declaration.move": ["fn:", "class:", "method:", "prop:", "var:"],
+        "imports.add/imports.remove/imports.rename/imports.move": ["<omit target>"],
+        "ast.replace": ["objectKey:", "call:", "string:", "contains:", "jsxText:", "jsxAttr:", "ast:"],
+      },
       examples: {
         jsx_prop: { file: "src/Page.tsx", target: "jsx:Button", "prop.set": { name: "disabled", value: true } },
         jsx_class: { file: "src/Page.tsx", target: "jsx:h1", "class.add": { className: "tracking-[-0.02em]" } },
