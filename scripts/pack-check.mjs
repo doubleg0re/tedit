@@ -122,7 +122,7 @@ async function smokeMcp(command) {
   const invocation = commandInvocation(command, []);
   const transport = new StdioClientTransport({ command: invocation.command, args: invocation.args, stderr: "pipe" });
   const client = new Client({ name: "tedit-pack-check", version: pkg.version });
-  const requiredTools = ["actions", "edit", "multiedit", "mutate", "patch", "file_write", "inspect_range", "search_text", "verify_file"];
+  const requiredTools = ["actions", "apply_dry_run", "edit", "multiedit", "mutate", "patch", "file_write", "inspect_range", "search_text", "verify_file"];
   const smoke = { requiredTools };
   try {
     await client.connect(transport);

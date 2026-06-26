@@ -1948,6 +1948,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     const toolNames = tools.tools.map((tool) => tool.name);
     assert.deepEqual(toolNames.sort(), [
       "actions",
+      "apply_dry_run",
       "delete_file",
       "edit",
       "file_write",
@@ -1977,6 +1978,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "file_write"));
     assert.ok(tools.tools.some((tool) => tool.name === "flow"));
     assert.ok(tools.tools.some((tool) => tool.name === "mutate"));
+    assert.ok(tools.tools.some((tool) => tool.name === "apply_dry_run"));
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "inspect_range"));
     assert.ok(tools.tools.some((tool) => tool.name === "search_text"));
@@ -2008,6 +2010,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(actionsDiscovery.isError, undefined);
     assert.ok(actionsDiscovery.structuredContent.actions.includes("select"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("apply_dry_run"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("multiedit"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("mutate"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
@@ -2066,6 +2069,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(actionsDiscovery.structuredContent.profiles.current, "agent");
     assert.deepEqual(actionsDiscovery.structuredContent.profiles.agent.sort(), [
       "actions",
+      "apply_dry_run",
       "delete_file",
       "edit",
       "file_write",
@@ -2085,6 +2089,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "verify_file",
     ].sort());
     assert.ok(actionsDiscovery.structuredContent.profiles.agent.includes("mutate"));
+    assert.ok(actionsDiscovery.structuredContent.profiles.agent.includes("apply_dry_run"));
     assert.equal(actionsDiscovery.structuredContent.profiles.agent.includes("jsx_attr"), false);
     assert.equal(actionsDiscovery.structuredContent.profiles.agent.includes("prop_set"), false);
     assert.ok(actionsDiscovery.structuredContent.profiles.all.includes("prop_set"));
@@ -2138,6 +2143,16 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(mutateBadPrefix.isError, true);
     assert.match(mutateBadPrefix.content[0].text, /target prefix/);
+
+    const mutateBadOp = await client.callTool({
+      name: "mutate",
+      arguments: { file: jsxFile, op: "bogus.op", target: "jsx:DailyPlanBody", args: {}, dryRun: true },
+    });
+    assert.equal(mutateBadOp.isError, true);
+    assert.match(mutateBadOp.content[0].text, /Supported ops:/);
+    assert.ok(mutateBadOp.structuredContent.supportedOps.includes("body.replace"));
+    assert.ok(mutateBadOp.structuredContent.supportedOps.includes("ast.replace"));
+    assert.ok(mutateBadOp.structuredContent.suggestions.some((suggestion) => suggestion.includes("body.replace")));
 
     const result = await client.callTool({
       name: "edit",
@@ -2215,6 +2230,15 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.match(detailedEdit.structuredContent.diff, /final value/);
     assert.ok(detailedEdit.structuredContent.write_policy);
     assert.deepEqual(detailedEdit.structuredContent.next, ["rerun with write=true to apply"]);
+    assert.equal(detailedEdit.structuredContent.suggestedActions[0].tool, "apply_dry_run");
+
+    const appliedDryRun = await client.callTool({
+      name: "apply_dry_run",
+      arguments: detailedEdit.structuredContent.suggestedActions[0].arguments,
+    });
+    assert.equal(appliedDryRun.isError, undefined);
+    assert.equal(readFileSync(file, "utf8"), "# Title\nfinal value\n");
+    assert.match(readFileSync(file, "utf8"), /final value/);
 
     const failedEdit = await client.callTool({
       name: "edit",

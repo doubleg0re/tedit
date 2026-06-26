@@ -31,6 +31,7 @@ import { runWorkspaceFlow, type WorkspaceFlowOptions, type WorkspaceFlowStep } f
 import { buildScaffoldSource, listTemplates, loadTemplateSpec, parseParams, type ScaffoldSpec } from "./scaffold.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
 import { applyPostVerify, captureRestorePoints, verifySpecFromInput, type RestorePoint } from "./verify-command.js";
+import { attachDryRunApplySuggestion, loadDryRunApply } from "./dry-run-apply.js";
 import { makeEDIT_TOOLS } from "./mcp/tools/edit.js";
 import { makeGENERATE_TOOLS } from "./mcp/tools/generate.js";
 import { makeDISCOVERY_TOOLS } from "./mcp/tools/discovery.js";
@@ -62,6 +63,19 @@ export type TeditMcpTool = {
 };
 
 type JsonRecord = Record<string, unknown>;
+
+const MUTATE_JSX_OPS = [
+  "prop.set", "prop.remove", "class.add", "class.remove", "class.replace",
+  "text.set", "text.replace", "expr.replace", "expr.wrap", "expr.unwrap", "expr.toTernary", "expr.toShortCircuit",
+  "wrap", "unwrap", "rename", "remove", "append", "prepend", "insertComment",
+] as const;
+const MUTATE_IMPORT_OPS = ["imports.add", "imports.remove", "imports.rename", "imports.move"] as const;
+const MUTATE_TS_OPS = ["body.replace", "body.insertBefore", "body.insertAfter", "declaration.move"] as const;
+const MUTATE_AST_OPS = ["ast.replace"] as const;
+const MUTATE_SUPPORTED_OPS = [...MUTATE_JSX_OPS, ...MUTATE_IMPORT_OPS, ...MUTATE_TS_OPS, ...MUTATE_AST_OPS] as const;
+const MUTATE_JSX_TARGETS = "jsx:<selector> or id:jsx:<id>";
+const MUTATE_TS_TARGETS = "fn:<name>, class:<name>, method:<owner.name>, prop:<name>, or var:<name>";
+const MUTATE_AST_TARGETS = "ast:<selector>, string:<exact>, contains:<text>, jsxText:<text>, jsxAttr:<name>, objectKey:<key>, or call:<callee>";
 
 type VerifyFileEntry = { file: string } & ParseVerificationFields & { warnings: unknown[] };
 
@@ -130,7 +144,7 @@ const valueSchema = z.unknown().describe("Literal value or tedit value spec.");
 const elementSchema = z.unknown().describe("Element shorthand string or tree node spec.");
 
 export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
-  ...makeEDIT_TOOLS({ fileSchema, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runMutateTool, runPatchTool, runRenameFileTool, writeFlagSchema }),
+  ...makeEDIT_TOOLS({ fileSchema, runApplyDryRunTool, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runMutateTool, runPatchTool, runRenameFileTool, writeFlagSchema }),
   ...makeGENERATE_TOOLS({ fileSchema, runCreateFileTool, runFileWriteTool, runNewFileTool, runScaffoldFileTool, runWriteFileTool, writeFlagSchema }),
   ...makeDISCOVERY_TOOLS({ detailFlagSchema, fileSchema, runActionsTool, runHistoryTraceTool, runInspectRangeTool, runReadDetailTool, runScanStringsTool, runSearchTextTool, runSelectTool, runTemplatesTool }),
   ...makeAST_TOOLS({ detailFlagSchema, fileSchema, runAstEditTool, runAstSelectTool, runTsEditTool, runTsMoveTool, runTsSelectTool, writeFlagSchema }),
@@ -152,6 +166,7 @@ const AGENT_MCP_TOOL_NAMES = new Set([
   "edit",
   "multiedit",
   "mutate",
+  "apply_dry_run",
   "patch",
   "flow",
   "delete_file",
@@ -181,7 +196,13 @@ export const TEDIT_MCP_TOOL_NAMES = TEDIT_MCP_ALL_TOOLS.map((tool) => tool.name)
 export function runMcpTool(name: string, args: unknown): unknown {
   const tool = TEDIT_MCP_ALL_TOOLS.find((candidate) => candidate.name === name);
   if (!tool) fail("UNKNOWN_MCP_TOOL", `Unknown tedit MCP tool: ${name}`, { tools: TEDIT_MCP_TOOL_NAMES });
-  return tool.handler(args);
+  return attachDryRunApplySuggestion(name, args, tool.handler(args));
+}
+
+function runApplyDryRunTool(args: unknown): unknown {
+  const input = recordInput(args, "apply_dry_run");
+  const apply = loadDryRunApply(requiredString(input.id, "apply_dry_run requires id."));
+  return runMcpTool(apply.tool, apply.args);
 }
 
 function runCreateFileTool(args: unknown): unknown {
@@ -334,57 +355,144 @@ function runFlowTool(args: unknown): unknown {
 function runMutateTool(args: unknown): unknown {
   const input = recordInput(args, "mutate");
   const file = requiredString(input.file, "mutate requires file.");
-  const op = requiredString(input.op, "mutate requires op.");
-  const target = mutateTarget(input.target, file, op);
+  const op = normalizeMutateOp(requiredString(input.op, "mutate requires op."));
+  if (!MUTATE_SUPPORTED_OPS.includes(op as typeof MUTATE_SUPPORTED_OPS[number])) mutateUnsupportedOp(op);
   const opArgs = recordOrUndefined(input.args, "mutate args") ?? {};
 
-  if (op === "prop.set") {
-    const name = requiredString(opArgs.name, 'mutate op "prop.set" requires args.name. e.g. {"op":"prop.set","target":"jsx:Button","args":{"name":"disabled","value":true}}');
-    const value = mutatePropValue(opArgs);
-    return withAgentFields(runWorkspaceFlow([{ action: "prop.set", file, target, name, value }], writeFlagsFromInput(input)), input);
+  if (isMutateJsxOp(op)) {
+    const target = mutateJsxTarget(input.target, file, op);
+    return withAgentFields(runWorkspaceFlow([mutateJsxStep(file, op, target, opArgs)], writeFlagsFromInput(input)), input);
   }
 
-  fail("INVALID_MCP_INPUT", `mutate unsupported op: ${op}. First supported op is prop.set.`);
+  if (isMutateImportOp(op)) {
+    return withAgentFields(runWorkspaceFlow([{ action: op, file, ...importFields(opArgs) }], writeFlagsFromInput(input)), input);
+  }
+
+  if (op === "ast.replace") return runAstEditTool({ ...input, ...mutateAstTarget(input.target, op), replace: requiredString(pick(opArgs, "replace", "value", "text"), 'mutate op "ast.replace" requires args.replace, args.value, or args.text.') });
+
+  if (op === "body.replace") return runTsEditTool({ ...input, selector: mutateTsSelector(input.target, file, op), action: "replace-body", body: requiredString(pick(opArgs, "body", "value", "code"), 'mutate op "body.replace" requires args.body, args.value, or args.code.') });
+  if (op === "body.insertBefore") return runTsEditTool({ ...input, selector: mutateTsSelector(input.target, file, op), action: "insert-before", insertBefore: requiredString(pick(opArgs, "insertBefore", "body", "value", "code"), 'mutate op "body.insertBefore" requires args.insertBefore, args.body, args.value, or args.code.') });
+  if (op === "body.insertAfter") return runTsEditTool({ ...input, selector: mutateTsSelector(input.target, file, op), action: "insert-after", insertAfter: requiredString(pick(opArgs, "insertAfter", "body", "value", "code"), 'mutate op "body.insertAfter" requires args.insertAfter, args.body, args.value, or args.code.') });
+  if (op === "declaration.move") return runTsMoveTool({ ...input, target: mutateTsSelector(input.target, file, op), before: optionalString(opArgs.before), after: optionalString(opArgs.after), take: opArgs.take, drop: opArgs.drop, confirmTrivia: booleanValue(opArgs.confirmTrivia), sourceHash: optionalString(opArgs.sourceHash), includeTriviaContent: booleanValue(opArgs.includeTriviaContent) });
+
+  mutateUnsupportedOp(op);
 }
 
-function mutatePropValue(args: JsonRecord): unknown {
-  if (args.expr !== undefined && args.value !== undefined) fail("INVALID_MCP_INPUT", 'mutate op "prop.set" accepts only one of args.value or args.expr.');
-  if (args.expr !== undefined) return { type: "expr", code: requiredString(args.expr, 'mutate op "prop.set" args.expr must be a string.') };
-  return args.value === undefined ? true : args.value;
+function normalizeMutateOp(op: string): string {
+  if (op === "replace-body") return "body.replace";
+  if (op === "insert-before") return "body.insertBefore";
+  if (op === "insert-after") return "body.insertAfter";
+  return op;
 }
 
-function mutateTarget(value: unknown, file: string, op: string): string {
-  if (value && typeof value === "object" && !Array.isArray(value) && typeof (value as JsonRecord).id === "string") return mutateTarget(`id:${(value as JsonRecord).id}`, file, op);
-  const raw = requiredString(value, "mutate requires target.");
+function isMutateJsxOp(op: string): op is typeof MUTATE_JSX_OPS[number] {
+  return (MUTATE_JSX_OPS as readonly string[]).includes(op);
+}
+
+function isMutateImportOp(op: string): op is typeof MUTATE_IMPORT_OPS[number] {
+  return (MUTATE_IMPORT_OPS as readonly string[]).includes(op);
+}
+
+function mutateJsxStep(file: string, op: typeof MUTATE_JSX_OPS[number], target: string, args: JsonRecord): WorkspaceFlowStep {
+  if (op === "prop.set") return { action: "prop.set", file, target, name: requiredString(args.name, 'mutate op "prop.set" requires args.name.'), value: propValue(args) };
+  if (op === "prop.remove") return { action: "prop.remove", file, target, name: requiredString(args.name, 'mutate op "prop.remove" requires args.name.') };
+  if (op === "class.add") return { action: "class.add", file, target, classes: classNamesInput(args, 'mutate op "class.add"') };
+  if (op === "class.remove") return { action: "class.remove", file, target, classes: classNamesInput(args, 'mutate op "class.remove"') };
+  if (op === "class.replace") return { action: "class.replace", file, target, from: requiredString(args.from, 'mutate op "class.replace" requires args.from.'), to: requiredString(args.to, 'mutate op "class.replace" requires args.to.') };
+  if (op === "text.set") return { action: "text.set", file, target, ...textSetValue(args) };
+  if (op === "text.replace") return { action: "text.replace", file, target, match: textMatch(args) as WorkspaceFlowStep["match"], with: textReplacement(args) as WorkspaceFlowStep["with"] };
+  if (op === "expr.replace") return { action: "expr.replace", file, target, code: requiredString(args.code, 'mutate op "expr.replace" requires args.code.') };
+  if (op === "expr.wrap") return { action: "expr.wrap", file, target, code: requiredString(args.code, 'mutate op "expr.wrap" requires args.code.') };
+  if (op === "expr.unwrap") return { action: "expr.unwrap", file, target };
+  if (op === "expr.toTernary") return { action: "expr.toTernary", file, target, ...(pick(args, "alternate", "value") === undefined ? {} : { value: String(pick(args, "alternate", "value")) }) };
+  if (op === "expr.toShortCircuit") return { action: "expr.toShortCircuit", file, target };
+  if (op === "wrap") return { action: "wrap", file, target, with: normalizeElementInput(pick(args, "with", "wrapper"), 'mutate op "wrap" requires args.with or args.wrapper.') };
+  if (op === "unwrap") return { action: "unwrap", file, target };
+  if (op === "rename") return { action: "rename", file, target, name: requiredString(pick(args, "to", "name"), 'mutate op "rename" requires args.to or args.name.') };
+  if (op === "remove") return { action: "remove", file, target };
+  if (op === "append") return { action: "append", file, target, element: normalizeElementInput(args.element, 'mutate op "append" requires args.element.') };
+  if (op === "prepend") return { action: "prepend", file, target, element: normalizeElementInput(args.element, 'mutate op "prepend" requires args.element.') };
+  if (op === "insertComment") return { action: "insertComment", file, target, text: requiredString(args.text, 'mutate op "insertComment" requires args.text.'), ...(args.position === undefined ? {} : { position: String(args.position) as WorkspaceFlowStep["position"] }) };
+  mutateUnsupportedOp(op);
+}
+
+function mutateUnsupportedOp(op: string): never {
+  fail("INVALID_MCP_INPUT", `mutate unsupported op: ${op}. Supported ops: ${MUTATE_SUPPORTED_OPS.join(", ")}.`, {
+    supportedOps: [...MUTATE_SUPPORTED_OPS],
+    validTargets: {
+      jsx: MUTATE_JSX_TARGETS,
+      ts: MUTATE_TS_TARGETS,
+      ast: MUTATE_AST_TARGETS,
+      imports: "target omitted",
+    },
+    suggestions: [
+      'Use actions to inspect mutate examples, or use op="prop.set" with target="jsx:Button".',
+      'For TS body replacement use op="body.replace" with target="fn:name" and args.body.',
+      'For AST string replacement use op="ast.replace" with target="objectKey:label" and args.replace.',
+    ],
+  });
+}
+
+function mutateJsxTarget(value: unknown, file: string, op: string): string {
+  if (value && typeof value === "object" && !Array.isArray(value) && typeof (value as JsonRecord).id === "string") return mutateJsxTarget(`id:${(value as JsonRecord).id}`, file, op);
+  const raw = requiredString(value, `mutate op "${op}" requires target.`);
   const [prefix, rest] = splitTargetPrefix(raw);
-  if (!prefix) fail("INVALID_MCP_INPUT", `mutate target prefix is required for ${op}. Use jsx:, id:, fn:, text:, line:, json:, or heading:.`);
-  if (prefix === "id") return mutateIdTarget(rest, file, op);
+  if (!prefix) fail("INVALID_MCP_INPUT", `mutate target prefix is required for ${op}. Valid target prefixes: ${MUTATE_JSX_TARGETS}.`);
   if (prefix === "jsx") {
-    assertJsxMutation(file, op, prefix);
+    assertJsxFile(file, prefix);
     return rest;
   }
-  fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix}: is not valid for ${op} on ${file}.`);
+  if (prefix === "id") {
+    const [route, id] = splitTargetPrefix(rest);
+    if (route === "jsx") {
+      assertJsxFile(file, "id:jsx");
+      return id;
+    }
+  }
+  fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix}: is not valid for ${op} on ${file}. Valid target prefixes: ${MUTATE_JSX_TARGETS}.`, {
+    op,
+    validTargets: MUTATE_JSX_TARGETS,
+    suggestions: [`Use target="jsx:<selector>" or target="id:jsx:<id>" for ${op}.`],
+  });
+}
+
+function mutateTsSelector(value: unknown, file: string, op: string): string {
+  const raw = requiredString(value, `mutate op "${op}" requires target.`);
+  const [prefix] = splitTargetPrefix(raw);
+  if (["fn", "class", "method", "prop", "var"].includes(prefix ?? "")) return raw;
+  fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix ?? "<none>"}: is not valid for ${op} on ${file}. Valid target prefixes: ${MUTATE_TS_TARGETS}.`, {
+    op,
+    validTargets: MUTATE_TS_TARGETS,
+    suggestions: [`Use target="fn:<name>" for function body edits, or call ts_select first.`],
+  });
+}
+
+function mutateAstTarget(value: unknown, op: string): JsonRecord {
+  const raw = requiredString(value, `mutate op "${op}" requires target.`);
+  const [prefix, rest] = splitTargetPrefix(raw);
+  if (prefix === "ast") return { selector: rest };
+  if (prefix === "string") return { string: rest };
+  if (prefix === "contains") return { contains: rest };
+  if (prefix === "jsxText") return { jsxText: rest };
+  if (prefix === "jsxAttr") return { jsxAttr: rest };
+  if (prefix === "objectKey") return { objectKey: rest };
+  if (prefix === "call") return { call: rest };
+  fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix ?? "<none>"}: is not valid for ${op}. Valid target prefixes: ${MUTATE_AST_TARGETS}.`, {
+    op,
+    validTargets: MUTATE_AST_TARGETS,
+    suggestions: [`Use target="objectKey:<key>" for object string values or target="call:<callee>" for call string args.`],
+  });
+}
+
+function assertJsxFile(file: string, prefix: string): void {
+  const ext = extname(file).toLowerCase();
+  if (![".jsx", ".tsx"].includes(ext)) fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix}: is only valid for JSX/TSX files, got ${file}.`);
 }
 
 function splitTargetPrefix(value: string): [string | undefined, string] {
   const index = value.indexOf(":");
   if (index <= 0) return [undefined, value];
   return [value.slice(0, index), value.slice(index + 1)];
-}
-
-function mutateIdTarget(value: string, file: string, op: string): string {
-  const [route, id] = splitTargetPrefix(value);
-  if (route === "jsx") {
-    assertJsxMutation(file, op, "id:jsx");
-    return id;
-  }
-  fail("INVALID_MCP_INPUT", `mutate target prefix id:${route ?? ""} is not valid for ${op} on ${file}.`);
-}
-
-function assertJsxMutation(file: string, op: string, prefix: string): void {
-  const ext = extname(file).toLowerCase();
-  if (![".jsx", ".tsx"].includes(ext)) fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix}: is only valid for JSX/TSX files, got ${file}.`);
-  if (!op.startsWith("prop.")) fail("INVALID_MCP_INPUT", `mutate op ${op} is not supported for target prefix ${prefix}: yet.`);
 }
 
 function flowStepsFromInput(input: JsonRecord): WorkspaceFlowStep[] {
@@ -988,7 +1096,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     read_path: [
       "Use the host/native Read tool for full file contents; tedit does not duplicate plain file reading yet.",
       "Use actions first when unsure; it returns the current profile, default tools, advanced tools, and examples.",
-      "Use select as the common TS/JS/JSX/TSX target discovery facade before choosing edit, ts_edit, or move.",
+      "Use select as the common TS/JS/JSX/TSX target discovery facade before choosing mutate for structural edits or edit for text spans.",
       "Use inspect_range for sed-style line context plus parse status and edit-ready findLines suggestions.",
       "Use search_text for rg/grep-style raw text discovery when the next step is likely a tedit edit.",
       "Use read_detail only when a compact response returns a $detail descriptor for a field you actually need.",
@@ -999,7 +1107,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
     profile: {
       current: teditMcpProfileFromEnv(),
-      default_surface: "Agent profile exposes actions, select, edit, multiedit, patch, delete_file, rename_file, ts_select, ts_edit, ts_move, file_write, inspect_range, search_text, read_detail, and verify_file.",
+      default_surface: "Agent profile exposes actions, select, edit, multiedit, mutate, apply_dry_run, patch, delete_file, rename_file, ts_select, ts_edit, ts_move, file_write, inspect_range, search_text, read_detail, and verify_file.",
       advanced_surface: "Set TEDIT_MCP_PROFILE=all to expose JSX, TS declaration, AST, history, template, extract, plan, and legacy fine-grained tools.",
       refresh_hint: "If actions lists a tool but the host does not expose it as callable, restart or refresh the MCP host; tool schema/name changes are captured only when the host reloads the server.",
     },
@@ -1007,7 +1115,9 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "select for file-type-aware target discovery", 
       "search_text or inspect_range for text/range discovery",
       "edit for one localized change",
+      "mutate for one JSX/TS/import/AST structural change",
       "multiedit for repeated or cross-file changes",
+      "apply_dry_run after reviewing a successful dry-run suggestedAction",
       "delete_file or rename_file for one-file cleanup/moves",
       "verify for optional post-write project checks",
       "file_write for whole-file generation, scaffold mode, or template mode",
@@ -1016,17 +1126,17 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "TEDIT_MCP_PROFILE=all for JSX/TS declaration/AST/history/refactor/template helpers",
     ],
     workflow_guide: [
-      { when: "need file-type-aware target discovery", first_tool: "select", then: "edit, ts_edit, or ts_move from returned hints", reason: "one common facade routes TS/JS declarations, JSX elements, or text fallback" },
+      { when: "need file-type-aware target discovery", first_tool: "select", then: "mutate for structural ops or edit for text spans", reason: "one common facade routes TS/JS declarations, JSX elements, or text fallback" },
       { when: "need target context before editing", first_tool: "search_text", then: "inspect_range or edit", reason: "turn raw text matches into line ranges and edit-ready suggestions" },
-      { when: "one localized replacement/insertion/deletion", first_tool: "edit", then: "rerun with write=true after dry-run if needed", reason: "exact/fuzzy/regex/line strategies plus parser guardrails" },
+      { when: "one localized replacement/insertion/deletion", first_tool: "edit", then: "apply_dry_run from suggestedActions after reviewing dry-run", reason: "exact/fuzzy/regex/line strategies plus parser guardrails" },
       { when: "same change across several places or files", first_tool: "search_text", then: "multiedit", reason: "search_text can emit a grouped multiedit spec; multiedit applies atomically" },
       { when: "already have a generated diff", first_tool: "patch", then: "verify_file for important touched files", reason: "patch accepts unified diff and Codex apply-patch envelopes" },
       { when: "delete or rename one file", first_tool: "delete_file or rename_file", then: "patch for multi-file transactions", reason: "single-file cleanup no longer requires hand-authored patch text" },
       { when: "project-specific validation is needed after write", first_tool: "edit/multiedit/patch with verify", then: "inspect verify stdout/stderr; optionally rollbackOnFail", reason: "repo checks vary, so verification is opt-in per mutation" },
       { when: "create or overwrite a whole file", first_tool: "file_write", then: "verify_file", reason: "mode=write/scaffold/template keeps generation behind write policy and parse verification" },
-      { when: "large plain-TS named function or class edit", first_tool: "ts_select", then: "ts_edit or ts_move", reason: "named declaration selectors avoid brittle old_string ranges and keep braces/trivia mechanical" },
-      { when: "hardcoded JS/TS/JSX strings", first_tool: "scan_strings", then: "ast_select or ast_edit", reason: "AST scanning covers code strings that structural find does not" },
-      { when: "structural JSX/markup mutation", first_tool: "actions with file", then: "TEDIT_MCP_PROFILE=all structural tools or CLI chain", reason: "agent profile stays small; advanced profile exposes fine-grained structural actions" },
+      { when: "large plain-TS named function or class edit", first_tool: "ts_select", then: "mutate body.replace/body.insertBefore/body.insertAfter or ts_edit", reason: "named declaration selectors avoid brittle old_string ranges and keep braces/trivia mechanical" },
+      { when: "hardcoded JS/TS/JSX strings", first_tool: "scan_strings", then: "mutate ast.replace or ast_edit", reason: "AST scanning covers code strings that structural find does not" },
+      { when: "structural JSX/TS/import/AST mutation", first_tool: "mutate", then: "use actions examples when op args are unclear", reason: "single facade covers JSX props/classes/text/nodes, imports, TS body/move, and AST string operations" },
       { when: "need change history before risky edit", first_tool: "history_trace", then: "inspect_range or edit", reason: "history_trace avoids hand-assembling blame/log commands" },
     ],
     failure_recovery: [
@@ -1039,6 +1149,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     edit_loop: [
       { intent: "select target across TS/JS/JSX/TSX", tool: "select", reason: "file-type-aware facade returning normalized matches and follow-up edit hints" },
       { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },
+      { intent: "apply reviewed dry-run", tool: "apply_dry_run", reason: "reuses the stored dry-run args after source-hash verification" },
       { intent: "several coordinated text edits", tool: "multiedit", reason: "atomic application across files and same-file sequential edits" },
       { intent: "already generated diff", tool: "patch", reason: "atomic unified diff/apply-patch input with verification" },
       { intent: "delete one file", tool: "delete_file", reason: "dry-run/write delete without authoring a patch envelope" },
@@ -1050,9 +1161,9 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "must-be-new full file", tool: "create_file", reason: "no-overwrite creation is a safety boundary" },
       { intent: "whole-file generation or scaffold/template", tool: "file_write", required: ["mode"], reason: "write/scaffold/template facade with parser guardrails" },
       { intent: "available project templates", tool: "templates", reason: "lists built-in and .tedit/templates before file_write mode=template" },
-      { intent: "structural JSX/markup mutation", tool: "jsx_select, then jsx_node/jsx_attr/jsx_content/imports", reason: "selector/id based edits avoid brittle text spans" },
+      { intent: "structural JSX/TS/import/AST mutation", tool: "mutate", reason: "selector/id/prefixed target edits avoid brittle text spans while hiding backend-specific tools" },
       { intent: "hardcoded text audit", tool: "scan_strings", reason: "AST scan covers JSX text/attrs plus JS/TS string literals; find remains structural" },
-      { intent: "code AST discovery or one safe string replacement", tool: "ast_select, then ast_edit", reason: "AST shortcuts target common string/object/JSX text replacements" },
+      { intent: "code AST discovery or one safe string replacement", tool: "mutate ast.replace", reason: "AST shortcuts target common string/object/JSX text replacements" },
       { intent: "large TS declaration body edit", tool: "ts_select, then ts_edit", reason: "selector resolves the named declaration and tedit owns the outer braces" },
       { intent: "reorder TS declarations", tool: "ts_move", reason: "dry-run-first source-range move with carried trivia hints and take/drop overrides" },
     ],
@@ -1069,6 +1180,11 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       multiedit: { edits: [{ file: "src/Page.tsx", find: "삭제", replace: "Delete", replaceAll: true, expectCount: 2 }], dryRun: true },
       patch: { patch: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ ...", dryRun: true },
       flow: { file: "src/Page.tsx", chain: "find button as login :: wrap @login div.inline-flex", dryRun: true },
+      mutate_prop: { file: "src/Page.tsx", op: "prop.set", target: "jsx:Button", args: { name: "disabled", value: true }, dryRun: true },
+      mutate_class: { file: "src/Page.tsx", op: "class.replace", target: "jsx:Button", args: { from: "primary", to: "secondary" }, dryRun: true },
+      mutate_ts_body: { file: "src/server.ts", op: "body.replace", target: "fn:startServer", args: { body: "return server.start();" }, dryRun: true },
+      mutate_import: { file: "src/Page.tsx", op: "imports.rename", args: { from: "./old", name: "OldName", to: "NewName" }, dryRun: true },
+      mutate_ast: { file: "src/messages.ts", op: "ast.replace", target: "objectKey:label", args: { replace: "Delete" }, dryRun: true },
       delete_file: { file: "src/generated/LoginButtons.tsx", dryRun: true },
       rename_file: { file: "src/old.ts", to: "src/new.ts", dryRun: true },
       edit_with_verify: { file: "src/Page.tsx", find: "oldLabel", replace: "newLabel", write: true, verify: { cmd: ["npx", "tsc", "-p", "apps/web/tsconfig.json", "--noEmit"], timeoutMs: 30000, rollbackOnFail: false } },

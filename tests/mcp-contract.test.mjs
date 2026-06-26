@@ -16,6 +16,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   const defaultTools = toolsForMcpProfile("agent").map((tool) => tool.name).sort();
   assert.deepEqual(defaultTools, [
     "actions",
+    "apply_dry_run",
     "delete_file",
     "edit",
     "file_write",
@@ -161,6 +162,17 @@ test("mcp default profile tools share compact agent contracts", () => {
   });
   assertMutationContract(edit, workspace.notes, { changedCount: 1, writtenCount: 0, persisted: false });
   assert.equal(edit.next[0], "rerun with write=true to apply");
+  assert.equal(edit.suggestedActions[0].tool, "apply_dry_run");
+
+  const applyDryRun = runMcpTool("apply_dry_run", edit.suggestedActions[0].arguments);
+  assertMutationContract(applyDryRun, workspace.notes, { changedCount: 1, writtenCount: 1, persisted: true });
+  assert.equal(readFileSync(workspace.notes, "utf8"), "# Notes\nstatus: final\n");
+  writeFileSync(workspace.notes, "# Notes\nstatus: draft\n");
+
+  const staleDryRun = runMcpTool("edit", { file: workspace.notes, find: "draft", replace: "stale", dryRun: true, diffMode: "stats" });
+  writeFileSync(workspace.notes, "# Notes\nstatus: changed\n");
+  assert.throws(() => runMcpTool("apply_dry_run", staleDryRun.suggestedActions[0].arguments), (err) => err.code === "DRY_RUN_SOURCE_CHANGED");
+  writeFileSync(workspace.notes, "# Notes\nstatus: draft\n");
 
   const pythonEdit = runMcpTool("edit", {
     file: workspace.python,
@@ -260,6 +272,27 @@ test("mcp default profile tools share compact agent contracts", () => {
   });
   assertMutationContract(flowFromSteps, workspace.notes, { changedCount: 1, writtenCount: 0, persisted: false });
 
+  const mutateClass = runMcpTool("mutate", { file: workspace.mutatePage, op: "class.replace", target: "jsx:Button", args: { from: "old", to: "new" }, write: true, diffMode: "stats" });
+  assertMutationContract(mutateClass, workspace.mutatePage, { changedCount: 1, writtenCount: 1, persisted: true });
+  assert.match(readFileSync(workspace.mutatePage, "utf8"), /className="new"/);
+
+  const mutateTsBody = runMcpTool("mutate", { file: workspace.server, op: "body.replace", target: "fn:startServer", args: { body: 'return "new";' }, write: true, diffMode: "stats" });
+  assertMutationContract(mutateTsBody, workspace.server, { changedCount: 1, writtenCount: 1, persisted: true });
+  assert.match(readFileSync(workspace.server, "utf8"), /return "new";/);
+
+  const mutateImport = runMcpTool("mutate", { file: workspace.mutatePage, op: "imports.rename", args: { from: "./old", name: "OldName", to: "NewName" }, write: true, diffMode: "stats" });
+  assertMutationContract(mutateImport, workspace.mutatePage, { changedCount: 1, writtenCount: 1, persisted: true });
+  assert.match(readFileSync(workspace.mutatePage, "utf8"), /import \{ NewName \} from "\.\/old"/);
+
+  const mutateAst = runMcpTool("mutate", { file: workspace.messages, op: "ast.replace", target: "objectKey:label", args: { replace: "Delete" }, write: true, diffMode: "stats" });
+  assertMutationContract(mutateAst, workspace.messages, { changedCount: 1, writtenCount: 1, persisted: true });
+  assert.match(readFileSync(workspace.messages, "utf8"), /label: "Delete"/);
+
+  assert.throws(
+    () => runMcpTool("mutate", { file: workspace.mutatePage, op: "bogus.op", target: "jsx:Button", args: {}, dryRun: true }),
+    (err) => err.code === "INVALID_MCP_INPUT" && err.details?.supportedOps?.includes("body.replace"),
+  );
+
   const deleted = runMcpTool("delete_file", {
     file: workspace.deleteMe,
     dryRun: true,
@@ -357,6 +390,9 @@ function createWorkspace() {
   const src = join(root, "src");
   mkdirSync(src, { recursive: true });
   const page = join(src, "Page.tsx");
+  const mutatePage = join(src, "Mutate.tsx");
+  const server = join(src, "server.ts");
+  const messages = join(src, "messages.ts");
   const notes = join(root, "notes.md");
   const config = join(root, "config.json");
   const python = join(root, "train.py");
@@ -368,6 +404,9 @@ function createWorkspace() {
   const verifyPass = join(root, "verify-pass.txt");
   const verifyFail = join(root, "verify-fail.txt");
   writeFileSync(page, "export function Page() {\n  return <button>삭제</button>;\n}\n");
+  writeFileSync(mutatePage, "import { OldName } from \"./old\";\nexport function MutatePage() {\n  return <Button className=\"old\">Hello</Button>;\n}\n");
+  writeFileSync(server, "export function startServer() {\n  return \"old\";\n}\n");
+  writeFileSync(messages, "export const messages = { label: \"삭제\" };\n");
   writeFileSync(statePage, `import { useState } from "react";
 
 export function StatePage() {
@@ -413,7 +452,7 @@ export function StatePage() {
   writeFileSync(renameOld, "move me\n");
   writeFileSync(verifyPass, "before\n");
   writeFileSync(verifyFail, "before\n");
-  return { root, src, page, statePage, python, notes, config, generated, deleteMe, renameOld, renameNew, verifyPass, verifyFail };
+  return { root, src, page, mutatePage, server, messages, statePage, python, notes, config, generated, deleteMe, renameOld, renameNew, verifyPass, verifyFail };
 }
 
 function assertMutationContract(result, path, expected) {

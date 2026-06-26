@@ -224,7 +224,7 @@ more useful than raw text.
 
 The default MCP profile is `agent`, which keeps the callable tool list small and intent-oriented:
 
-`actions`, `select`, `edit`, `multiedit`, `mutate`, `patch`, `flow`, `delete_file`,
+`actions`, `select`, `edit`, `multiedit`, `mutate`, `apply_dry_run`, `patch`, `flow`, `delete_file`,
 `rename_file`, `ts_select`, `ts_edit`, `ts_move`, `file_write`,
 `inspect_range`, `search_text`, `read_detail`, `verify_file`, and `refactor`.
 
@@ -239,9 +239,22 @@ MCP tool categories are intent-based, not origin-based: `edit`, `generate`,
 tools keep JSX names because that is the current structural implementation, but
 the product surface is no longer JSX-only.
 
-`mutate` is the default structural edit facade: pass `op`, a prefixed `target`
-such as `jsx:Button` or `id:jsx_1`, and `args`; the first supported op is
-`prop.set`.
+`mutate` is the default structural edit facade: pass `op`, a prefixed `target`,
+and `args`; tedit dispatches to the existing JSX, import, or TS declaration
+backend. Supported families include JSX props/classes/text/expressions/nodes
+(`prop.set`, `class.replace`, `text.set`, `wrap`, `remove`), imports
+(`imports.add`, `imports.rename`), TS declarations (`body.replace`,
+`body.insertBefore`, `declaration.move`), and AST string replacement
+(`ast.replace`). Use `jsx:<selector>` or `id:jsx:<id>` for JSX,
+`fn:<name>`/`class:<name>`/`method:<owner.name>` for TS, `objectKey:<key>` or
+`call:<callee>` for AST string targets, and omit `target` for `imports.*`.
+
+```jsonc
+{ "file": "src/Page.tsx", "op": "prop.set", "target": "jsx:Button", "args": { "name": "disabled", "value": true }, "dryRun": true }
+{ "file": "src/server.ts", "op": "body.replace", "target": "fn:startServer", "args": { "body": "return server.start();" }, "dryRun": true }
+{ "file": "src/Page.tsx", "op": "imports.rename", "args": { "from": "./old", "name": "OldName", "to": "NewName" }, "dryRun": true }
+{ "file": "src/messages.ts", "op": "ast.replace", "target": "objectKey:label", "args": { "replace": "Delete" }, "dryRun": true }
+```
 
 `flow` runs ordered workflow steps from either JSON `steps` or CLI-style `chain`
 text; use it when a find-then-mutate sequence should stay in one transaction.
@@ -262,6 +275,8 @@ loop is:
   files.
 - `mutate` after `select` when one structural target should change without
   choosing a backend-specific JSX/TS tool; use `op`, prefixed `target`, and `args`.
+- `apply_dry_run` when a successful dry-run returns `suggestedActions`; it
+  applies the reviewed change by id after checking source hashes.
 - `delete_file` or `rename_file` for one-file cleanup or moves without
   hand-authoring a patch envelope.
 - `patch` only when the change already exists as a unified diff or apply-patch

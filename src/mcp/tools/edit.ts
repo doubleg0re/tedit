@@ -3,7 +3,7 @@ import type { TeditMcpTool } from "../../mcp-tools.js";
 
 // ponytail: explicit any avoids runtime imports from the source module; tighten when dependency typing matters.
 export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
-  const { fileSchema, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runMutateTool, runPatchTool, runRenameFileTool, writeFlagSchema } = deps;
+  const { fileSchema, runApplyDryRunTool, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runMutateTool, runPatchTool, runRenameFileTool, writeFlagSchema } = deps;
   return [
     {
       name: "edit",
@@ -69,13 +69,25 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
       bestFor: ["one selected structural mutation", "select id then mutate", "agent-facing JSX/TS mutation without choosing backend tools"],
       inputSchema: {
         file: fileSchema,
-        op: z.string().min(1).describe("Dotted operation such as prop.set. The op determines args shape."),
-        target: z.union([z.string().min(1), z.record(z.string(), z.unknown())]).describe("Prefixed target such as jsx:Button or id:jsx_1."),
-        args: z.record(z.string(), z.unknown()).optional().describe("Operation arguments. Shape depends on op."),
+        op: z.string().min(1).describe("Dotted operation such as prop.set, class.add, text.set, wrap, imports.rename, body.replace, declaration.move, or ast.replace."),
+        target: z.union([z.string().min(1), z.record(z.string(), z.unknown())]).optional().describe("Required for JSX/TS/AST ops: jsx:<selector>, id:jsx:<id>, fn:<name>, objectKey:<key>, call:<callee>, etc. Omit for imports.* ops."),
+        args: z.record(z.string(), z.unknown()).optional().describe("Operation arguments. Examples: {name,value} for prop.set, {from,to} for class.replace/imports.rename, {body} for body.replace, {replace} for ast.replace."),
         kind: z.string().optional().describe("Optional validation hint; routing defaults to auto."),
         ...writeFlagSchema,
       },
       handler: runMutateTool,
+    },
+    {
+      name: "apply_dry_run",
+      title: "Apply Dry Run",
+      description: "Apply a previous successful dry-run by id after verifying the source files have not changed.",
+      category: "edit",
+      aliases: ["applyDryRun"],
+      bestFor: ["applying a reviewed dry-run", "avoiding long argument resubmission", "safe dry-run to write handoff"],
+      inputSchema: {
+        id: z.string().min(1).describe("Dry-run id from suggestedActions[0].arguments.id."),
+      },
+      handler: runApplyDryRunTool,
     },
     {
       name: "flow",
