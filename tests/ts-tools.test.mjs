@@ -64,6 +64,15 @@ test("ts-select finds declarations and ts-edit replaces only the block body", ()
   const next = readFileSync(file, "utf8");
   assert.match(next, /return 3/);
   assert.match(next, /const untouched = 1/);
+
+  runTsEdit(file, {
+    selector: "fn:alpha",
+    body: "{\n  return 4;\n}",
+    write: true,
+    noBackup: true,
+  });
+  assert.match(readFileSync(file, "utf8"), /function alpha\(\) \{\n  return 4;\n\}/);
+  assert.doesNotMatch(readFileSync(file, "utf8"), /\{\s*\{/);
 });
 
 test("ts-move carries owned leading trivia and requires confirmation for writes", () => {

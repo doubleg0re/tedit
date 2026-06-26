@@ -410,7 +410,7 @@ function patchForTsEdit(source: string, parsed: ParsedTsSource, target: Internal
         suggestions: ["Use insert-before/insert-after for declarations without a block body.", "Use universal edit for a smaller exact text replacement."],
       });
     }
-    return { start: target.bodyInnerRange.start, end: target.bodyInnerRange.end, text: options.body };
+    return { start: target.bodyInnerRange.start, end: target.bodyInnerRange.end, text: normalizeTsEditBody(options.body) };
   }
 
   const text = ensureDeclarationInsertText(action === "insert-before" ? options.insertBefore : options.insertAfter, source);
@@ -419,6 +419,13 @@ function patchForTsEdit(source: string, parsed: ParsedTsSource, target: Internal
   }
   const end = lineEndIncludingNewline(parsed.lines, target.declarationRange.end);
   return { start: end, end, text };
+}
+
+function normalizeTsEditBody(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return body;
+  // ponytail: accept the common agent mistake of passing the whole block; nested blocks can still be passed as {{...}}.
+  return trimmed.slice(1, -1);
 }
 
 function movePlacement(options: TsMoveOptions): MovePlacement {
