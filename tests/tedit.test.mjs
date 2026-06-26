@@ -2138,6 +2138,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(mutateBadPrefix.isError, true);
     assert.match(mutateBadPrefix.content[0].text, /target prefix/);
+    assert.match(mutateBadPrefix.content[0].text, /Valid prefixes for prop\.set: jsx:, id:jsx:/);
 
     const mutateBadOp = await client.callTool({
       name: "mutate",

@@ -446,9 +446,9 @@ function mutateUnsupportedOp(op: string): never {
 
 function mutateJsxTarget(value: unknown, file: string, op: string): string {
   if (value && typeof value === "object" && !Array.isArray(value) && typeof (value as JsonRecord).id === "string") return mutateJsxTarget(`id:${(value as JsonRecord).id}`, file, op);
-  const raw = requiredString(value, `mutate op "${op}" requires target.`);
+  const raw = requiredString(value, `mutate op "${op}" requires target. Valid prefixes: ${mutateTargetHelp(op).prefixes.join(", ")}.`);
   const [prefix, rest] = splitTargetPrefix(raw);
-  if (!prefix) fail("INVALID_MCP_INPUT", `mutate target prefix is required for ${op}. Valid target prefixes: ${MUTATE_JSX_TARGETS}.`);
+  if (!prefix) mutateTargetFail(op, file, raw, prefix);
   if (prefix === "jsx") {
     assertJsxFile(file, prefix);
     return rest;
@@ -460,26 +460,18 @@ function mutateJsxTarget(value: unknown, file: string, op: string): string {
       return id;
     }
   }
-  fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix}: is not valid for ${op} on ${file}. Valid target prefixes: ${MUTATE_JSX_TARGETS}.`, {
-    op,
-    validTargets: MUTATE_JSX_TARGETS,
-    suggestions: [`Use target="jsx:<selector>" or target="id:jsx:<id>" for ${op}.`],
-  });
+  mutateTargetFail(op, file, raw, prefix);
 }
 
 function mutateTsSelector(value: unknown, file: string, op: string): string {
-  const raw = requiredString(value, `mutate op "${op}" requires target.`);
+  const raw = requiredString(value, `mutate op "${op}" requires target. Valid prefixes: ${mutateTargetHelp(op).prefixes.join(", ")}.`);
   const [prefix] = splitTargetPrefix(raw);
-  if (["fn", "class", "method", "prop", "var"].includes(prefix ?? "")) return raw;
-  fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix ?? "<none>"}: is not valid for ${op} on ${file}. Valid target prefixes: ${MUTATE_TS_TARGETS}.`, {
-    op,
-    validTargets: MUTATE_TS_TARGETS,
-    suggestions: [`Use target="fn:<name>" for function body edits, or call select first.`],
-  });
+  if (mutateTargetHelp(op).prefixes.map((item) => item.replace(/:$/, "")).includes(prefix ?? "")) return raw;
+  mutateTargetFail(op, file, raw, prefix);
 }
 
 function mutateAstTarget(value: unknown, op: string): JsonRecord {
-  const raw = requiredString(value, `mutate op "${op}" requires target.`);
+  const raw = requiredString(value, `mutate op "${op}" requires target. Valid prefixes: ${mutateTargetHelp(op).prefixes.join(", ")}.`);
   const [prefix, rest] = splitTargetPrefix(raw);
   if (prefix === "ast") return { selector: rest };
   if (prefix === "string") return { string: rest };
@@ -488,11 +480,38 @@ function mutateAstTarget(value: unknown, op: string): JsonRecord {
   if (prefix === "jsxAttr") return { jsxAttr: rest };
   if (prefix === "objectKey") return { objectKey: rest };
   if (prefix === "call") return { call: rest };
-  fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix ?? "<none>"}: is not valid for ${op}. Valid target prefixes: ${MUTATE_AST_TARGETS}.`, {
+  mutateTargetFail(op, undefined, raw, prefix);
+}
+
+function mutateTargetHelp(op: string): { prefixes: string[]; examples: string[] } {
+  if (op === "body.replace") return { prefixes: ["fn:", "method:", "class:"], examples: ['target="fn:startServer"', 'target="method:Server.start"'] };
+  if (op === "body.insertBefore" || op === "body.insertAfter" || op === "declaration.move") return { prefixes: ["fn:", "class:", "method:", "prop:", "var:"], examples: ['target="fn:startServer"', 'target="class:Server"'] };
+  if (isMutateJsxOp(op)) return { prefixes: ["jsx:", "id:jsx:"], examples: ['target="jsx:Button"', 'target="id:jsx:<id>"'] };
+  if (op === "ast.replace") return { prefixes: ["objectKey:", "call:", "string:", "contains:", "jsxText:", "jsxAttr:", "ast:"], examples: ['target="objectKey:label"', 'target="call:toast.error"'] };
+  return { prefixes: [], examples: [] };
+}
+
+function mutateTargetFail(op: string, file: string | undefined, raw: string, prefix: string | undefined): never {
+  const help = mutateTargetHelp(op);
+  const suggestion = mutateTargetSuggestion(raw, help.prefixes);
+  fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix ?? "<none>"}: is not valid for ${op}${file ? ` on ${file}` : ""}. Valid prefixes for ${op}: ${help.prefixes.join(", ")}.`, {
     op,
-    validTargets: MUTATE_AST_TARGETS,
-    suggestions: [`Use target="objectKey:<key>" for object string values or target="call:<callee>" for call string args.`],
+    validPrefixes: help.prefixes,
+    examples: help.examples,
+    ...(suggestion ? { didYouMean: suggestion } : {}),
+    suggestions: [
+      ...(suggestion ? [`Did you mean ${suggestion}?`] : []),
+      ...(help.examples[0] ? [`Use ${help.examples[0]} for ${op}.`] : []),
+      "Call select first when the structural target is ambiguous.",
+    ],
   });
+}
+
+function mutateTargetSuggestion(raw: string, prefixes: string[]): string | undefined {
+  const [, rest] = splitTargetPrefix(raw);
+  if (!rest || prefixes.length === 0) return undefined;
+  const prefix = prefixes[0].replace(/:$/, "");
+  return `${prefix}:${rest}`;
 }
 
 function assertJsxFile(file: string, prefix: string): void {
