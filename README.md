@@ -1,16 +1,10 @@
 # tedit
 
-**Stop making agents edit code like it’s Notepad.**
-
-Safer code editing for coding agents.
+**Structure-aware JSX/TSX editing for coding agents.**
 
 Has your agent ever broken a JSX tag, replaced the wrong repeated block, or pasted a full file when it only needed to change one line?
 
-`tedit` is an agent-native safe editing toolkit: search, inspect, edit,
-multiedit, patch, write, refactor, and verify through one CLI and MCP server.
-It keeps ordinary text edits boring, but adds guardrails agents need: exact
-match checks, fuzzy recovery hints, atomic multi-file writes, parser
-verification, compact diffs, and optional post-write commands.
+`tedit` starts with the painful React case: selector-based JSX/TSX edits for props, classes, text, wrappers, imports, and extraction without hand-balancing tags. It also includes the boring safe-edit base agents still need: search, inspect, edit, multiedit, patch, write, refactor, parser verification, compact diffs, and optional post-write commands.
 
 ## Why tedit exists
 
@@ -29,8 +23,8 @@ when the first attempt is wrong.
 
 Current rules:
 
+- `jsx`: `.js`, `.jsx`, `.ts`, `.tsx` structural JSX/TSX edits — the primary wedge
 - `base`: every file, universal `edit`, `write`, `multiedit`, and `patch` primitives with exact, fuzzy, anchor, regex, line-range matching, and lightweight JSON/Markdown verification
-- `jsx`: `.js`, `.jsx`, `.ts`, `.tsx` structural JSX/TSX edits
 - `json`: `.json`, `.jsonl`, `.ndjson`
 - `yaml`: `.yaml`, `.yml`
 - `markdown`: `.md`, `.markdown`, `.mdx`

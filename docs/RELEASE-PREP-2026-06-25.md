@@ -4,11 +4,11 @@ Scope: release-readiness evidence for `tedit@0.1.0`. No publish, tag, PR, or ext
 
 ## Positioning
 
-`tedit` is a tree-aware structural editor for AI agents: safer than ad hoc string scripts, with selector-aware edits, dry-run diffs, parser verification, atomic multi-file edits, and an MCP server over the same engine.
+`tedit` is structure-aware JSX/TSX editing for AI agents, backed by parser-checked safe edits for common project files. The JSX/TSX selector workflow is the wedge; edit/multiedit/patch, dry-run diffs, parser verification, atomic writes, and MCP setup are the base layer.
 
 Primary users:
 
-- Agent developers who need reliable edits in JSX/TSX, TS/JS, JSON, Markdown, and adjacent source/document formats.
+- Agent developers who need reliable JSX/TSX structural edits, with safe text/patch workflows for TS/JS, JSON, Markdown, and adjacent project files.
 - MCP host users who want an installed `tedit-mcp` server rather than local one-off scripts.
 
 ## Package
@@ -23,7 +23,7 @@ Primary users:
 
 - PASS `npm run typecheck` — TypeScript check completed.
 - PASS `npm run lint` — typecheck-backed lint completed.
-- PASS `npm test` — 205/205 tests passed.
+- PASS `npm test` — 227/227 tests passed.
 - PASS `npm run release:smoke` — `tedit-0.1.0.tgz`, 25 package checks passed, `tedit 0.1.0`, 80 CLI actions, 15 MCP tools.
 - PASS `git diff --check` — no whitespace errors.
 - PASS CLI smoke — `node dist/cli.js --version`, `actions --json`, `verify-file README.md --json`, and unique dry-run edit succeeded.

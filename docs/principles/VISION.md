@@ -7,7 +7,7 @@
 > two decades. AI agents got `Edit`: replace this exact string with that
 > exact string.
 
-`tedit` exists to close that gap, starting with JSX.
+`tedit` exists to close that gap, starting with JSX/TSX structure editing rather than trying to out-IDE semantic tools.
 
 ## Why the gap matters
 
@@ -85,7 +85,7 @@ It's the worst offender for the current tooling regime:
 - Edits frequently span multiple disjoint locations (the JSX node and
   its import; the prop and the styled-component definition).
 
-Fix JSX and the methodology generalizes.
+Fix JSX/TSX first. Broader JS, TS, CSS, Python, YAML, JSON, and Markdown support is useful, but it is a base layer and follow-on expansion, not the reason to delay release.
 
 ## Layered architecture: base rule + language rules + cross-cutting
 
