@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -56,6 +57,20 @@ type EditSpec = Record<string, unknown>;
 type VerifyFileEntry = { file: string } & ParseVerificationFields & { warnings: QualityWarning[] };
 type SetupScope = "user" | "project";
 type SetupTarget = "codex" | "claude";
+
+const TEDIT_MCP_GUIDE_BODY = `## tedit MCP
+
+Safer edits than raw text — parser-checked where supported, dry-run previews, git-aware backup support, and atomic multi-file edits. Unsupported types fall back to plain-text edits.
+
+Prefer native edit for obvious one-line changes. Otherwise:
+- \`tedit.actions\` — start here when unsure.
+- \`tedit.search\` / \`tedit.select\` — find text or structural targets.
+- \`tedit.edit\` — find/replace by text when the match is uncertain or syntax must stay valid.
+- \`tedit.mutate\` — change by structural target: JSX props/classes, TS body, imports, or AST string.
+- \`tedit.multiedit\` — repeated or cross-file edits.
+- \`tedit.patch\` — when you already have a unified diff / apply-patch.
+- Preview risky edits with \`dryRun:true\` because MCP edits write by default. Add \`verify\` for typecheck/lint/test when breakage matters.
+`;
 
 let currentArgs: ParsedArgs | undefined;
 
@@ -341,6 +356,61 @@ async function commandSetup(args: ParsedArgs): Promise<void> {
     const result = spawnCommand(command[0], command.slice(1), { stdio: "inherit" });
     if (result.status !== 0) throw new Error(`${setupTarget} MCP setup failed.${result.error ? ` ${result.error.message}` : ""}`);
   }
+  await maybeInstallAgentGuides(args, targets);
+}
+
+async function maybeInstallAgentGuides(args: ParsedArgs, targets: SetupTarget[]): Promise<void> {
+  if (args.flags["no-agent-guide"] || args.flags.noAgentGuide) return;
+  const yes = Boolean(args.flags.yes || args.flags.y);
+  const planned = agentGuideTargets(targets);
+  for (const filePath of planned) {
+    const reason = existsSync(filePath) ? `Add/update tedit MCP guide in ${filePath}? [y/N] ` : `Create ${filePath} with tedit MCP guide? [y/N] `;
+    if (!yes && !(await confirm(reason))) continue;
+    const result = upsertTeditMcpGuide(filePath);
+    if (result) process.stdout.write(result + "\n");
+  }
+  if (targets.includes("claude") && existsSync("AGENTS.md")) await maybeInstallClaudeAgentsImport(yes);
+}
+
+async function maybeInstallClaudeAgentsImport(yes: boolean): Promise<void> {
+  const filePath = "CLAUDE.md";
+  const source = existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
+  if (source.includes("@AGENTS.md")) return;
+  if (!yes && !(await confirm(`Add @AGENTS.md import to ${filePath} for Claude Code? [y/N] `))) return;
+  writeFileSync(filePath, `@AGENTS.md\n\n${source}`);
+  process.stdout.write(`${filePath}: added @AGENTS.md import.\n`);
+}
+
+function agentGuideTargets(targets: SetupTarget[]): string[] {
+  const files = new Set<string>();
+  if (targets.includes("codex")) files.add("AGENTS.md");
+  if (targets.includes("claude")) files.add(existsSync("AGENTS.md") ? "AGENTS.md" : "CLAUDE.md");
+  return [...files];
+}
+
+function upsertTeditMcpGuide(filePath: string): string | undefined {
+  const block = teditMcpGuideBlock();
+  const nextHash = teditMcpGuideHash();
+  const source = existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
+  const current = source.match(/<!-- tedit:mcp-guide sha256:([a-f0-9]+) version:([^\s]+) -->[\s\S]*?<!-- \/tedit:mcp-guide -->/);
+  if (current?.[1] === nextHash) return `${filePath}: tedit MCP guide already up to date.`;
+  if (current) {
+    writeFileSync(filePath, source.replace(current[0], block));
+    return `${filePath}: updated tedit MCP guide.`;
+  }
+  if (/^## tedit MCP\b/m.test(source)) return `${filePath}: found an unmarked "## tedit MCP" section; left it unchanged.`;
+  const prefix = filePath === "CLAUDE.md" && existsSync("AGENTS.md") && !source.includes("@AGENTS.md") ? "@AGENTS.md\n\n" : "";
+  const separator = source && !source.endsWith("\n") ? "\n\n" : source ? "\n" : "";
+  writeFileSync(filePath, prefix + source + separator + block);
+  return `${filePath}: added tedit MCP guide.`;
+}
+
+function teditMcpGuideBlock(): string {
+  return `<!-- tedit:mcp-guide sha256:${teditMcpGuideHash()} version:${packageVersion()} -->\n${TEDIT_MCP_GUIDE_BODY}\n<!-- /tedit:mcp-guide -->\n`;
+}
+
+function teditMcpGuideHash(): string {
+  return createHash("sha256").update(TEDIT_MCP_GUIDE_BODY.replace(/\r\n/g, "\n")).digest("hex");
 }
 
 async function setupTargets(args: ParsedArgs, target: "mcp" | SetupTarget): Promise<SetupTarget[]> {

@@ -125,7 +125,7 @@ tedit setup mcp --target both --scope user
 tedit setup mcp --target claude --scope project
 ```
 
-Codex currently supports user-scoped MCP setup only. `tedit setup print` emits the manual MCP JSON. If tedit tools do not appear after setup, restart or refresh your MCP host. `tedit update --check` reports newer npm versions; `tedit update` asks before running `npm install -g tedit-tools@latest`.
+Codex currently supports user-scoped MCP setup only. Setup can also add a short hash-marked tedit MCP guide to `AGENTS.md`/`CLAUDE.md` after confirmation; pass `--yes` to accept prompts or `--no-agent-guide` to skip it. `tedit setup print` emits the manual MCP JSON. If tedit tools do not appear after setup, restart or refresh your MCP host. `tedit update --check` reports newer npm versions; `tedit update` asks before running `npm install -g tedit-tools@latest`.
 
 For MCP hosts, register the installed bin:
 

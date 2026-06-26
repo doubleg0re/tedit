@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -41,6 +41,24 @@ test("setup mcp requires explicit target when not interactive", () => {
   );
 });
 
+test("setup can add hash-marked agent MCP guidance", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "tedit-setup-guide-"));
+  const bin = fakeBin(["codex", "claude"]);
+  const env = { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` };
+
+  run(["setup", "codex", "--yes"], env, cwd);
+  const agents = readFileSync(join(cwd, "AGENTS.md"), "utf8");
+  assert.match(agents, /<!-- tedit:mcp-guide sha256:[a-f0-9]+ version:0\.1\.0 -->/);
+  assert.match(agents, /tedit\.mutate/);
+
+  run(["setup", "codex", "--yes"], env, cwd);
+  const again = readFileSync(join(cwd, "AGENTS.md"), "utf8");
+  assert.equal((again.match(/tedit:mcp-guide/g) ?? []).length, 2);
+
+  run(["setup", "claude", "--yes"], env, cwd);
+  assert.match(readFileSync(join(cwd, "CLAUDE.md"), "utf8"), /^@AGENTS\.md\n/);
+});
+
 test("doctor reports local MCP availability without network when requested", () => {
   const bin = fakeBin();
   const doctor = JSON.parse(run(["doctor", "--skip-update", "--json"], { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }));
@@ -57,17 +75,20 @@ test("update check reports newer npm version without installing", () => {
   assert.match(out, /npm install -g tedit-tools@latest/);
 });
 
-function fakeBin() {
+function fakeBin(extra = []) {
   const dir = mkdtempSync(join(tmpdir(), "tedit-cli-bin-"));
-  const file = join(dir, process.platform === "win32" ? "tedit-mcp.cmd" : "tedit-mcp");
-  writeFileSync(file, process.platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
-  if (process.platform !== "win32") chmodSync(file, 0o755);
+  for (const name of ["tedit-mcp", ...extra]) {
+    const file = join(dir, process.platform === "win32" ? `${name}.cmd` : name);
+    writeFileSync(file, process.platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
+    if (process.platform !== "win32") chmodSync(file, 0o755);
+  }
   return dir;
 }
 
-function run(args, env = {}) {
+function run(args, env = {}, cwd = undefined) {
   return execFileSync(process.execPath, [cli, ...args], {
     encoding: "utf8",
     env: { ...process.env, FORCE_COLOR: "0", ...env },
+    cwd,
   });
 }
