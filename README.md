@@ -256,7 +256,8 @@ backend. Supported families include JSX props/classes/text/expressions/nodes
 `call:<callee>` for AST string targets, and omit `target` for `imports.*`.
 
 ```jsonc
-{ "file": "src/Page.tsx", "op": "prop.set", "target": "jsx:Button", "args": { "name": "disabled", "value": true }, "dryRun": true }
+{ "file": "src/Page.tsx", "target": "jsx:Button", "prop.set": { "name": "disabled", "value": true }, "dryRun": true }
+{ "file": "src/Page.tsx", "target": "jsx:Button", "propSet": { "name": "disabled", "value": true }, "dryRun": true }
 { "file": "src/server.ts", "op": "body.replace", "target": "fn:startServer", "args": { "body": "return server.start();" }, "dryRun": true }
 { "file": "src/Page.tsx", "op": "imports.rename", "args": { "from": "./old", "name": "OldName", "to": "NewName" }, "dryRun": true }
 { "file": "src/messages.ts", "op": "ast.replace", "target": "objectKey:label", "args": { "replace": "Delete" }, "dryRun": true }

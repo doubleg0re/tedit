@@ -1,6 +1,16 @@
 import { z } from "zod/v4";
 import type { TeditMcpTool } from "../../mcp-tools.js";
 
+const mutateArgSchema = z.record(z.string(), z.unknown()).optional();
+const mutateOpKeySchema = Object.fromEntries([
+  "prop.set", "prop.remove", "class.add", "class.remove", "class.replace",
+  "text.set", "text.replace", "expr.replace", "expr.wrap", "expr.toTernary",
+  "wrap", "remove", "rename", "append", "prepend", "unwrap", "insertComment",
+  "imports.add", "imports.remove", "imports.rename", "imports.move",
+  "body.replace", "body.insertBefore", "body.insertAfter", "declaration.move",
+  "ast.replace",
+].flatMap((op) => [[op, mutateArgSchema], [op.replace(/\.([a-z])/g, (_, char: string) => char.toUpperCase()), mutateArgSchema]])) as z.ZodRawShape;
+
 // ponytail: explicit any avoids runtime imports from the source module; tighten when dependency typing matters.
 export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
   const { fileSchema, runApplyDryRunTool, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runMutateTool, runPatchTool, runRenameFileTool, writeFlagSchema } = deps;
@@ -69,10 +79,11 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
       bestFor: ["one selected structural mutation", "select id then mutate", "agent-facing JSX/TS mutation without choosing backend tools"],
       inputSchema: {
         file: fileSchema,
-        op: z.string().min(1).describe("Dotted operation such as prop.set, class.add, text.set, wrap, imports.rename, body.replace, declaration.move, or ast.replace."),
+        op: z.string().min(1).optional().describe("Dotted operation such as prop.set, class.add, text.set, wrap, imports.rename, body.replace, declaration.move, or ast.replace. Optional when using an operation key like {\"prop.set\":{...}}."),
         target: z.union([z.string().min(1), z.record(z.string(), z.unknown())]).optional().describe("Required for JSX/TS/AST ops: jsx:<selector>, id:jsx:<id>, fn:<name>, objectKey:<key>, call:<callee>, etc. Omit for imports.* ops."),
         args: z.record(z.string(), z.unknown()).optional().describe("Operation arguments. Examples: {name,value} for prop.set, {classes} or {className} for class.add/remove, {from,to} for class.replace/imports.rename, {body} for body.replace, {replace} for ast.replace."),
         kind: z.string().optional().describe("Optional validation hint; routing defaults to auto."),
+        ...mutateOpKeySchema,
         ...writeFlagSchema,
       },
       handler: runMutateTool,

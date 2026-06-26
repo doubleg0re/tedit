@@ -295,6 +295,12 @@ test("mcp default profile tools share compact agent contracts", () => {
   const mutateClassName = runMcpTool("mutate", { file: workspace.mutatePage, op: "class.add", target: "jsx:Button", args: { className: "tracking-[-0.02em]" }, diffMode: "stats" });
   assertMutationContract(mutateClassName, workspace.mutatePage, { changedCount: 1, writtenCount: 1, persisted: true });
   assert.match(readFileSync(workspace.mutatePage, "utf8"), /tracking-\[-0\.02em\]/);
+  const mutatePropKey = runMcpTool("mutate", { file: workspace.mutatePage, target: "jsx:Button", "prop.set": { name: "data-short", value: true }, diffMode: "stats" });
+  assertMutationContract(mutatePropKey, workspace.mutatePage, { changedCount: 1, writtenCount: 1, persisted: true });
+  const mutatePropCamel = runMcpTool("mutate", { file: workspace.mutatePage, target: "jsx:Button", propSet: { name: "data-camel", value: true }, diffMode: "stats" });
+  assertMutationContract(mutatePropCamel, workspace.mutatePage, { changedCount: 1, writtenCount: 1, persisted: true });
+  assert.match(readFileSync(workspace.mutatePage, "utf8"), /data-short/);
+  assert.match(readFileSync(workspace.mutatePage, "utf8"), /data-camel/);
   const mutateTsBody = runMcpTool("mutate", { file: workspace.server, op: "body.replace", target: "fn:startServer", args: { body: 'return "new";' }, diffMode: "stats" });
   assertMutationContract(mutateTsBody, workspace.server, { changedCount: 1, writtenCount: 1, persisted: true });
   assert.match(readFileSync(workspace.server, "utf8"), /return "new";/);

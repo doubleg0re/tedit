@@ -76,6 +76,12 @@ const MUTATE_IMPORT_OPS = ["imports.add", "imports.remove", "imports.rename", "i
 const MUTATE_TS_OPS = ["body.replace", "body.insertBefore", "body.insertAfter", "declaration.move"] as const;
 const MUTATE_AST_OPS = ["ast.replace"] as const;
 const MUTATE_SUPPORTED_OPS = [...MUTATE_JSX_OPS, ...MUTATE_IMPORT_OPS, ...MUTATE_TS_OPS, ...MUTATE_AST_OPS] as const;
+const MUTATE_OP_ALIASES = new Map<string, string>([
+  ...MUTATE_SUPPORTED_OPS.flatMap((op) => [[op, op], [op.replace(/\.([a-z])/g, (_, char: string) => char.toUpperCase()), op]] as const),
+  ["replace-body", "body.replace"],
+  ["insert-before", "body.insertBefore"],
+  ["insert-after", "body.insertAfter"],
+]);
 const MUTATE_JSX_TARGETS = "jsx:<selector> or id:jsx:<id>";
 const MUTATE_TS_TARGETS = "fn:<name>, class:<name>, method:<owner.name>, prop:<name>, or var:<name>";
 const MUTATE_AST_TARGETS = "ast:<selector>, string:<exact>, contains:<text>, jsxText:<text>, jsxAttr:<name>, objectKey:<key>, or call:<callee>";
@@ -358,9 +364,8 @@ function runFlowTool(args: unknown): unknown {
 function runMutateTool(args: unknown): unknown {
   const input = recordInput(args, "mutate");
   const file = requiredString(input.file, "mutate requires file.");
-  const op = normalizeMutateOp(requiredString(input.op, "mutate requires op."));
+  const { op, args: opArgs } = mutateOperationFromInput(input);
   if (!MUTATE_SUPPORTED_OPS.includes(op as typeof MUTATE_SUPPORTED_OPS[number])) mutateUnsupportedOp(op);
-  const opArgs = recordOrUndefined(input.args, "mutate args") ?? {};
 
   if (isMutateJsxOp(op)) {
     const target = mutateJsxTarget(input.target, file, op);
@@ -381,11 +386,18 @@ function runMutateTool(args: unknown): unknown {
   mutateUnsupportedOp(op);
 }
 
+function mutateOperationFromInput(input: JsonRecord): { op: string; args: JsonRecord } {
+  if (input.op !== undefined) {
+    return { op: normalizeMutateOp(requiredString(input.op, "mutate requires op.")), args: recordOrUndefined(input.args, "mutate args") ?? {} };
+  }
+  const opKeys = Object.keys(input).filter((key) => MUTATE_OP_ALIASES.has(key));
+  if (opKeys.length === 1) return { op: normalizeMutateOp(opKeys[0]), args: recordOrUndefined(input[opKeys[0]], `mutate ${opKeys[0]} args`) ?? {} };
+  if (opKeys.length > 1) fail("INVALID_MCP_INPUT", `mutate accepts only one operation key. Found: ${opKeys.join(", ")}.`);
+  fail("INVALID_MCP_INPUT", 'mutate requires op+args or one operation key like {"prop.set":{"name":"disabled","value":true}}.');
+}
+
 function normalizeMutateOp(op: string): string {
-  if (op === "replace-body") return "body.replace";
-  if (op === "insert-before") return "body.insertBefore";
-  if (op === "insert-after") return "body.insertAfter";
-  return op;
+  return MUTATE_OP_ALIASES.get(op) ?? op;
 }
 
 function isMutateJsxOp(op: string): op is typeof MUTATE_JSX_OPS[number] {
@@ -1184,7 +1196,8 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       multiedit: { edits: [{ file: "src/Page.tsx", find: "삭제", replace: "Delete", replaceAll: true, expectCount: 2 }] },
       patch: { patch: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ ...", dryRun: true },
       flow: { file: "src/Page.tsx", chain: "find button as login :: wrap @login div.inline-flex" },
-      mutate_prop: { file: "src/Page.tsx", op: "prop.set", target: "jsx:Button", args: { name: "disabled", value: true } },
+      mutate_prop: { file: "src/Page.tsx", target: "jsx:Button", "prop.set": { name: "disabled", value: true } },
+      mutate_prop_camel: { file: "src/Page.tsx", target: "jsx:Button", propSet: { name: "disabled", value: true } },
       mutate_class_add: { file: "src/Page.tsx", op: "class.add", target: "jsx:h1", args: { className: "tracking-[-0.02em]" } },
       mutate_class: { file: "src/Page.tsx", op: "class.replace", target: "jsx:Button", args: { from: "primary", to: "secondary" }, dryRun: true },
       mutate_ts_body: { file: "src/server.ts", op: "body.replace", target: "fn:startServer", args: { body: "return server.start();" }, dryRun: true },
