@@ -397,11 +397,11 @@ function isMutateImportOp(op: string): op is typeof MUTATE_IMPORT_OPS[number] {
 }
 
 function mutateJsxStep(file: string, op: typeof MUTATE_JSX_OPS[number], target: string, args: JsonRecord): WorkspaceFlowStep {
-  if (op === "prop.set") return { action: "prop.set", file, target, name: requiredString(args.name, 'mutate op "prop.set" requires args.name.'), value: propValue(args) };
-  if (op === "prop.remove") return { action: "prop.remove", file, target, name: requiredString(args.name, 'mutate op "prop.remove" requires args.name.') };
+  if (op === "prop.set") return { action: "prop.set", file, target, name: requiredString(args.name, 'mutate op "prop.set" requires args.name. Example: {"args":{"name":"disabled","value":true}}'), value: propValue(args) };
+  if (op === "prop.remove") return { action: "prop.remove", file, target, name: requiredString(args.name, 'mutate op "prop.remove" requires args.name. Example: {"args":{"name":"disabled"}}') };
   if (op === "class.add") return { action: "class.add", file, target, classes: classNamesInput(args, 'mutate op "class.add"') };
   if (op === "class.remove") return { action: "class.remove", file, target, classes: classNamesInput(args, 'mutate op "class.remove"') };
-  if (op === "class.replace") return { action: "class.replace", file, target, from: requiredString(args.from, 'mutate op "class.replace" requires args.from.'), to: requiredString(args.to, 'mutate op "class.replace" requires args.to.') };
+  if (op === "class.replace") return { action: "class.replace", file, target, from: requiredString(args.from, 'mutate op "class.replace" requires args.from. Example: {"args":{"from":"old","to":"new"}}'), to: requiredString(args.to, 'mutate op "class.replace" requires args.to. Example: {"args":{"from":"old","to":"new"}}') };
   if (op === "text.set") return { action: "text.set", file, target, ...textSetValue(args) };
   if (op === "text.replace") return { action: "text.replace", file, target, match: textMatch(args) as WorkspaceFlowStep["match"], with: textReplacement(args) as WorkspaceFlowStep["with"] };
   if (op === "expr.replace") return { action: "expr.replace", file, target, code: requiredString(args.code, 'mutate op "expr.replace" requires args.code.') };
@@ -1185,6 +1185,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       patch: { patch: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ ...", dryRun: true },
       flow: { file: "src/Page.tsx", chain: "find button as login :: wrap @login div.inline-flex" },
       mutate_prop: { file: "src/Page.tsx", op: "prop.set", target: "jsx:Button", args: { name: "disabled", value: true } },
+      mutate_class_add: { file: "src/Page.tsx", op: "class.add", target: "jsx:h1", args: { className: "tracking-[-0.02em]" } },
       mutate_class: { file: "src/Page.tsx", op: "class.replace", target: "jsx:Button", args: { from: "primary", to: "secondary" }, dryRun: true },
       mutate_ts_body: { file: "src/server.ts", op: "body.replace", target: "fn:startServer", args: { body: "return server.start();" }, dryRun: true },
       mutate_import: { file: "src/Page.tsx", op: "imports.rename", args: { from: "./old", name: "OldName", to: "NewName" }, dryRun: true },
@@ -1758,9 +1759,9 @@ function normalizeElementInput(value: unknown, message: string): WorkspaceFlowSt
   fail("INVALID_MCP_INPUT", "Element input must be a shorthand string or object spec.");
 }
 function classNamesInput(input: JsonRecord, label: string): string | string[] {
-  const value = input.classes;
+  const value = pick(input, "classes", "className", "class", "classNames");
   if (Array.isArray(value)) return value.map((item) => String(item));
-  return requiredString(value, label + " requires classes.");
+  return requiredString(value, `${label} requires classes or className. Example: {"args":{"className":"tracking-[-0.02em]"}}`);
 }
 
 function propValue(input: JsonRecord): unknown {

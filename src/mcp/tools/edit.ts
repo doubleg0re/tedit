@@ -71,7 +71,7 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
         file: fileSchema,
         op: z.string().min(1).describe("Dotted operation such as prop.set, class.add, text.set, wrap, imports.rename, body.replace, declaration.move, or ast.replace."),
         target: z.union([z.string().min(1), z.record(z.string(), z.unknown())]).optional().describe("Required for JSX/TS/AST ops: jsx:<selector>, id:jsx:<id>, fn:<name>, objectKey:<key>, call:<callee>, etc. Omit for imports.* ops."),
-        args: z.record(z.string(), z.unknown()).optional().describe("Operation arguments. Examples: {name,value} for prop.set, {from,to} for class.replace/imports.rename, {body} for body.replace, {replace} for ast.replace."),
+        args: z.record(z.string(), z.unknown()).optional().describe("Operation arguments. Examples: {name,value} for prop.set, {classes} or {className} for class.add/remove, {from,to} for class.replace/imports.rename, {body} for body.replace, {replace} for ast.replace."),
         kind: z.string().optional().describe("Optional validation hint; routing defaults to auto."),
         ...writeFlagSchema,
       },

@@ -292,15 +292,15 @@ test("mcp default profile tools share compact agent contracts", () => {
   const mutateClass = runMcpTool("mutate", { file: workspace.mutatePage, op: "class.replace", target: "jsx:Button", args: { from: "old", to: "new" }, diffMode: "stats" });
   assertMutationContract(mutateClass, workspace.mutatePage, { changedCount: 1, writtenCount: 1, persisted: true });
   assert.match(readFileSync(workspace.mutatePage, "utf8"), /className="new"/);
-
+  const mutateClassName = runMcpTool("mutate", { file: workspace.mutatePage, op: "class.add", target: "jsx:Button", args: { className: "tracking-[-0.02em]" }, diffMode: "stats" });
+  assertMutationContract(mutateClassName, workspace.mutatePage, { changedCount: 1, writtenCount: 1, persisted: true });
+  assert.match(readFileSync(workspace.mutatePage, "utf8"), /tracking-\[-0\.02em\]/);
   const mutateTsBody = runMcpTool("mutate", { file: workspace.server, op: "body.replace", target: "fn:startServer", args: { body: 'return "new";' }, diffMode: "stats" });
   assertMutationContract(mutateTsBody, workspace.server, { changedCount: 1, writtenCount: 1, persisted: true });
   assert.match(readFileSync(workspace.server, "utf8"), /return "new";/);
-
   const mutateImport = runMcpTool("mutate", { file: workspace.mutatePage, op: "imports.rename", args: { from: "./old", name: "OldName", to: "NewName" }, diffMode: "stats" });
   assertMutationContract(mutateImport, workspace.mutatePage, { changedCount: 1, writtenCount: 1, persisted: true });
   assert.match(readFileSync(workspace.mutatePage, "utf8"), /import \{ NewName \} from "\.\/old"/);
-
   const mutateAst = runMcpTool("mutate", { file: workspace.messages, op: "ast.replace", target: "objectKey:label", args: { replace: "Delete" }, diffMode: "stats" });
   assertMutationContract(mutateAst, workspace.messages, { changedCount: 1, writtenCount: 1, persisted: true });
   assert.match(readFileSync(workspace.messages, "utf8"), /label: "Delete"/);

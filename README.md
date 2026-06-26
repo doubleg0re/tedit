@@ -248,7 +248,7 @@ the product surface is no longer JSX-only.
 `mutate` is the default structural edit facade: pass `op`, a prefixed `target`,
 and `args`; tedit dispatches to the existing JSX, import, or TS declaration
 backend. Supported families include JSX props/classes/text/expressions/nodes
-(`prop.set`, `class.replace`, `text.set`, `wrap`, `remove`), imports
+(`prop.set`, `class.add`, `class.replace`, `text.set`, `wrap`, `remove`), imports
 (`imports.add`, `imports.rename`), TS declarations (`body.replace`,
 `body.insertBefore`, `declaration.move`), and AST string replacement
 (`ast.replace`). Use `jsx:<selector>` or `id:jsx:<id>` for JSX,
