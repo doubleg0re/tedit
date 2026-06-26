@@ -7,7 +7,6 @@ import {
   BASE_ACTIONS,
   parseLineRange,
   parseVerificationFields,
-  planBaseEdit,
   verifyParseForFile,
   type BaseEditMutation,
   type BaseFindStrategy,
@@ -23,6 +22,7 @@ import { runTsEdit, runTsMove, runTsSelect } from "./ts-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { toErrorResult } from "./errors.js";
 import { formatAgentResult, outputOptionsFromConfig, parseDiffMode, parseOutputMode, type OutputMode, type OutputOptions } from "./output.js";
+import { runBaseEditOperation } from "./edit-engine.js";
 import { planExtract, type HelperPolicy } from "./extract.js";
 import { parseMultieditInput, runMultiedit, runMultieditInput, type MultieditResult } from "./multiedit.js";
 import { runPatchInput } from "./patch.js";
@@ -250,42 +250,18 @@ function commandEdit(args: ParsedArgs): void {
   }
   ensureSingleEditStdin(args);
 
-  const source = readFileSync(filePath, "utf8");
   const strategy = parseBaseFindStrategy(args, spec);
   const mutation = parseBaseMutation(args, spec);
   const expectCount = optionalIntegerInput(args, spec, "expect-count", ["expectCount", "expect-count", "expect_count"]);
-  const plan = planBaseEdit({
+  const { result, plan, policy, backup, warnings } = runBaseEditOperation({
     filePath,
-    source,
     strategy,
     mutation,
     replaceAll: booleanInput(args, spec, "replace-all", ["replaceAll", "replace-all", "replace_all"]),
     ...(expectCount === undefined ? {} : { expectCount }),
+    writeFlags: writeFlags(args),
   });
-  const policy = resolveWritePolicy(filePath, writeFlags(args));
   const shouldWrite = policy.write;
-  const warnings = qualityWarnings(filePath, source, plan.nextSource);
-  let backup: BackupResult = {};
-
-  if (shouldWrite && plan.changed) {
-    backup = maybeWriteBackup(filePath, source, policy, plan.changed, plan.nextSource);
-    writeFileSync(filePath, plan.nextSource);
-  }
-
-  const result = {
-    success: true,
-    file: filePath,
-    action: plan.action,
-    strategy: plan.strategy,
-    changed: plan.changed,
-    written: shouldWrite && plan.changed,
-    ...parseVerificationFields(plan.parseVerification),
-    matches: plan.matches,
-    guardrails: plan.guardrails,
-    warnings,
-    write_policy: writePolicyReport(policy, backup),
-    ...(plan.diff ? { diff: plan.diff } : {}),
-  };
 
   writeDiffOut(args, result);
   if (quietRequested(args)) return;

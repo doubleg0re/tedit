@@ -148,266 +148,251 @@ function extractNamedOutput(segment: ChainSegment, index: number): { cleanSegmen
   };
 }
 
+type ChainStepHandler = (segment: ChainSegment, index: number, loc: string) => FlowStep;
+
+const CHAIN_STEP_HANDLERS: Record<string, ChainStepHandler> = {
+  find: findStep,
+  inspect: inspectStep,
+  append: appendPrependStep,
+  prepend: appendPrependStep,
+  wrap: wrapStep,
+  unwrap: targetOnlyStep,
+  remove: targetOnlyStep,
+  rename: renameStep,
+  "prop.set": propSetStep,
+  "prop.remove": propRemoveStep,
+  "class.add": classToggleStep,
+  "class.remove": classToggleStep,
+  "class.replace": classReplaceStep,
+  insertComment: insertCommentStep,
+  "text.set": textSetStep,
+  "text.replace": textReplaceStep,
+  "imports.add": importsAddRemoveStep,
+  "imports.remove": importsAddRemoveStep,
+  "imports.rename": importsRenameStep,
+  "imports.move": importsMoveStep,
+  "expr.replace": exprCodeStep,
+  "expr.wrap": exprCodeStep,
+  "expr.unwrap": exprTargetOnlyStep,
+  "expr.toShortCircuit": exprTargetOnlyStep,
+  "expr.toTernary": exprToTernaryStep,
+  log: logStep,
+};
+
 function segmentToStep(segment: ChainSegment, index: number): FlowStep {
-  const loc = chainLoc(segment, index);
+  const handler = CHAIN_STEP_HANDLERS[segment.action];
+  if (!handler) fail("UNSUPPORTED_CHAIN_ACTION", `Action "${segment.action}" is not chainable.`);
+  return handler(segment, index, chainLoc(segment, index));
+}
 
-  switch (segment.action) {
-    case "find": {
-      const parsed = parseStepArgs(segment, index, []);
-      const [selector] = parsed.positionals;
-      if (!selector) fail("INVALID_CHAIN", `${loc}: find requires <selector>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, 1);
-      return { action: "find", selector: normalizeChainRef(selector) };
-    }
+function findStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, []);
+  const [selector] = parsed.positionals;
+  if (!selector) fail("INVALID_CHAIN", `${loc}: find requires <selector>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, 1);
+  return { action: "find", selector: normalizeChainRef(selector) };
+}
 
-    case "inspect": {
-      const parsed = parseStepArgs(segment, index, ["id"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      if (!target) fail("INVALID_CHAIN", `${loc}: inspect requires <target>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, getFlag(parsed, "id") ? 0 : 1);
-      return { action: "inspect", target: normalizeChainRef(target) };
-    }
+function inspectStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id"]);
+  const { target, offset } = targetWithOffset(parsed);
+  if (!target) fail("INVALID_CHAIN", `${loc}: inspect requires <target>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset);
+  return { action: "inspect", target: normalizeChainRef(target) };
+}
 
-    case "append":
-    case "prepend": {
-      const parsed = parseStepArgs(segment, index, ["id", "element"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const element = getFlag(parsed, "element") ?? parsed.positionals[getFlag(parsed, "id") ? 0 : 1];
-      if (!target || !element) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires <target> <tag-or-json>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "id") ? 0 : 1) + (getFlag(parsed, "element") ? 0 : 1));
-      return {
-        action: segment.action,
-        target: normalizeChainRef(target),
-        element: parseElementArg(element),
-      };
-    }
+function appendPrependStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "element"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const element = getFlag(parsed, "element") ?? parsed.positionals[offset];
+  if (!target || !element) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires <target> <tag-or-json>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset + (getFlag(parsed, "element") ? 0 : 1));
+  return {
+    action: segment.action,
+    target: normalizeChainRef(target),
+    element: parseElementArg(element),
+  };
+}
 
-    case "wrap": {
-      const parsed = parseStepArgs(segment, index, ["id", "with"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const wrapper = getFlag(parsed, "with") ?? parsed.positionals[getFlag(parsed, "id") ? 0 : 1];
-      if (!target || !wrapper) fail("INVALID_CHAIN", `${loc}: wrap requires <target> <tag-or-json>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "id") ? 0 : 1) + (getFlag(parsed, "with") ? 0 : 1));
-      return {
-        action: "wrap",
-        target: normalizeChainRef(target),
-        with: parseWrapperArg(wrapper),
-      };
-    }
+function wrapStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "with"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const wrapper = getFlag(parsed, "with") ?? parsed.positionals[offset];
+  if (!target || !wrapper) fail("INVALID_CHAIN", `${loc}: wrap requires <target> <tag-or-json>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset + (getFlag(parsed, "with") ? 0 : 1));
+  return { action: "wrap", target: normalizeChainRef(target), with: parseWrapperArg(wrapper) };
+}
 
-    case "unwrap":
-    case "remove": {
-      const parsed = parseStepArgs(segment, index, ["id"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      if (!target) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires <target>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, getFlag(parsed, "id") ? 0 : 1);
-      return { action: segment.action, target: normalizeChainRef(target) };
-    }
+function targetOnlyStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id"]);
+  const { target, offset } = targetWithOffset(parsed);
+  if (!target) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires <target>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset);
+  return { action: segment.action, target: normalizeChainRef(target) };
+}
 
-    case "rename": {
-      const parsed = parseStepArgs(segment, index, ["id", "to"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const name = getFlag(parsed, "to") ?? parsed.positionals[getFlag(parsed, "id") ? 0 : 1];
-      if (!target || !name) fail("INVALID_CHAIN", `${loc}: rename requires <target> <name> or <target> --to <name>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "id") ? 0 : 1) + (getFlag(parsed, "to") ? 0 : 1));
-      return { action: "rename", target: normalizeChainRef(target), name: normalizeChainRef(name) };
-    }
+function renameStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "to"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const name = getFlag(parsed, "to") ?? parsed.positionals[offset];
+  if (!target || !name) fail("INVALID_CHAIN", `${loc}: rename requires <target> <name> or <target> --to <name>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset + (getFlag(parsed, "to") ? 0 : 1));
+  return { action: "rename", target: normalizeChainRef(target), name: normalizeChainRef(name) };
+}
 
-    case "prop.set": {
-      const parsed = parseStepArgs(segment, index, ["id", "expr"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const name = parsed.positionals[getFlag(parsed, "id") ? 0 : 1];
-      const value = getFlag(parsed, "expr")
-        ? { type: "expr", code: getFlag(parsed, "expr") }
-        : parseValueArg(parsed.positionals[(getFlag(parsed, "id") ? 0 : 1) + 1] ?? true);
-      if (!target || !name) fail("INVALID_CHAIN", `${loc}: prop.set requires <target> <name> [value].`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "id") ? 0 : 1) + 1 + (getFlag(parsed, "expr") ? 0 : 1));
-      return {
-        action: "prop.set",
-        target: normalizeChainRef(target),
-        name: normalizeChainRef(name),
-        value,
-      };
-    }
+function propSetStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "expr"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const name = parsed.positionals[offset];
+  const value = getFlag(parsed, "expr")
+    ? { type: "expr", code: getFlag(parsed, "expr") }
+    : parseValueArg(parsed.positionals[offset + 1] ?? true);
+  if (!target || !name) fail("INVALID_CHAIN", `${loc}: prop.set requires <target> <name> [value].`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset + 1 + (getFlag(parsed, "expr") ? 0 : 1));
+  return { action: "prop.set", target: normalizeChainRef(target), name: normalizeChainRef(name), value };
+}
 
-    case "prop.remove": {
-      const parsed = parseStepArgs(segment, index, ["id"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const name = parsed.positionals[getFlag(parsed, "id") ? 0 : 1];
-      if (!target || !name) fail("INVALID_CHAIN", `${loc}: prop.remove requires <target> <name>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "id") ? 0 : 1) + 1);
-      return { action: "prop.remove", target: normalizeChainRef(target), name: normalizeChainRef(name) };
-    }
+function propRemoveStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const name = parsed.positionals[offset];
+  if (!target || !name) fail("INVALID_CHAIN", `${loc}: prop.remove requires <target> <name>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset + 1);
+  return { action: "prop.remove", target: normalizeChainRef(target), name: normalizeChainRef(name) };
+}
 
-    case "class.add":
-    case "class.remove": {
-      const parsed = parseStepArgs(segment, index, ["id", "classes"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const classes = getFlag(parsed, "classes") ?? parsed.positionals.slice(getFlag(parsed, "id") ? 0 : 1).join(" ");
-      if (!target || !classes) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires <target> <class...>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, getFlag(parsed, "classes") ? (getFlag(parsed, "id") ? 0 : 1) : parsed.positionals.length);
-      return { action: segment.action, target: normalizeChainRef(target), classes: normalizeChainRef(classes) };
-    }
+function classToggleStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "classes"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const classes = getFlag(parsed, "classes") ?? parsed.positionals.slice(offset).join(" ");
+  if (!target || !classes) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires <target> <class...>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, getFlag(parsed, "classes") ? offset : parsed.positionals.length);
+  return { action: segment.action, target: normalizeChainRef(target), classes: normalizeChainRef(classes) };
+}
 
-    case "class.replace": {
-      const parsed = parseStepArgs(segment, index, ["id", "from", "to"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const offset = getFlag(parsed, "id") ? 0 : 1;
-      const from = getFlag(parsed, "from") ?? parsed.positionals[offset];
-      const to = getFlag(parsed, "to") ?? parsed.positionals[offset + (getFlag(parsed, "from") ? 0 : 1)];
-      if (!target || !from || !to) fail("INVALID_CHAIN", `${loc}: class.replace requires <target> <from> <to>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, offset + (getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "to") ? 0 : 1));
-      return { action: "class.replace", target: normalizeChainRef(target), from: normalizeChainRef(from), to: normalizeChainRef(to) };
-    }
+function classReplaceStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "from", "to"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const from = getFlag(parsed, "from") ?? parsed.positionals[offset];
+  const to = getFlag(parsed, "to") ?? parsed.positionals[offset + (getFlag(parsed, "from") ? 0 : 1)];
+  if (!target || !from || !to) fail("INVALID_CHAIN", `${loc}: class.replace requires <target> <from> <to>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset + (getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "to") ? 0 : 1));
+  return { action: "class.replace", target: normalizeChainRef(target), from: normalizeChainRef(from), to: normalizeChainRef(to) };
+}
 
-    case "insertComment": {
-      const parsed = parseStepArgs(segment, index, ["id", "position", "text"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const offset = getFlag(parsed, "id") ? 0 : 1;
-      const explicitText = getFlag(parsed, "text");
-      const explicitPosition = getFlag(parsed, "position");
-      if (!target) fail("INVALID_CHAIN", `${loc}: insertComment requires <target> [position] <text>.`);
-      if (explicitText) {
-        ensureNoExtraArgs(segment, index, parsed.positionals, offset);
-        return {
-          action: "insertComment",
-          target: normalizeChainRef(target),
-          ...(explicitPosition ? { position: explicitPosition as FlowStep["position"] } : {}),
-          text: normalizeChainRef(explicitText),
-        };
-      }
-      const first = parsed.positionals[offset];
-      if (!first) fail("INVALID_CHAIN", `${loc}: insertComment requires <target> [position] <text>.`);
-      if (["inside-start", "inside-end", "before", "after"].includes(first)) {
-        return {
-          action: "insertComment",
-          target: normalizeChainRef(target),
-          position: first as FlowStep["position"],
-          text: normalizeChainRef(parsed.positionals.slice(offset + 1).join(" ")),
-        };
-      }
-      return {
-        action: "insertComment",
-        target: normalizeChainRef(target),
-        text: normalizeChainRef(parsed.positionals.slice(offset).join(" ")),
-      };
-    }
-
-    case "text.set": {
-      const parsed = parseStepArgs(segment, index, ["id", "value", "expr"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const offset = getFlag(parsed, "id") ? 0 : 1;
-      const value = getFlag(parsed, "value") ?? parsed.positionals[offset];
-      const expr = getFlag(parsed, "expr");
-      if (!target) fail("INVALID_CHAIN", `${loc}: text.set requires <target> and --value/--expr.`);
-      if ((value === undefined) === (expr === undefined)) fail("INVALID_CHAIN", `${loc}: text.set requires exactly one of --value or --expr.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, offset + (getFlag(parsed, "value") || expr ? 0 : 1));
-      return {
-        action: "text.set",
-        target: normalizeChainRef(target),
-        ...(expr !== undefined ? { expr: normalizeChainRef(expr) } : { value: normalizeChainRef(value ?? "") }),
-      };
-    }
-
-    case "text.replace": {
-      const parsed = parseStepArgs(segment, index, ["id", "match-text", "match-expr", "match-any", "with-text", "with-expr"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      if (!target) fail("INVALID_CHAIN", `${loc}: text.replace requires <target>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, getFlag(parsed, "id") ? 0 : 1);
-      return {
-        action: "text.replace",
-        target: normalizeChainRef(target),
-        match: parseTextMatchArg(parsed, loc),
-        with: parseTextWithArg(parsed, loc),
-      };
-    }
-
-    case "imports.add":
-    case "imports.remove": {
-      const parsed = parseStepArgs(segment, index, ["from", "named", "default", "namespace"]);
-      const from = getFlag(parsed, "from") ?? parsed.positionals[0];
-      const named = getFlag(parsed, "named") ?? parsed.positionals[1];
-      if (!from) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires --from <source>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "named") ? 0 : named ? 1 : 0));
-      return {
-        action: segment.action,
-        from: normalizeChainRef(from),
-        ...(named ? { named } : {}),
-        ...(getFlag(parsed, "default") ? { default: getFlag(parsed, "default") } : {}),
-        ...(getFlag(parsed, "namespace") ? { namespace: getFlag(parsed, "namespace") } : {}),
-      };
-    }
-
-    case "imports.rename": {
-      const parsed = parseStepArgs(segment, index, ["from", "name", "to"]);
-      const from = getFlag(parsed, "from") ?? parsed.positionals[0];
-      const name = getFlag(parsed, "name") ?? parsed.positionals[getFlag(parsed, "from") ? 0 : 1];
-      const to = getFlag(parsed, "to") ?? parsed.positionals[(getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "name") ? 0 : 1)];
-      if (!from || !name || !to) fail("INVALID_CHAIN", `${loc}: imports.rename requires <from> <name> <to>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "name") ? 0 : 1) + (getFlag(parsed, "to") ? 0 : 1));
-      return { action: "imports.rename", from: normalizeChainRef(from), name, to };
-    }
-
-    case "imports.move": {
-      const parsed = parseStepArgs(segment, index, ["from", "to", "named", "default", "namespace"]);
-      const from = getFlag(parsed, "from") ?? parsed.positionals[0];
-      const to = getFlag(parsed, "to") ?? parsed.positionals[getFlag(parsed, "from") ? 0 : 1];
-      const named = getFlag(parsed, "named") ?? parsed.positionals[(getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "to") ? 0 : 1)];
-      if (!from || !to) fail("INVALID_CHAIN", `${loc}: imports.move requires <from> <to>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "to") ? 0 : 1) + (getFlag(parsed, "named") ? 0 : named ? 1 : 0));
-      return {
-        action: "imports.move",
-        from: normalizeChainRef(from),
-        to: normalizeChainRef(to),
-        ...(named ? { named } : {}),
-        ...(getFlag(parsed, "default") ? { default: getFlag(parsed, "default") } : {}),
-        ...(getFlag(parsed, "namespace") ? { namespace: getFlag(parsed, "namespace") } : {}),
-      };
-    }
-
-    case "expr.replace": {
-      const parsed = parseStepArgs(segment, index, ["id", "code"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const code = getFlag(parsed, "code") ?? parsed.positionals.slice(getFlag(parsed, "id") ? 0 : 1).join(" ");
-      if (!target || !code) fail("INVALID_CHAIN", `${loc}: expr.replace requires <target> <code>.`);
-      return { action: "expr.replace", target: normalizeChainRef(target), code: normalizeChainRef(code) };
-    }
-
-    case "expr.wrap": {
-      const parsed = parseStepArgs(segment, index, ["id", "code"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const code = getFlag(parsed, "code") ?? parsed.positionals.slice(getFlag(parsed, "id") ? 0 : 1).join(" ");
-      if (!target || !code) fail("INVALID_CHAIN", `${loc}: expr.wrap requires <target> <code>.`);
-      return { action: "expr.wrap", target: normalizeChainRef(target), code: normalizeChainRef(code) };
-    }
-
-    case "expr.unwrap":
-    case "expr.toShortCircuit": {
-      const parsed = parseStepArgs(segment, index, ["id"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      if (!target) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires <target>.`);
-      ensureNoExtraArgs(segment, index, parsed.positionals, getFlag(parsed, "id") ? 0 : 1);
-      return { action: segment.action, target: normalizeChainRef(target) };
-    }
-
-    case "expr.toTernary": {
-      const parsed = parseStepArgs(segment, index, ["id", "alternate"]);
-      const target = getFlag(parsed, "id") ?? parsed.positionals[0];
-      const value = getFlag(parsed, "alternate") ?? parsed.positionals.slice(getFlag(parsed, "id") ? 0 : 1).join(" ");
-      if (!target) fail("INVALID_CHAIN", `${loc}: expr.toTernary requires <target> [alternate].`);
-      return { action: "expr.toTernary", target: normalizeChainRef(target), ...(value ? { value: normalizeChainRef(value) } : {}) };
-    }
-
-    case "log": {
-      const parsed = parseStepArgs(segment, index, ["ref"]);
-      const ref = getFlag(parsed, "ref") ?? parsed.positionals[0];
-      ensureNoExtraArgs(segment, index, parsed.positionals, getFlag(parsed, "ref") ? 0 : ref ? 1 : 0);
-      return ref ? { action: "log", ref: normalizeChainRef(ref) } : { action: "log" };
-    }
-
-    default:
-      fail("UNSUPPORTED_CHAIN_ACTION", `Action "${segment.action}" is not chainable.`);
+function insertCommentStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "position", "text"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const explicitText = getFlag(parsed, "text");
+  const explicitPosition = getFlag(parsed, "position");
+  if (!target) fail("INVALID_CHAIN", `${loc}: insertComment requires <target> [position] <text>.`);
+  if (explicitText) {
+    ensureNoExtraArgs(segment, index, parsed.positionals, offset);
+    return { action: "insertComment", target: normalizeChainRef(target), ...(explicitPosition ? { position: explicitPosition as FlowStep["position"] } : {}), text: normalizeChainRef(explicitText) };
   }
+  const first = parsed.positionals[offset];
+  if (!first) fail("INVALID_CHAIN", `${loc}: insertComment requires <target> [position] <text>.`);
+  if (["inside-start", "inside-end", "before", "after"].includes(first)) {
+    return { action: "insertComment", target: normalizeChainRef(target), position: first as FlowStep["position"], text: normalizeChainRef(parsed.positionals.slice(offset + 1).join(" ")) };
+  }
+  return { action: "insertComment", target: normalizeChainRef(target), text: normalizeChainRef(parsed.positionals.slice(offset).join(" ")) };
+}
+
+function textSetStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "value", "expr"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const value = getFlag(parsed, "value") ?? parsed.positionals[offset];
+  const expr = getFlag(parsed, "expr");
+  if (!target) fail("INVALID_CHAIN", `${loc}: text.set requires <target> and --value/--expr.`);
+  if ((value === undefined) === (expr === undefined)) fail("INVALID_CHAIN", `${loc}: text.set requires exactly one of --value or --expr.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset + (getFlag(parsed, "value") || expr ? 0 : 1));
+  return { action: "text.set", target: normalizeChainRef(target), ...(expr !== undefined ? { expr: normalizeChainRef(expr) } : { value: normalizeChainRef(value ?? "") }) };
+}
+
+function textReplaceStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "match-text", "match-expr", "match-any", "with-text", "with-expr"]);
+  const { target, offset } = targetWithOffset(parsed);
+  if (!target) fail("INVALID_CHAIN", `${loc}: text.replace requires <target>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset);
+  return { action: "text.replace", target: normalizeChainRef(target), match: parseTextMatchArg(parsed, loc), with: parseTextWithArg(parsed, loc) };
+}
+
+function importsAddRemoveStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["from", "named", "default", "namespace"]);
+  const from = getFlag(parsed, "from") ?? parsed.positionals[0];
+  const named = getFlag(parsed, "named") ?? parsed.positionals[1];
+  if (!from) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires --from <source>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "named") ? 0 : named ? 1 : 0));
+  return {
+    action: segment.action,
+    from: normalizeChainRef(from),
+    ...(named ? { named } : {}),
+    ...(getFlag(parsed, "default") ? { default: getFlag(parsed, "default") } : {}),
+    ...(getFlag(parsed, "namespace") ? { namespace: getFlag(parsed, "namespace") } : {}),
+  };
+}
+
+function importsRenameStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["from", "name", "to"]);
+  const from = getFlag(parsed, "from") ?? parsed.positionals[0];
+  const name = getFlag(parsed, "name") ?? parsed.positionals[getFlag(parsed, "from") ? 0 : 1];
+  const to = getFlag(parsed, "to") ?? parsed.positionals[(getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "name") ? 0 : 1)];
+  if (!from || !name || !to) fail("INVALID_CHAIN", `${loc}: imports.rename requires <from> <name> <to>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "name") ? 0 : 1) + (getFlag(parsed, "to") ? 0 : 1));
+  return { action: "imports.rename", from: normalizeChainRef(from), name, to };
+}
+
+function importsMoveStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["from", "to", "named", "default", "namespace"]);
+  const from = getFlag(parsed, "from") ?? parsed.positionals[0];
+  const to = getFlag(parsed, "to") ?? parsed.positionals[getFlag(parsed, "from") ? 0 : 1];
+  const named = getFlag(parsed, "named") ?? parsed.positionals[(getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "to") ? 0 : 1)];
+  if (!from || !to) fail("INVALID_CHAIN", `${loc}: imports.move requires <from> <to>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, (getFlag(parsed, "from") ? 0 : 1) + (getFlag(parsed, "to") ? 0 : 1) + (getFlag(parsed, "named") ? 0 : named ? 1 : 0));
+  return {
+    action: "imports.move",
+    from: normalizeChainRef(from),
+    to: normalizeChainRef(to),
+    ...(named ? { named } : {}),
+    ...(getFlag(parsed, "default") ? { default: getFlag(parsed, "default") } : {}),
+    ...(getFlag(parsed, "namespace") ? { namespace: getFlag(parsed, "namespace") } : {}),
+  };
+}
+
+function exprCodeStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "code"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const code = getFlag(parsed, "code") ?? parsed.positionals.slice(offset).join(" ");
+  if (!target || !code) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires <target> <code>.`);
+  return { action: segment.action, target: normalizeChainRef(target), code: normalizeChainRef(code) };
+}
+
+function exprTargetOnlyStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id"]);
+  const { target, offset } = targetWithOffset(parsed);
+  if (!target) fail("INVALID_CHAIN", `${loc}: ${segment.action} requires <target>.`);
+  ensureNoExtraArgs(segment, index, parsed.positionals, offset);
+  return { action: segment.action, target: normalizeChainRef(target) };
+}
+
+function exprToTernaryStep(segment: ChainSegment, index: number, loc: string): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["id", "alternate"]);
+  const { target, offset } = targetWithOffset(parsed);
+  const value = getFlag(parsed, "alternate") ?? parsed.positionals.slice(offset).join(" ");
+  if (!target) fail("INVALID_CHAIN", `${loc}: expr.toTernary requires <target> [alternate].`);
+  return { action: "expr.toTernary", target: normalizeChainRef(target), ...(value ? { value: normalizeChainRef(value) } : {}) };
+}
+
+function logStep(segment: ChainSegment, index: number): FlowStep {
+  const parsed = parseStepArgs(segment, index, ["ref"]);
+  const ref = getFlag(parsed, "ref") ?? parsed.positionals[0];
+  ensureNoExtraArgs(segment, index, parsed.positionals, getFlag(parsed, "ref") ? 0 : ref ? 1 : 0);
+  return ref ? { action: "log", ref: normalizeChainRef(ref) } : { action: "log" };
+}
+
+function targetWithOffset(parsed: ParsedStepArgs): { target?: string; offset: number } {
+  const id = getFlag(parsed, "id");
+  return { target: id ?? parsed.positionals[0], offset: id ? 0 : 1 };
 }
 
 function extractSegmentToWorkspaceStep(segment: ChainSegment, index: number): WorkspaceFlowStep {

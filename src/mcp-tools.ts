@@ -5,7 +5,6 @@ import {
   BASE_ACTIONS,
   parseLineRange,
   parseVerificationFields,
-  planBaseEdit,
   verifyParseForFile,
   type BaseEditMutation,
   type BaseFindStrategy,
@@ -18,6 +17,7 @@ import { inspectRange, searchText } from "./search-tools.js";
 import { historyTrace } from "./history-tools.js";
 import { runTsEdit as runTsEditEngine, runTsMove as runTsMoveEngine, runTsSelect } from "./ts-tools.js";
 import { unifiedDiff } from "./diff.js";
+import { runBaseEditOperation } from "./edit-engine.js";
 import { fail } from "./errors.js";
 import { formatAgentResult, outputOptionsFromRecord, readDetailArtifact } from "./output.js";
 import { parseMultieditInput, runMultiedit, runMultieditInput } from "./multiedit.js";
@@ -41,7 +41,11 @@ import { makeREFACTOR_PLAN_TOOLS } from "./mcp/tools/refactor.js";
 import { makeJSX_TOOLS } from "./mcp/tools/jsx.js";
 import { makeJSX_SINGLE_STEP_TOOLS } from "./mcp/tools/jsx-single-step.js";
 import { makeVERIFY_TOOLS } from "./mcp/tools/verify.js";
+import { isDefaultMcpToolName, MCP_WRITE_BY_DEFAULT, teditMcpProfileFromEnv, type TeditMcpProfile } from "./mcp/profile.js";
 import { makeWORKFLOW_TOOLS } from "./mcp/tools/workflow.js";
+
+export { teditMcpProfileFromEnv } from "./mcp/profile.js";
+export type { TeditMcpProfile } from "./mcp/profile.js";
 
 export type TeditMcpTool = {
   name: string;
@@ -64,8 +68,6 @@ export type TeditMcpTool = {
 
 type JsonRecord = Record<string, unknown>;
 type WriteFlagOptions = { defaultWrite?: boolean };
-
-const MCP_WRITE_BY_DEFAULT = { defaultWrite: true } as const;
 
 const MUTATE_JSX_OPS = [
   "prop.set", "prop.remove", "class.add", "class.remove", "class.replace",
@@ -166,30 +168,6 @@ export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
   ...makeJSX_SINGLE_STEP_TOOLS({ booleanValue, classNamesInput, elementSchema, exprSchema, fileSchema, importFields, importsSchema, normalizeElementInput, pick, propValue, requiredString, selectorSchema, singleStepTool, targetFromInput, targetOnlySchema, targetSchema, textMatch, textReplacement, textSetValue, valueSchema, writeFlagSchema }),
   ...makeJSX_TOOLS({ elementSchema, fileSchema, importsSchema, runExtractComponentTool, runExtractTool, runImportsTool, runJsxAttrTool, runJsxContentTool, runJsxNodeTool, runJsxSelectTool, selectorSchema, targetSchema, valueSchema, writeFlagSchema }),
 ];
-
-export type TeditMcpProfile = "agent" | "all";
-
-const AGENT_MCP_TOOL_NAMES = new Set([
-  "actions",
-  "select",
-  "edit",
-  "multiedit",
-  "mutate",
-  "apply_dry_run",
-  "patch",
-  "flow",
-  "delete_file",
-  "rename_file",
-  "file_write",
-  "search",
-  "read_detail",
-  "verify_file",
-  "refactor",
-]);
-
-export function teditMcpProfileFromEnv(env: NodeJS.ProcessEnv = process.env): TeditMcpProfile {
-  return env.TEDIT_MCP_PROFILE === "all" || env.TEDIT_MCP_EXPOSE_ADVANCED === "true" ? "all" : "agent";
-}
 
 export function toolsForMcpProfile(profile: TeditMcpProfile = teditMcpProfileFromEnv()): readonly TeditMcpTool[] {
   return profile === "all" ? TEDIT_MCP_ALL_TOOLS : TEDIT_MCP_ALL_TOOLS.filter((tool) => toolExposure(tool) === "default");
@@ -292,41 +270,18 @@ function runEditTool(args: unknown): unknown {
   const input = recordInput(args, "edit");
   const filePath = requiredString(input.file, "edit requires file.");
   const restorePoints = captureRestorePoints([filePath]);
-  const source = readFileSync(filePath, "utf8");
   const expectCountValue = pick(input, "expectCount", "expect-count", "expect_count");
   const expectCount = optionalInteger(expectCountValue, "expectCount");
-  const plan = planBaseEdit({
+  const { result } = runBaseEditOperation({
     filePath,
-    source,
     strategy: resolveEditStrategy(input),
     mutation: resolveEditMutation(input),
     replaceAll: booleanValue(pick(input, "replaceAll", "replace-all", "replace_all")),
     ...(expectCountValue === undefined ? {} : { expectCount }),
+    writeFlags: writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT),
   });
-  const policy = resolveWritePolicy(filePath, writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT));
-  const shouldWrite = policy.write;
-  const warnings = qualityWarnings(filePath, source, plan.nextSource);
-  let backup: BackupResult = {};
 
-  if (shouldWrite && plan.changed) {
-    backup = maybeWriteBackup(filePath, source, policy, plan.changed, plan.nextSource);
-    writeFileSync(filePath, plan.nextSource);
-  }
-
-  return withVerifiedAgentFields({
-    success: true,
-    file: filePath,
-    action: plan.action,
-    strategy: plan.strategy,
-    changed: plan.changed,
-    written: shouldWrite && plan.changed,
-    ...parseVerificationFields(plan.parseVerification),
-    matches: plan.matches,
-    guardrails: plan.guardrails,
-    warnings,
-    write_policy: writePolicyReport(policy, backup),
-    ...(plan.diff ? { diff: plan.diff } : {}),
-  }, input, restorePoints);
+  return withVerifiedAgentFields(result, input, restorePoints);
 }
 
 function runMultieditTool(args: unknown): unknown {
@@ -1123,7 +1078,7 @@ function astCallSelector(value: string): string {
 }
 
 function toolExposure(tool: TeditMcpTool): "default" | "advanced" {
-  return AGENT_MCP_TOOL_NAMES.has(tool.name) ? "default" : "advanced";
+  return isDefaultMcpToolName(tool.name) ? "default" : "advanced";
 }
 
 function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[]): JsonRecord {
