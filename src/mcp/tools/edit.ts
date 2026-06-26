@@ -9,7 +9,7 @@ const mutateOpKeySchema = Object.fromEntries([
   "imports.add", "imports.remove", "imports.rename", "imports.move",
   "body.replace", "body.insertBefore", "body.insertAfter", "declaration.move",
   "ast.replace",
-].flatMap((op) => [[op, mutateArgSchema], [op.replace(/\.([a-z])/g, (_, char: string) => char.toUpperCase()), mutateArgSchema]])) as z.ZodRawShape;
+].map((op) => [op, mutateArgSchema])) as z.ZodRawShape;
 
 // ponytail: explicit any avoids runtime imports from the source module; tighten when dependency typing matters.
 export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {

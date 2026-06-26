@@ -77,7 +77,7 @@ const MUTATE_TS_OPS = ["body.replace", "body.insertBefore", "body.insertAfter", 
 const MUTATE_AST_OPS = ["ast.replace"] as const;
 const MUTATE_SUPPORTED_OPS = [...MUTATE_JSX_OPS, ...MUTATE_IMPORT_OPS, ...MUTATE_TS_OPS, ...MUTATE_AST_OPS] as const;
 const MUTATE_OP_ALIASES = new Map<string, string>([
-  ...MUTATE_SUPPORTED_OPS.flatMap((op) => [[op, op], [op.replace(/\.([a-z])/g, (_, char: string) => char.toUpperCase()), op]] as const),
+  ...MUTATE_SUPPORTED_OPS.map((op) => [op, op] as const),
   ["replace-body", "body.replace"],
   ["insert-before", "body.insertBefore"],
   ["insert-after", "body.insertAfter"],
@@ -1197,7 +1197,6 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       patch: { patch: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ ...", dryRun: true },
       flow: { file: "src/Page.tsx", chain: "find button as login :: wrap @login div.inline-flex" },
       mutate_prop: { file: "src/Page.tsx", target: "jsx:Button", "prop.set": { name: "disabled", value: true } },
-      mutate_prop_camel: { file: "src/Page.tsx", target: "jsx:Button", propSet: { name: "disabled", value: true } },
       mutate_class_add: { file: "src/Page.tsx", op: "class.add", target: "jsx:h1", args: { className: "tracking-[-0.02em]" } },
       mutate_class: { file: "src/Page.tsx", op: "class.replace", target: "jsx:Button", args: { from: "primary", to: "secondary" }, dryRun: true },
       mutate_ts_body: { file: "src/server.ts", op: "body.replace", target: "fn:startServer", args: { body: "return server.start();" }, dryRun: true },
