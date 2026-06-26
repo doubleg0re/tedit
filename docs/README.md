@@ -9,5 +9,6 @@ Project planning and historical design notes are grouped here so the repository 
 - `reviews/` — retrospective review notes.
 - `dogfood/` — dogfood reports and usage observations.
 - `agent-setup.md` — MCP setup guidance for agents.
+- `REFERENCE.md` — long-form CLI/MCP examples and detailed tool notes.
 - `share-local-package.md` — local package sharing guide.
 - `RELEASE-PREP-2026-06-25.md` — minimal release-readiness checklist for 0.1.0.
