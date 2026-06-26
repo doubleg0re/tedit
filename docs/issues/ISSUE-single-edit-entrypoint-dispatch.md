@@ -55,6 +55,88 @@ contracts. Most of this already exists (Pillar 1 string ops + Pillar 4
 verification); the work is unifying them behind one front door and one output
 contract, not building new language rules.
 
+## MCP proposal — `mutate` as the single structural mutation gate
+
+For MCP, keep discovery and mutation separate:
+
+- `select` finds targets and returns stable hints/ids.
+- `mutate` changes one selected target through a file-type-aware dispatcher.
+- `flow` remains the multi-step transaction surface.
+
+`mutate` should use one shape across file types:
+
+```json
+{
+  "file": "src/Page.tsx",
+  "op": "prop.set",
+  "target": "jsx:Button[variant=\"primary\"]",
+  "args": { "name": "disabled", "value": true },
+  "write": true
+}
+```
+
+Design rules:
+
+1. **`op` determines the argument shape.** Prefer existing tedit dotted verbs
+   (`prop.set`, `imports.add`, `expr.replace`, `body.replace`) over a generic
+   `action: "set"` plus polymorphic `params.field` switches. Agents learn
+   `op -> args`, not `(file type x action) -> hidden required fields`.
+2. **`target` declares its dialect with a prefix.** Examples: `jsx:...`,
+   `fn:...`, `class:...`, `json:...`, `heading:...`, `text:...`, `line:...`,
+   and `id:...` for targets returned by `select`. The dispatcher validates that
+   the target prefix and file route make sense instead of asking the agent to
+   infer selector dialects from extensions.
+3. **`kind` is optional validation, not primary routing.** Default to auto;
+   use explicit kind only to fail fast when the caller expects a route.
+4. **Code blobs stay isolated.** `body.replace` may carry source text in
+   `args.value`; structured ops such as `prop.set`, `key.set`, `heading.rename`,
+   and `wrap` should use structured operands.
+5. **Freeze the verb vocabulary.** New file types should add target prefixes or
+   noun-specific ops that reuse existing verbs (`set`, `remove`, `rename`,
+   `replace`, `add`, `move`, `wrap`, `unwrap`). Avoid synonym drift such as
+   `heading.update` or `table.assign`; a new verb needs a strong reason.
+6. **Prefer the safe round trip.** `select -> id:... -> mutate` is the primary
+   path when the target was discovered by tedit. Raw selectors are useful for
+   direct calls, but ids avoid reparsing selector intent on the mutation call.
+
+Initial slice should be a thin facade over existing implementations, not a new
+engine:
+
+| `mutate` op | Initial backend |
+|---|---|
+| `prop.set`, `prop.remove`, `class.add`, `class.remove`, `class.replace` | JSX attr flow steps |
+| `text.set`, `text.replace`, `expr.replace`, `expr.wrap`, `expr.unwrap`, `expr.toTernary`, `expr.toShortCircuit` | JSX content flow steps |
+| `wrap`, `unwrap`, `rename`, `remove`, `append`, `prepend`, `insertComment` | JSX node flow steps |
+| `imports.add`, `imports.remove`, `imports.rename`, `imports.move` | import flow steps |
+| `body.replace` | TS declaration body edit |
+| `declaration.move` | TS declaration move |
+
+Later rules can add `key.set`, `heading.rename`, or markup-specific verbs only
+when they clear the same trust bar. Until then, those files remain covered by
+`edit`/`multiedit` safe-string fallback.
+
+This replaces the earlier idea of making every advanced MCP tool default. The
+default profile should expose one intent-level mutation gate, not every legacy
+or fine-grained wrapper.
+
+### `mutate` acceptance criteria
+
+1. The default MCP profile exposes `mutate`; `jsx_*`, `ts_*`, `ast_*`, and
+   single-step wrappers remain compatibility/advanced surfaces.
+2. `op` dispatch is shape-aware: missing or invalid `args` fails with a precise
+   error and an example for that `op`.
+3. `target` prefix is mandatory for `mutate` except when `target` is already an
+   object returned by `select`; prefix/file-route mismatches fail fast.
+4. `select` can return an id target that `mutate` accepts as `id:<value>` for at
+   least one JSX mutation path.
+5. First implementation slice maps `op: "prop.set"` to the existing JSX flow
+   step without adding a new mutation engine.
+6. JSX value typing is explicit: boolean `true` with no expression can produce
+   a boolean prop, string values produce string attributes/text where the op
+   expects them, and expression values use an explicit expression operand.
+7. Regression coverage includes: valid `prop.set`, missing `args.name`, invalid
+   target prefix for a `.tsx` file, and `select -> id:... -> mutate` round trip.
+
 ## Why this matters
 
 "One tool, no deliberation" requires exactly two guarantees, and the dispatcher
