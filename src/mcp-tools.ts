@@ -1162,6 +1162,27 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { code: "AST_MATCH_NONE", suggestion: "Use scan_strings candidates or switch selector type, for example JSXText instead of StringLiteral." },
       { code: "PATCH_HUNK_FAILED", suggestion: "Inspect current file context and regenerate the hunk against the current source." },
     ],
+    mutate_cheatsheet: {
+      boundary: "single file + single structural transformation = mutate; text spans = edit/multiedit; multi-file, planned, or symbol-graph-aware changes = refactor",
+      targets: {
+        jsx: "jsx:<selector> or id:jsx:<id>",
+        ts: "fn:<name>, class:<name>, method:<owner.name>, prop:<name>, or var:<name>",
+        ast: "objectKey:<key>, call:<callee>, string:<exact>, contains:<text>, jsxText:<text>, jsxAttr:<name>",
+        imports: "omit target",
+      },
+      examples: {
+        jsx_prop: { file: "src/Page.tsx", target: "jsx:Button", "prop.set": { name: "disabled", value: true } },
+        jsx_class: { file: "src/Page.tsx", target: "jsx:h1", "class.add": { className: "tracking-[-0.02em]" } },
+        ts_body: { file: "src/server.ts", target: "fn:startServer", "body.replace": { body: "return server.start();" } },
+        import_rename: { file: "src/Page.tsx", "imports.rename": { from: "./old", name: "OldName", to: "NewName" } },
+        ast_string: { file: "src/messages.ts", target: "objectKey:label", "ast.replace": { replace: "Delete" } },
+      },
+      notes: [
+        "Prefer select -> id:jsx:<id> -> mutate when a selector may be ambiguous.",
+        "Use dotted operation keys like prop.set as the canonical shorthand; op+args remains supported for compatibility.",
+        "For body.replace, pass the body statements only; outer braces are optional but discouraged.",
+      ],
+    },
     edit_loop: [
       { intent: "select target across TS/JS/JSX/TSX", tool: "select", reason: "file-type-aware facade returning normalized matches and follow-up edit hints" },
       { intent: "one localized edit", tool: "edit", reason: "MCP writes by default; pass dryRun:true for preview, with exact/fuzzy/line/regex strategies and parse verification" },
