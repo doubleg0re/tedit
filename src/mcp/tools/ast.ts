@@ -58,7 +58,7 @@ export function makeAST_TOOLS(deps: any): readonly TeditMcpTool[] {
     {
       name: "ts_edit",
       title: "TS Edit",
-      description: "Safely edit TS/JS named declarations: replace only the tool-owned block body, or insert source before/after a declaration. Uses source-range patches and parse verification.",
+      description: "Safely edit TS/JS named declarations: replace only the tool-owned block body, or insert source before/after a declaration. Uses source-range patches and parse verification. MCP writes by default; pass dryRun:true to preview.",
       category: "ast",
       aliases: ["ts-edit", "declaration_edit", "body_replace"],
       bestFor: ["large plain-TS files", "function body replacement without authoring outer braces", "insert before/after a named declaration"],

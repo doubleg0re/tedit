@@ -8,7 +8,7 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
     {
       name: "edit",
       title: "Universal Edit",
-      description: "Safer replacement for routine Edit calls: exact, fuzzy, anchor, regex, or line-range edits with dry-run, git-aware write policy, parse verification, and retry hints.",
+      description: "Safer replacement for routine Edit calls: exact, fuzzy, anchor, regex, or line-range edits with git-aware write policy, parse verification, and retry hints. MCP writes by default; pass dryRun:true to preview.",
       category: "edit",
       aliases: ["safe_edit", "base_edit", "edit.replace"],
       bestFor: ["single localized text/code edit", "retryable exact/fuzzy match", "line-range or regex replacement"],
@@ -36,7 +36,7 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
     {
       name: "multiedit",
       title: "Atomic Multiedit",
-      description: "Safer replacement for multiple Edit calls: apply many universal base edits atomically across one or more files with parse verification.",
+      description: "Safer replacement for multiple Edit calls: apply many universal base edits atomically across one or more files with parse verification. MCP writes by default; pass dryRun:true to preview.",
       category: "edit",
       aliases: ["multi_edit", "bulk_edit"],
       bestFor: ["coordinated repeated edits", "same-file sequential edits", "cross-file atomic text changes"],
@@ -63,7 +63,7 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
     {
       name: "mutate",
       title: "Mutate",
-      description: "Single structural mutation facade: pass op, prefixed target, and args; tedit dispatches to the safest file-type backend.",
+      description: "Single structural mutation facade: pass op, prefixed target, and args; tedit dispatches to the safest file-type backend. MCP writes by default; pass dryRun:true to preview.",
       category: "structure",
       aliases: ["modify", "structure_edit"],
       bestFor: ["one selected structural mutation", "select id then mutate", "agent-facing JSX/TS mutation without choosing backend tools"],
@@ -92,7 +92,7 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
     {
       name: "flow",
       title: "Flow",
-      description: "Run a multi-step edit transaction. Pass JSON steps/flow, or pass CLI-style chain with optional file for single-file chain syntax.",
+      description: "Run a multi-step edit transaction. Pass JSON steps/flow, or pass CLI-style chain with optional file for single-file chain syntax. MCP writes by default; pass dryRun:true to preview.",
       category: "workflow",
       aliases: ["chain", "workflow"],
       bestFor: ["find-then-mutate edits", "CLI-style chain from MCP", "coordinated structural edits"],

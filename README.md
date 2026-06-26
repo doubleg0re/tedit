@@ -228,6 +228,12 @@ The default MCP profile is `agent`, which keeps the callable tool list small and
 `rename_file`, `ts_select`, `ts_edit`, `ts_move`, `file_write`,
 `inspect_range`, `search_text`, `read_detail`, `verify_file`, and `refactor`.
 
+MCP edit, multiedit, mutate, ts_edit, and flow write by default;
+pass dryRun:true when you want a preview. CLI commands keep their existing
+dry-run-by-default policy. patch, delete_file, and rename_file stay conservative
+by default because they represent generated diffs or file-system destructive
+operations.
+
 `select` is the common facade for TS/JS declarations, Python functions/classes,
 JSX/TSX elements, and text fallback hints. `inspect_range` and `search_text`
 bridge `sed`/`rg` style workflows into tedit's edit-ready structured results.
@@ -270,7 +276,7 @@ loop is:
 - `search_text` or `inspect_range` when the target is not certain yet.
 - `read_detail` only when a compact response returns a `$detail` descriptor and its inline `preview` is not enough.
 - `edit` for one localized replacement, insertion, deletion, regex, fuzzy, or
-  line-range change.
+  line-range change; pass `dryRun:true` for preview.
 - `multiedit` after `search_text` when the same change spans several places or
   files.
 - `mutate` after `select` when one structural target should change without

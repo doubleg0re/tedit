@@ -63,6 +63,9 @@ export type TeditMcpTool = {
 };
 
 type JsonRecord = Record<string, unknown>;
+type WriteFlagOptions = { defaultWrite?: boolean };
+
+const MCP_WRITE_BY_DEFAULT = { defaultWrite: true } as const;
 
 const MUTATE_JSX_OPS = [
   "prop.set", "prop.remove", "class.add", "class.remove", "class.replace",
@@ -298,7 +301,7 @@ function runEditTool(args: unknown): unknown {
     replaceAll: booleanValue(pick(input, "replaceAll", "replace-all", "replace_all")),
     ...(expectCountValue === undefined ? {} : { expectCount }),
   });
-  const policy = resolveWritePolicy(filePath, writeFlagsFromInput(input));
+  const policy = resolveWritePolicy(filePath, writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT));
   const shouldWrite = policy.write;
   const warnings = qualityWarnings(filePath, source, plan.nextSource);
   let backup: BackupResult = {};
@@ -330,10 +333,10 @@ function runMultieditTool(args: unknown): unknown {
   if (input.input !== undefined && input.edits !== undefined) {
     fail("INVALID_MCP_INPUT", "multiedit accepts only one of input or edits.");
   }
-  if (input.input !== undefined) return withVerifiedAgentFields(runMultieditInput(requiredString(input.input, "multiedit input must be a string."), writeFlagsFromInput(input)), input, restorePoints);
+  if (input.input !== undefined) return withVerifiedAgentFields(runMultieditInput(requiredString(input.input, "multiedit input must be a string."), writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT)), input, restorePoints);
   const edits = input.edits;
   if (!Array.isArray(edits)) fail("INVALID_MCP_INPUT", "multiedit requires edits array or input string.");
-  return withVerifiedAgentFields(runMultiedit(edits, writeFlagsFromInput(input)), input, restorePoints);
+  return withVerifiedAgentFields(runMultiedit(edits, writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT)), input, restorePoints);
 }
 
 function runPatchTool(args: unknown): unknown {
@@ -348,7 +351,7 @@ function runFlowTool(args: unknown): unknown {
   const steps = flowStepsFromInput(input);
   return withAgentFields(runWorkspaceFlow(steps, {
     params: recordOrUndefined(input.params, "flow params"),
-    ...writeFlagsFromInput(input),
+    ...writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT),
   }), input);
 }
 
@@ -361,14 +364,14 @@ function runMutateTool(args: unknown): unknown {
 
   if (isMutateJsxOp(op)) {
     const target = mutateJsxTarget(input.target, file, op);
-    return withAgentFields(runWorkspaceFlow([mutateJsxStep(file, op, target, opArgs)], writeFlagsFromInput(input)), input);
+    return withAgentFields(runWorkspaceFlow([mutateJsxStep(file, op, target, opArgs)], writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT)), input);
   }
 
   if (isMutateImportOp(op)) {
-    return withAgentFields(runWorkspaceFlow([{ action: op, file, ...importFields(opArgs) }], writeFlagsFromInput(input)), input);
+    return withAgentFields(runWorkspaceFlow([{ action: op, file, ...importFields(opArgs) }], writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT)), input);
   }
 
-  if (op === "ast.replace") return runAstEditTool({ ...input, ...mutateAstTarget(input.target, op), replace: requiredString(pick(opArgs, "replace", "value", "text"), 'mutate op "ast.replace" requires args.replace, args.value, or args.text.') });
+  if (op === "ast.replace") return runAstEditTool({ ...input, ...mutateAstTarget(input.target, op), replace: requiredString(pick(opArgs, "replace", "value", "text"), 'mutate op "ast.replace" requires args.replace, args.value, or args.text.') }, MCP_WRITE_BY_DEFAULT);
 
   if (op === "body.replace") return runTsEditTool({ ...input, selector: mutateTsSelector(input.target, file, op), action: "replace-body", body: requiredString(pick(opArgs, "body", "value", "code"), 'mutate op "body.replace" requires args.body, args.value, or args.code.') });
   if (op === "body.insertBefore") return runTsEditTool({ ...input, selector: mutateTsSelector(input.target, file, op), action: "insert-before", insertBefore: requiredString(pick(opArgs, "insertBefore", "body", "value", "code"), 'mutate op "body.insertBefore" requires args.insertBefore, args.body, args.value, or args.code.') });
@@ -1002,12 +1005,12 @@ function runAstSelectTool(args: unknown): unknown {
   return withAgentFields(runAstSelect(requiredString(input.file, "ast_select requires file."), requiredString(input.selector, "ast_select requires selector.")), input);
 }
 
-function runAstEditTool(args: unknown): unknown {
+function runAstEditTool(args: unknown, options?: WriteFlagOptions): unknown {
   const input = recordInput(args, "ast_edit");
   return withAgentFields(runAstEditEngine(requiredString(input.file, "ast_edit requires file."), {
     selector: astEditSelectorFromInput(input),
     replace: requiredString(input.replace, "ast_edit requires replace."),
-    ...writeFlagsFromInput(input),
+    ...writeFlagsFromInput(input, options),
   }), input);
 }
 
@@ -1030,7 +1033,7 @@ function runTsEditTool(args: unknown): unknown {
     ...(input.body === undefined ? {} : { body: requiredString(input.body, "ts_edit body must be a string.") }),
     ...(input.insertBefore === undefined ? {} : { insertBefore: requiredString(input.insertBefore, "ts_edit insertBefore must be a string.") }),
     ...(input.insertAfter === undefined ? {} : { insertAfter: requiredString(input.insertAfter, "ts_edit insertAfter must be a string.") }),
-    ...writeFlagsFromInput(input),
+    ...writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT),
   }), input, restorePoints);
 }
 
@@ -1114,8 +1117,8 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     tool_priorities: [
       "select for file-type-aware target discovery", 
       "search_text or inspect_range for text/range discovery",
-      "edit for one localized change",
-      "mutate for one JSX/TS/import/AST structural change",
+      "edit for one localized change; MCP writes by default unless dryRun:true",
+      "mutate for one JSX/TS/import/AST structural change; MCP writes by default unless dryRun:true",
       "multiedit for repeated or cross-file changes",
       "apply_dry_run after reviewing a successful dry-run suggestedAction",
       "delete_file or rename_file for one-file cleanup/moves",
@@ -1128,7 +1131,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     workflow_guide: [
       { when: "need file-type-aware target discovery", first_tool: "select", then: "mutate for structural ops or edit for text spans", reason: "one common facade routes TS/JS declarations, JSX elements, or text fallback" },
       { when: "need target context before editing", first_tool: "search_text", then: "inspect_range or edit", reason: "turn raw text matches into line ranges and edit-ready suggestions" },
-      { when: "one localized replacement/insertion/deletion", first_tool: "edit", then: "apply_dry_run from suggestedActions after reviewing dry-run", reason: "exact/fuzzy/regex/line strategies plus parser guardrails" },
+      { when: "one localized replacement/insertion/deletion", first_tool: "edit", then: "pass dryRun:true first when preview is needed", reason: "MCP edit writes by default; exact/fuzzy/regex/line strategies plus parser guardrails" },
       { when: "same change across several places or files", first_tool: "search_text", then: "multiedit", reason: "search_text can emit a grouped multiedit spec; multiedit applies atomically" },
       { when: "already have a generated diff", first_tool: "patch", then: "verify_file for important touched files", reason: "patch accepts unified diff and Codex apply-patch envelopes" },
       { when: "delete or rename one file", first_tool: "delete_file or rename_file", then: "patch for multi-file transactions", reason: "single-file cleanup no longer requires hand-authored patch text" },
@@ -1148,7 +1151,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     ],
     edit_loop: [
       { intent: "select target across TS/JS/JSX/TSX", tool: "select", reason: "file-type-aware facade returning normalized matches and follow-up edit hints" },
-      { intent: "one localized edit", tool: "edit", reason: "dry-run defaults, exact/fuzzy/line/regex strategies, parse verification, retry hints" },
+      { intent: "one localized edit", tool: "edit", reason: "MCP writes by default; pass dryRun:true for preview, with exact/fuzzy/line/regex strategies and parse verification" },
       { intent: "apply reviewed dry-run", tool: "apply_dry_run", reason: "reuses the stored dry-run args after source-hash verification" },
       { intent: "several coordinated text edits", tool: "multiedit", reason: "atomic application across files and same-file sequential edits" },
       { intent: "already generated diff", tool: "patch", reason: "atomic unified diff/apply-patch input with verification" },
@@ -1176,11 +1179,12 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     ],
     examples: {
       select: { file: "src/Page.tsx", selector: "LoginButtons" },
-      edit: { file: "src/Page.tsx", find: "oldLabel", replace: "newLabel", dryRun: true },
-      multiedit: { edits: [{ file: "src/Page.tsx", find: "삭제", replace: "Delete", replaceAll: true, expectCount: 2 }], dryRun: true },
+      edit: { file: "src/Page.tsx", find: "oldLabel", replace: "newLabel" },
+      edit_preview: { file: "src/Page.tsx", find: "oldLabel", replace: "newLabel", dryRun: true },
+      multiedit: { edits: [{ file: "src/Page.tsx", find: "삭제", replace: "Delete", replaceAll: true, expectCount: 2 }] },
       patch: { patch: "--- src/Page.tsx\n+++ src/Page.tsx\n@@ ...", dryRun: true },
-      flow: { file: "src/Page.tsx", chain: "find button as login :: wrap @login div.inline-flex", dryRun: true },
-      mutate_prop: { file: "src/Page.tsx", op: "prop.set", target: "jsx:Button", args: { name: "disabled", value: true }, dryRun: true },
+      flow: { file: "src/Page.tsx", chain: "find button as login :: wrap @login div.inline-flex" },
+      mutate_prop: { file: "src/Page.tsx", op: "prop.set", target: "jsx:Button", args: { name: "disabled", value: true } },
       mutate_class: { file: "src/Page.tsx", op: "class.replace", target: "jsx:Button", args: { from: "primary", to: "secondary" }, dryRun: true },
       mutate_ts_body: { file: "src/server.ts", op: "body.replace", target: "fn:startServer", args: { body: "return server.start();" }, dryRun: true },
       mutate_import: { file: "src/Page.tsx", op: "imports.rename", args: { from: "./old", name: "OldName", to: "NewName" }, dryRun: true },
@@ -1201,7 +1205,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       ast_select: { file: "src/Page.tsx", selector: "ObjectProperty[key.name=\"label\"] > StringLiteral" },
       ast_edit: { file: "src/Page.tsx", call: "toast.error", replace: "Failed", write: true },
       ts_select: { file: "src/server.ts", selector: "fn:apiGateMetadata" },
-      ts_edit: { file: "src/server.ts", selector: "fn:apiGateMetadata", body: "\n  return buildMetadata();\n", write: true },
+      ts_edit: { file: "src/server.ts", selector: "fn:apiGateMetadata", body: "\n  return buildMetadata();\n" },
       ts_move: { file: "src/server.ts", target: "fn:apiGateMetadata", before: "fn:startServer", dryRun: true },
       chain_workspace: {
         steps: [
@@ -1210,6 +1214,11 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
         ],
         write: true,
       },
+    },
+    mcp_write_defaults: {
+      writes_by_default: ["edit", "multiedit", "mutate", "ts_edit", "flow"],
+      preview_only: "pass dryRun:true",
+      conservative_by_default: ["patch", "delete_file", "rename_file", "file_write", "ts_move"],
     },
     cli_fallbacks: {
       edit: "node dist/cli.js edit src/Page.tsx --find '<LoginButtons variant=\"inline\" />' --replace '<button>로그인</button>' --write --json",
@@ -1803,9 +1812,9 @@ function importFields(input: JsonRecord): Pick<WorkspaceFlowStep, "from" | "to" 
   };
 }
 
-function writeFlagsFromInput(input: JsonRecord): WorkspaceFlowOptions {
-  const write = booleanValue(input.write);
+function writeFlagsFromInput(input: JsonRecord, options: WriteFlagOptions = {}): WorkspaceFlowOptions {
   const dryRun = booleanValue(pick(input, "dryRun", "dry-run", "dry_run"));
+  const write = input.write === undefined ? Boolean(options.defaultWrite) && !dryRun : booleanValue(input.write);
   if (write && dryRun) fail("INVALID_MCP_INPUT", "Use only one of write or dryRun.");
   return {
     write,
