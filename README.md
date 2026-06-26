@@ -224,7 +224,7 @@ more useful than raw text.
 
 The default MCP profile is `agent`, which keeps the callable tool list small and intent-oriented:
 
-`actions`, `select`, `edit`, `multiedit`, `patch`, `flow`, `delete_file`,
+`actions`, `select`, `edit`, `multiedit`, `mutate`, `patch`, `flow`, `delete_file`,
 `rename_file`, `ts_select`, `ts_edit`, `ts_move`, `file_write`,
 `inspect_range`, `search_text`, `read_detail`, `verify_file`, and `refactor`.
 
@@ -239,7 +239,12 @@ MCP tool categories are intent-based, not origin-based: `edit`, `generate`,
 tools keep JSX names because that is the current structural implementation, but
 the product surface is no longer JSX-only.
 
-`flow` runs ordered workflow steps from either JSON `steps` or CLI-style `chain` text; use it when a find-then-mutate sequence should stay in one transaction.
+`mutate` is the default structural edit facade: pass `op`, a prefixed `target`
+such as `jsx:Button` or `id:jsx_1`, and `args`; the first supported op is
+`prop.set`.
+
+`flow` runs ordered workflow steps from either JSON `steps` or CLI-style `chain`
+text; use it when a find-then-mutate sequence should stay in one transaction.
 
 Use `file_write` with a required `mode` for whole-file writes:
 `mode: "write"` for complete source replacement, `mode: "scaffold"` for
@@ -255,6 +260,8 @@ loop is:
   line-range change.
 - `multiedit` after `search_text` when the same change spans several places or
   files.
+- `mutate` after `select` when one structural target should change without
+  choosing a backend-specific JSX/TS tool; use `op`, prefixed `target`, and `args`.
 - `delete_file` or `rename_file` for one-file cleanup or moves without
   hand-authoring a patch envelope.
 - `patch` only when the change already exists as a unified diff or apply-patch

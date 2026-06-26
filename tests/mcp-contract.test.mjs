@@ -22,6 +22,7 @@ test("mcp default profile tools share compact agent contracts", () => {
     "flow",
     "inspect_range",
     "multiedit",
+    "mutate",
     "patch",
     "read_detail",
     "refactor",

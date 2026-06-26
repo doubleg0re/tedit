@@ -1954,6 +1954,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "flow",
       "inspect_range",
       "multiedit",
+      "mutate",
       "patch",
       "read_detail",
       "refactor",
@@ -1975,6 +1976,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "ts_move"));
     assert.ok(tools.tools.some((tool) => tool.name === "file_write"));
     assert.ok(tools.tools.some((tool) => tool.name === "flow"));
+    assert.ok(tools.tools.some((tool) => tool.name === "mutate"));
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "inspect_range"));
     assert.ok(tools.tools.some((tool) => tool.name === "search_text"));
@@ -2007,6 +2009,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(actionsDiscovery.isError, undefined);
     assert.ok(actionsDiscovery.structuredContent.actions.includes("select"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("multiedit"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("mutate"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("patch"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("delete_file"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("rename_file"));
@@ -2032,6 +2035,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     const advancedTools = await readMcpDetail(client, actionsDiscovery.structuredContent.advanced_tools);
     assert.ok(actionTools.some((tool) => tool.name === "multiedit"));
     const editToolMeta = actionTools.find((tool) => tool.name === "edit");
+    const mutateMeta = actionTools.find((tool) => tool.name === "mutate");
     const verifyMeta = actionTools.find((tool) => tool.name === "verify_file");
     const searchTextMeta = actionTools.find((tool) => tool.name === "search_text");
     const templatesMeta = advancedTools.find((tool) => tool.name === "templates");
@@ -2040,6 +2044,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     const propSetMeta = advancedTools.find((tool) => tool.name === "prop_set");
     assert.equal(editToolMeta.category, "edit");
     assert.ok(editToolMeta.best_for.includes("single localized text/code edit"));
+    assert.equal(mutateMeta.category, "structure");
+    assert.ok(mutateMeta.best_for.includes("one selected structural mutation"));
     assert.equal(verifyMeta.category, "verify");
     assert.equal(verifyMeta.readOnly, true);
     assert.equal(jsxAttrMeta.category, "structure");
@@ -2066,6 +2072,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "flow",
       "inspect_range",
       "multiedit",
+      "mutate",
       "patch",
       "read_detail",
       "refactor",
@@ -2077,6 +2084,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "ts_select",
       "verify_file",
     ].sort());
+    assert.ok(actionsDiscovery.structuredContent.profiles.agent.includes("mutate"));
     assert.equal(actionsDiscovery.structuredContent.profiles.agent.includes("jsx_attr"), false);
     assert.equal(actionsDiscovery.structuredContent.profiles.agent.includes("prop_set"), false);
     assert.ok(actionsDiscovery.structuredContent.profiles.all.includes("prop_set"));
@@ -2093,6 +2101,43 @@ test("mcp server lists tools and runs universal edit", async () => {
     const jsxGuidance = await readMcpDetail(client, jsxActionsDiscovery.structuredContent.guidance);
     assert.deepEqual(jsxGuidance.file_rules, ["jsx"]);
     assert.ok(jsxActionsDiscovery.structuredContent.actions.includes("class.add"));
+
+    const mutateResult = await client.callTool({
+      name: "mutate",
+      arguments: { file: jsxFile, op: "prop.set", target: "jsx:DailyPlanBody", args: { name: "data-mutated", value: true }, write: true },
+    });
+    assert.equal(mutateResult.isError, undefined);
+    assert.equal(mutateResult.structuredContent.ok, true);
+    assert.equal(mutateResult.structuredContent.kind, "mutation");
+    assert.match(readFileSync(jsxFile, "utf8"), /<DailyPlanBody data-mutated \/>/);
+
+    const selectForMutate = await client.callTool({
+      name: "select",
+      arguments: { file: jsxFile, selector: "DailyPlanBody", kind: "jsx" },
+    });
+    assert.equal(selectForMutate.isError, undefined);
+    const selectedTarget = selectForMutate.structuredContent.matches[0].id;
+    assert.match(selectedTarget, /^jsx:/);
+    const mutateByIdResult = await client.callTool({
+      name: "mutate",
+      arguments: { file: jsxFile, op: "prop.set", target: `id:${selectedTarget}`, args: { name: "data-selected", value: "yes" }, write: true },
+    });
+    assert.equal(mutateByIdResult.isError, undefined);
+    assert.match(readFileSync(jsxFile, "utf8"), /<DailyPlanBody data-mutated data-selected="yes" \/>/);
+
+    const mutateMissingArg = await client.callTool({
+      name: "mutate",
+      arguments: { file: jsxFile, op: "prop.set", target: "jsx:DailyPlanBody", args: { value: true }, dryRun: true },
+    });
+    assert.equal(mutateMissingArg.isError, true);
+    assert.match(mutateMissingArg.content[0].text, /args\.name/);
+
+    const mutateBadPrefix = await client.callTool({
+      name: "mutate",
+      arguments: { file: jsxFile, op: "prop.set", target: "json:scripts.test", args: { name: "disabled", value: true }, dryRun: true },
+    });
+    assert.equal(mutateBadPrefix.isError, true);
+    assert.match(mutateBadPrefix.content[0].text, /target prefix/);
 
     const result = await client.callTool({
       name: "edit",

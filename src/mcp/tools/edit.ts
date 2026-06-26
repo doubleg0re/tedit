@@ -3,7 +3,7 @@ import type { TeditMcpTool } from "../../mcp-tools.js";
 
 // ponytail: explicit any avoids runtime imports from the source module; tighten when dependency typing matters.
 export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
-  const { fileSchema, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runPatchTool, runRenameFileTool, writeFlagSchema } = deps;
+  const { fileSchema, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runMutateTool, runPatchTool, runRenameFileTool, writeFlagSchema } = deps;
   return [
     {
       name: "edit",
@@ -59,6 +59,23 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
         ...writeFlagSchema,
       },
       handler: runPatchTool,
+    },
+    {
+      name: "mutate",
+      title: "Mutate",
+      description: "Single structural mutation facade: pass op, prefixed target, and args; tedit dispatches to the safest file-type backend.",
+      category: "structure",
+      aliases: ["modify", "structure_edit"],
+      bestFor: ["one selected structural mutation", "select id then mutate", "agent-facing JSX/TS mutation without choosing backend tools"],
+      inputSchema: {
+        file: fileSchema,
+        op: z.string().min(1).describe("Dotted operation such as prop.set. The op determines args shape."),
+        target: z.union([z.string().min(1), z.record(z.string(), z.unknown())]).describe("Prefixed target such as jsx:Button or id:jsx_1."),
+        args: z.record(z.string(), z.unknown()).optional().describe("Operation arguments. Shape depends on op."),
+        kind: z.string().optional().describe("Optional validation hint; routing defaults to auto."),
+        ...writeFlagSchema,
+      },
+      handler: runMutateTool,
     },
     {
       name: "flow",

@@ -130,7 +130,7 @@ const valueSchema = z.unknown().describe("Literal value or tedit value spec.");
 const elementSchema = z.unknown().describe("Element shorthand string or tree node spec.");
 
 export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
-  ...makeEDIT_TOOLS({ fileSchema, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runPatchTool, runRenameFileTool, writeFlagSchema }),
+  ...makeEDIT_TOOLS({ fileSchema, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runMutateTool, runPatchTool, runRenameFileTool, writeFlagSchema }),
   ...makeGENERATE_TOOLS({ fileSchema, runCreateFileTool, runFileWriteTool, runNewFileTool, runScaffoldFileTool, runWriteFileTool, writeFlagSchema }),
   ...makeDISCOVERY_TOOLS({ detailFlagSchema, fileSchema, runActionsTool, runHistoryTraceTool, runInspectRangeTool, runReadDetailTool, runScanStringsTool, runSearchTextTool, runSelectTool, runTemplatesTool }),
   ...makeAST_TOOLS({ detailFlagSchema, fileSchema, runAstEditTool, runAstSelectTool, runTsEditTool, runTsMoveTool, runTsSelectTool, writeFlagSchema }),
@@ -151,6 +151,7 @@ const AGENT_MCP_TOOL_NAMES = new Set([
   "select",
   "edit",
   "multiedit",
+  "mutate",
   "patch",
   "flow",
   "delete_file",
@@ -328,6 +329,62 @@ function runFlowTool(args: unknown): unknown {
     params: recordOrUndefined(input.params, "flow params"),
     ...writeFlagsFromInput(input),
   }), input);
+}
+
+function runMutateTool(args: unknown): unknown {
+  const input = recordInput(args, "mutate");
+  const file = requiredString(input.file, "mutate requires file.");
+  const op = requiredString(input.op, "mutate requires op.");
+  const target = mutateTarget(input.target, file, op);
+  const opArgs = recordOrUndefined(input.args, "mutate args") ?? {};
+
+  if (op === "prop.set") {
+    const name = requiredString(opArgs.name, 'mutate op "prop.set" requires args.name. e.g. {"op":"prop.set","target":"jsx:Button","args":{"name":"disabled","value":true}}');
+    const value = mutatePropValue(opArgs);
+    return withAgentFields(runWorkspaceFlow([{ action: "prop.set", file, target, name, value }], writeFlagsFromInput(input)), input);
+  }
+
+  fail("INVALID_MCP_INPUT", `mutate unsupported op: ${op}. First supported op is prop.set.`);
+}
+
+function mutatePropValue(args: JsonRecord): unknown {
+  if (args.expr !== undefined && args.value !== undefined) fail("INVALID_MCP_INPUT", 'mutate op "prop.set" accepts only one of args.value or args.expr.');
+  if (args.expr !== undefined) return { type: "expr", code: requiredString(args.expr, 'mutate op "prop.set" args.expr must be a string.') };
+  return args.value === undefined ? true : args.value;
+}
+
+function mutateTarget(value: unknown, file: string, op: string): string {
+  if (value && typeof value === "object" && !Array.isArray(value) && typeof (value as JsonRecord).id === "string") return mutateTarget(`id:${(value as JsonRecord).id}`, file, op);
+  const raw = requiredString(value, "mutate requires target.");
+  const [prefix, rest] = splitTargetPrefix(raw);
+  if (!prefix) fail("INVALID_MCP_INPUT", `mutate target prefix is required for ${op}. Use jsx:, id:, fn:, text:, line:, json:, or heading:.`);
+  if (prefix === "id") return mutateIdTarget(rest, file, op);
+  if (prefix === "jsx") {
+    assertJsxMutation(file, op, prefix);
+    return rest;
+  }
+  fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix}: is not valid for ${op} on ${file}.`);
+}
+
+function splitTargetPrefix(value: string): [string | undefined, string] {
+  const index = value.indexOf(":");
+  if (index <= 0) return [undefined, value];
+  return [value.slice(0, index), value.slice(index + 1)];
+}
+
+function mutateIdTarget(value: string, file: string, op: string): string {
+  const [route, id] = splitTargetPrefix(value);
+  if (route === "jsx") {
+    assertJsxMutation(file, op, "id:jsx");
+    return id;
+  }
+  fail("INVALID_MCP_INPUT", `mutate target prefix id:${route ?? ""} is not valid for ${op} on ${file}.`);
+}
+
+function assertJsxMutation(file: string, op: string, prefix: string): void {
+  const ext = extname(file).toLowerCase();
+  if (![".jsx", ".tsx"].includes(ext)) fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix}: is only valid for JSX/TSX files, got ${file}.`);
+  if (!op.startsWith("prop.")) fail("INVALID_MCP_INPUT", `mutate op ${op} is not supported for target prefix ${prefix}: yet.`);
 }
 
 function flowStepsFromInput(input: JsonRecord): WorkspaceFlowStep[] {
