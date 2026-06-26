@@ -484,8 +484,8 @@ function mutateAstTarget(value: unknown, op: string): JsonRecord {
 }
 
 function mutateTargetHelp(op: string): { prefixes: string[]; examples: string[] } {
-  if (op === "body.replace") return { prefixes: ["fn:", "method:", "class:"], examples: ['target="fn:startServer"', 'target="method:Server.start"'] };
-  if (op === "body.insertBefore" || op === "body.insertAfter" || op === "declaration.move") return { prefixes: ["fn:", "class:", "method:", "prop:", "var:"], examples: ['target="fn:startServer"', 'target="class:Server"'] };
+  if (op === "body.replace") return { prefixes: ["fn:", "method:", "class:"], examples: ['target="fn:<name>"', 'target="method:<owner.name>"'] };
+  if (op === "body.insertBefore" || op === "body.insertAfter" || op === "declaration.move") return { prefixes: ["fn:", "class:", "method:", "prop:", "var:"], examples: ['target="fn:<name>"', 'target="class:<name>"'] };
   if (isMutateJsxOp(op)) return { prefixes: ["jsx:", "id:jsx:"], examples: ['target="jsx:Button"', 'target="id:jsx:<id>"'] };
   if (op === "ast.replace") return { prefixes: ["objectKey:", "call:", "string:", "contains:", "jsxText:", "jsxAttr:", "ast:"], examples: ['target="objectKey:label"', 'target="call:toast.error"'] };
   return { prefixes: [], examples: [] };
@@ -1199,7 +1199,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       examples: {
         jsx_prop: { file: "src/Page.tsx", target: "jsx:Button", "prop.set": { name: "disabled", value: true } },
         jsx_class: { file: "src/Page.tsx", target: "jsx:h1", "class.add": { className: "tracking-[-0.02em]" } },
-        ts_body: { file: "src/server.ts", target: "fn:startServer", "body.replace": { body: "return server.start();" } },
+        ts_body: { file: "src/server.ts", target: "fn:<name>", "body.replace": { body: "return server.start();" } },
         import_rename: { file: "src/Page.tsx", "imports.rename": { from: "./old", name: "OldName", to: "NewName" } },
         ast_string: { file: "src/messages.ts", target: "objectKey:label", "ast.replace": { replace: "Delete" } },
       },
