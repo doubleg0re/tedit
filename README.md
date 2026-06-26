@@ -1,27 +1,52 @@
 # tedit
 
-`tedit` is a tree-aware structural editor for source and document formats.
+**Stop making agents edit code like it’s Notepad.**
 
-The first adapter edits JSX/TSX. The long-term target is JSX, HTML, XML, Markdown, and MDX through one CLI, JS API, and JSON flow format.
+Safer code editing for coding agents.
+
+Has your agent ever broken a JSX tag, replaced the wrong repeated block, or pasted a full file when it only needed to change one line?
+
+`tedit` is an agent-native safe editing toolkit: search, inspect, edit,
+multiedit, patch, write, refactor, and verify through one CLI and MCP server.
+It keeps ordinary text edits boring, but adds guardrails agents need: exact
+match checks, fuzzy recovery hints, atomic multi-file writes, parser
+verification, compact diffs, and optional post-write commands.
+
+## Why tedit exists
+
+`tedit` started from watching agents struggle with large JSX files: one missed
+closing tag, one wrong repeated block, one full-file rewrite for a tiny change.
+
+Humans built IDEs, language servers, smart completion, refactors, and previews
+to make development less primitive. Agents should not be stuck editing code like
+they only have a notepad. `tedit` gives agents a safer editing surface: find the
+target, change the smallest thing, show the diff, verify the result, and recover
+when the first attempt is wrong.
 
 ## Architecture
 
 `tedit` is rule-based. The CLI resolves a file to a rule by extension, then runs actions through that rule's adapter.
 
-Current rule:
+Current rules:
 
 - `base`: every file, universal `edit`, `write`, `multiedit`, and `patch` primitives with exact, fuzzy, anchor, regex, line-range matching, and lightweight JSON/Markdown verification
-- `jsx`: `.js`, `.jsx`, `.ts`, `.tsx`
+- `jsx`: `.js`, `.jsx`, `.ts`, `.tsx` structural JSX/TSX edits
+- `json`: `.json`, `.jsonl`, `.ndjson`
+- `yaml`: `.yaml`, `.yml`
+- `markdown`: `.md`, `.markdown`, `.mdx`
+- `markup`: `.html`, `.htm`, `.xml`, `.svg`
 
-Planned rules:
+Additional focused tools:
 
-- `fdx`: Final Draft XML
-- `html`
-- `xml`
-- `markdown`
-- `mdx`
+- TS/JS declaration targeting and module-split refactors
+- Python syntax verification for safe string edits
+- MCP-first agent workflows with compact results and `read_detail` paging
 
 The flow engine is intentionally format-agnostic. JSX-specific parsing, printing, selector matching, and AST mutation live under `src/rules/jsx`.
+
+If you already have a patch, use `tedit patch`. If you know the text, use
+`tedit edit`. If you need to find targets first, use `search-text`,
+`inspect-range`, or MCP `select`.
 
 ## Examples
 
@@ -87,7 +112,7 @@ tedit new react-client-component src/components/Card.tsx --param name=Card --wri
 Install from npm for normal CLI and MCP usage:
 
 ```bash
-npm install -g tedit
+npm install -g tedit-tools
 tedit --version
 tedit setup mcp     # asks: claude, codex, or both; then user/project scope
 tedit doctor
@@ -100,7 +125,7 @@ tedit setup mcp --target both --scope user
 tedit setup mcp --target claude --scope project
 ```
 
-Codex currently supports user-scoped MCP setup only. `tedit setup print` emits the manual MCP JSON. If tedit tools do not appear after setup, restart or refresh your MCP host. `tedit update --check` reports newer npm versions; `tedit update` asks before running `npm install -g tedit@latest`.
+Codex currently supports user-scoped MCP setup only. `tedit setup print` emits the manual MCP JSON. If tedit tools do not appear after setup, restart or refresh your MCP host. `tedit update --check` reports newer npm versions; `tedit update` asks before running `npm install -g tedit-tools@latest`.
 
 For MCP hosts, register the installed bin:
 
@@ -121,7 +146,7 @@ Without a global install, use `npx`:
   "mcpServers": {
     "tedit": {
       "command": "npx",
-      "args": ["-y", "--package", "tedit@latest", "tedit-mcp"]
+      "args": ["-y", "--package", "tedit-tools@latest", "tedit-mcp"]
     }
   }
 }
@@ -135,7 +160,7 @@ For copyable AGENTS/CLAUDE instructions and optional skill text, see
 `tedit` also ships a stdio MCP server for agent hosts. The CLI remains
 unchanged for humans, CI, and shell workflows; MCP is the lower-friction
 agent surface over the same core edit, multiedit, patch, workspace-flow,
-and JSX mutation engines.
+and format-aware mutation engines, including JSX.
 
 ```json
 {
@@ -208,6 +233,11 @@ JSX/TSX elements, and text fallback hints. `inspect_range` and `search_text`
 bridge `sed`/`rg` style workflows into tedit's edit-ready structured results.
 `verify_file` accepts either `file` or `files` and gives parser coverage plus
 validity checks without trying to replace native Read.
+
+MCP tool categories are intent-based, not origin-based: `edit`, `generate`,
+`discover`, `verify`, `workflow`, `refactor`, `ast`, and `structure`. The JSX
+tools keep JSX names because that is the current structural implementation, but
+the product surface is no longer JSX-only.
 
 `flow` runs ordered workflow steps from either JSON `steps` or CLI-style `chain` text; use it when a find-then-mutate sequence should stay in one transaction.
 

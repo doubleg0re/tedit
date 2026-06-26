@@ -54,7 +54,7 @@ test("update check reports newer npm version without installing", () => {
   const out = run(["update", "--check"], { TEDIT_TEST_LATEST_VERSION: "9.9.9" });
 
   assert.match(out, /update available: 0\.1\.0 -> 9\.9\.9/);
-  assert.match(out, /npm install -g tedit@latest/);
+  assert.match(out, /npm install -g tedit-tools@latest/);
 });
 
 function fakeBin() {

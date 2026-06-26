@@ -9,7 +9,7 @@ export function makeVERIFY_TOOLS(deps: any) {
       name: "verify_file",
       title: "Verify File",
       description: "Verify one or more current files after native Read or before/after edits; this is parser coverage, not a full-content read replacement.",
-      category: "discover",
+      category: "verify",
       aliases: ["parse_check", "verify"],
       bestFor: ["checking parser support", "post-edit validation", "distinguishing parse skips from parse failures"],
       inputSchema: {

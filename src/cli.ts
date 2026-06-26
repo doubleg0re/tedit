@@ -429,12 +429,12 @@ async function commandUpdate(args: ParsedArgs): Promise<void> {
     return;
   }
   process.stdout.write(`update available: ${current} -> ${latest}\n`);
-  process.stdout.write("run: npm install -g tedit@latest\n");
+  process.stdout.write("run: npm install -g tedit-tools@latest\n");
   if (args.flags.check) return;
   const yes = Boolean(args.flags.yes || args.flags.y);
   if (!yes && !(await confirm("Run update now? [y/N] "))) return;
-  const result = spawnCommand("npm", ["install", "-g", "tedit@latest"], { stdio: "inherit" });
-  if (result.status !== 0) throw new Error("npm install -g tedit@latest failed.");
+  const result = spawnCommand("npm", ["install", "-g", "tedit-tools@latest"], { stdio: "inherit" });
+  if (result.status !== 0) throw new Error("npm install -g tedit-tools@latest failed.");
 }
 
 function commandInspectRange(args: ParsedArgs): void {

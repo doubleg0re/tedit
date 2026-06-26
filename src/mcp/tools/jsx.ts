@@ -9,7 +9,7 @@ export function makeJSX_TOOLS(deps: any) {
       name: "jsx_select",
       title: "JSX Select",
       description: "Read-only JSX selector facade. action=find returns matching node ids/previews; action=inspect returns one node's details. Both are safe discovery operations.",
-      category: "jsx",
+      category: "structure",
       aliases: ["find", "inspect"],
       bestFor: ["selector discovery", "inspecting JSX nodes before mutation", "getting stable target ids"],
       inputSchema: {
@@ -27,7 +27,7 @@ export function makeJSX_TOOLS(deps: any) {
       name: "jsx_node",
       title: "JSX Node",
       description: "JSX node mutation facade. Required action. append/prepend require element; wrap requires with/wrapper; rename requires to/name; insert_comment requires text.",
-      category: "jsx",
+      category: "structure",
       aliases: ["append", "prepend", "wrap", "unwrap", "remove", "rename", "insert_comment"],
       bestFor: ["structural JSX node edits", "wrapping/removing/renaming JSX", "comment insertion"],
       inputSchema: {
@@ -51,7 +51,7 @@ export function makeJSX_TOOLS(deps: any) {
       name: "jsx_attr",
       title: "JSX Attr",
       description: "JSX prop/class mutation facade. Required action. prop_set/remove use name/value/expr; class_add/remove use classes; class_replace uses from/to.",
-      category: "jsx",
+      category: "structure",
       aliases: ["prop_set", "prop_remove", "class_add", "class_remove", "class_replace"],
       bestFor: ["JSX prop edits", "static className token edits", "attribute-level changes"],
       inputSchema: {
@@ -74,7 +74,7 @@ export function makeJSX_TOOLS(deps: any) {
       name: "jsx_content",
       title: "JSX Content",
       description: "JSX text/expression mutation facade. Required action. text_set needs value or expr; text_replace needs match/with fields; expr_replace/wrap need code.",
-      category: "jsx",
+      category: "structure",
       aliases: ["text_set", "text_replace", "expr_replace", "expr_wrap", "expr_unwrap", "expr_to_ternary", "expr_to_short_circuit"],
       bestFor: ["text child replacement", "expression container edits", "ternary/short-circuit conversions"],
       inputSchema: {
@@ -102,7 +102,7 @@ export function makeJSX_TOOLS(deps: any) {
       name: "imports",
       title: "Imports",
       description: "Import declaration facade. Required action: add, remove, rename, or move. rename requires name and to; move requires to.",
-      category: "jsx",
+      category: "structure",
       aliases: ["imports_add", "imports_remove", "imports_rename", "imports_move"],
       bestFor: ["adding imports", "removing imports", "renaming or moving import specifiers"],
       inputSchema: {

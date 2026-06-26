@@ -47,7 +47,7 @@ export type TeditMcpTool = {
   title: string;
   description: string;
   inputSchema: z.ZodRawShape;
-  category?: "edit" | "generate" | "discover" | "jsx" | "ast" | "refactor" | "workflow";
+  category?: "edit" | "generate" | "discover" | "verify" | "structure" | "ast" | "refactor" | "workflow";
   exposure?: "default" | "advanced";
   action?: string;
   aliases?: readonly string[];
@@ -1397,7 +1397,7 @@ function singleStepTool(config: SingleStepConfig): TeditMcpTool {
     title: config.title,
     description: config.description,
     inputSchema: config.inputSchema,
-    category: config.category ?? "jsx",
+    category: config.category ?? "structure",
     exposure: config.exposure ?? "advanced",
     action: config.action,
     aliases: config.aliases ?? (config.action === config.name ? [] : [config.action]),

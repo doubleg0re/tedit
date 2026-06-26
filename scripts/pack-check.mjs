@@ -217,7 +217,7 @@ function compactSmoke(smoke) {
 
 function packageMetadataFailures(packageJson) {
   const metadataFailures = [];
-  if (packageJson.name !== "tedit") metadataFailures.push({ field: "name", expected: "tedit", actual: packageJson.name });
+  if (packageJson.name !== "tedit-tools") metadataFailures.push({ field: "name", expected: "tedit-tools", actual: packageJson.name });
   if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z-.]+)?$/.test(String(packageJson.version))) metadataFailures.push({ field: "version", actual: packageJson.version });
   if (packageJson.type !== "module") metadataFailures.push({ field: "type", expected: "module", actual: packageJson.type });
   if (typeof packageJson.description !== "string" || packageJson.description.trim() === "") metadataFailures.push({ field: "description" });

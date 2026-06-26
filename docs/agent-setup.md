@@ -8,7 +8,7 @@ as a human CLI.
 Published package:
 
 ```bash
-npm install -g tedit
+npm install -g tedit-tools
 tedit --version
 tedit actions --json
 ```
@@ -16,8 +16,8 @@ tedit actions --json
 No global install:
 
 ```bash
-npx -y tedit@latest --version
-npx -y --package tedit@latest tedit actions --json
+npx -y tedit-tools@latest --version
+npx -y --package tedit-tools@latest tedit actions --json
 ```
 
 Local checkout:
@@ -49,7 +49,7 @@ Use `npx` when you do not want a global install:
   "mcpServers": {
     "tedit": {
       "command": "npx",
-      "args": ["-y", "--package", "tedit@latest", "tedit-mcp"]
+      "args": ["-y", "--package", "tedit-tools@latest", "tedit-mcp"]
     }
   }
 }

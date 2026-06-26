@@ -2040,7 +2040,9 @@ test("mcp server lists tools and runs universal edit", async () => {
     const propSetMeta = advancedTools.find((tool) => tool.name === "prop_set");
     assert.equal(editToolMeta.category, "edit");
     assert.ok(editToolMeta.best_for.includes("single localized text/code edit"));
+    assert.equal(verifyMeta.category, "verify");
     assert.equal(verifyMeta.readOnly, true);
+    assert.equal(jsxAttrMeta.category, "structure");
     assert.equal(jsxAttrMeta.exposure, "advanced");
     assert.equal(jsxAttrMeta.registered, false);
     assert.equal(templatesMeta.category, "discover");
