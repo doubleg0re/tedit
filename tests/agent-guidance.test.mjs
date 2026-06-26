@@ -16,7 +16,7 @@ test("actions guidance gives agents a stable workflow decision table", () => {
   assert.equal(actions.ok, true);
   assert.equal(actions.guidance.$detail, true);
   assert.ok(Array.isArray(guide.workflow_guide));
-  assert.ok(guide.workflow_guide.some((row) => row.when.includes("target context") && row.first_tool === "search_text"));
+  assert.ok(guide.workflow_guide.some((row) => row.when.includes("target context") && row.first_tool === "search"));
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("one localized") && row.first_tool === "edit"));
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("several places") && row.then === "multiedit"));
   assert.ok(guide.workflow_guide.some((row) => row.when.includes("generated diff") && row.first_tool === "patch"));
@@ -61,13 +61,13 @@ test("README documents the same agent workflow pivots", () => {
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   for (const text of [
     "The `actions` response includes an agent workflow guide.",
-    "`search_text` or `inspect_range`",
+    "`search` when the target",
     "`edit` for one localized",
-    "`multiedit` after `search_text`",
+    "`multiedit` after `search`",
     "`delete_file` or `rename_file`",
     "`patch` only when the change already exists",
     "`file_write` for whole-file generation",
-    "`TEDIT_MCP_PROFILE=all` for AST",
+    "`TEDIT_MCP_PROFILE=all` for compat/advanced",
     "`MATCH_NONE`",
     "`PATCH_HUNK_FAILED`",
   ]) {

@@ -158,7 +158,7 @@ test("golden: search-text detailed output contract", () => {
         },
         suggestions: [
           {
-            tool: "inspect_range",
+            tool: "search",
             cliCommand: "inspect-range",
             arguments: { file: "<tmp>/src/Page.tsx", lines: "2", context: 1 },
           },
@@ -191,7 +191,7 @@ test("golden: search-text detailed output contract", () => {
         },
         suggestions: [
           {
-            tool: "inspect_range",
+            tool: "search",
             cliCommand: "inspect-range",
             arguments: { file: "<tmp>/src/Page.tsx", lines: "3", context: 1 },
           },

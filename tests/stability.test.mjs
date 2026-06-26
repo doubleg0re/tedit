@@ -34,7 +34,7 @@ test("stability: agent workflow keeps compact and detailed output contracts", ()
   assert.equal(detailedSearch.matchCount, 3);
   assert.equal(detailedSearch.fileCount, 2);
   assert.equal(detailedSearch.results[0].range.line, 2);
-  assert.equal(detailedSearch.results[0].suggestions[0].tool, "inspect_range");
+  assert.equal(detailedSearch.results[0].suggestions[0].tool, "search");
   assert.equal(detailedSearch.results[0].suggestions[0].cliCommand, "inspect-range");
   assert.equal(detailedSearch.multiedit.edits.length, 2);
   assert.equal(detailedSearch.multiedit.editCount, 2);

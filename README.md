@@ -224,19 +224,19 @@ more useful than raw text.
 
 The default MCP profile is `agent`, which keeps the callable tool list small and intent-oriented:
 
-`actions`, `select`, `edit`, `multiedit`, `mutate`, `apply_dry_run`, `patch`, `flow`, `delete_file`,
-`rename_file`, `ts_select`, `ts_edit`, `ts_move`, `file_write`,
-`inspect_range`, `search_text`, `read_detail`, `verify_file`, and `refactor`.
+`actions`, `select`, `search`, `edit`, `multiedit`, `mutate`, `apply_dry_run`, `patch`, `flow`,
+`refactor`, `file_write`, `delete_file`, `rename_file`, `read_detail`, and `verify_file`.
 
-MCP edit, multiedit, mutate, ts_edit, and flow write by default;
+MCP edit, multiedit, mutate, and flow write by default;
 pass dryRun:true when you want a preview. CLI commands keep their existing
 dry-run-by-default policy. patch, delete_file, and rename_file stay conservative
 by default because they represent generated diffs or file-system destructive
 operations.
 
 `select` is the common facade for TS/JS declarations, Python functions/classes,
-JSX/TSX elements, and text fallback hints. `inspect_range` and `search_text`
-bridge `sed`/`rg` style workflows into tedit's edit-ready structured results.
+JSX/TSX elements, and text fallback hints. `search` is the common text/range
+discovery facade: pass `query` for `rg` style search, or `file` plus
+`lines`/`head`/`tail` for `sed`/`head`/`tail` style inspection.
 `verify_file` accepts either `file` or `files` and gives parser coverage plus
 validity checks without trying to replace native Read.
 
@@ -273,14 +273,16 @@ The `actions` response includes an agent workflow guide. The intended default
 loop is:
 
 - `select` for file-type-aware TS/JS/Python/JSX/TSX target discovery.
-- `search_text` or `inspect_range` when the target is not certain yet.
+- `search` when the target is not certain yet or line context is needed.
 - `read_detail` only when a compact response returns a `$detail` descriptor and its inline `preview` is not enough.
 - `edit` for one localized replacement, insertion, deletion, regex, fuzzy, or
   line-range change; pass `dryRun:true` for preview.
-- `multiedit` after `search_text` when the same change spans several places or
+- `multiedit` after `search` when the same change spans several places or
   files.
 - `mutate` after `select` when one structural target should change without
   choosing a backend-specific JSX/TS tool; use `op`, prefixed `target`, and `args`.
+  Boundary: single file + single transformation = `mutate`; multi-file, planned,
+  or symbol-graph-aware changes = `refactor`.
 - `apply_dry_run` when a successful dry-run returns `suggestedActions`; it
   applies the reviewed change by id after checking source hashes.
 - `delete_file` or `rename_file` for one-file cleanup or moves without
@@ -292,10 +294,11 @@ loop is:
 - `verify_file` before or after edits when parser coverage matters; pass
   `files` to check several related files in one call. `.py` receives a
   syntax-only guard (`parser: "python-syntax"`), not structural Python rewriting.
-- `refactor` for existing CLI refactor workflows from the default MCP profile:
+- `refactor` for higher-level workflows from the default MCP profile:
   `kind: "state"`, `kind: "extract"`, or `kind: "apply-plan"`.
-- `TEDIT_MCP_PROFILE=all` for AST, JSX/markup structural actions, templates,
-  history, and fine-grained extract/refactor helpers.
+- `TEDIT_MCP_PROFILE=all` for compat/advanced tools such as `search_text`,
+  `inspect_range`, `ts_select`, `ts_edit`, `ts_move`, AST, JSX/markup structural
+  actions, templates, history, and fine-grained extract/refactor helpers.
 
 Failure responses are part of the workflow: `MATCH_NONE`,
 `MATCH_NOT_UNIQUE`, `PARSE_BROKEN_AFTER_EDIT`, `AST_MATCH_NONE`, and
@@ -309,7 +312,7 @@ server.
 
 Set `TEDIT_MCP_PROFILE=all` (or `TEDIT_MCP_EXPOSE_ADVANCED=true`) to expose
 the advanced and legacy fine-grained tools as MCP tools too, including
-`create_file`, `templates`, `history_trace`, `scan_strings`, `ast_select`,
+`search_text`, `inspect_range`, `create_file`, `templates`, `history_trace`, `scan_strings`, `ast_select`,
 `ast_edit`, `ts_select`, `ts_edit`, `ts_move`, `jsx_select`, `jsx_node`,
 `jsx_attr`, `jsx_content`, `imports`, `extract_component`, `analyze_state`,
 `refactor_state`, `apply_plan`, `chain_workspace`, `write_file`,

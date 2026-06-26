@@ -175,7 +175,7 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   assert.equal(search.results[0].suggested.tool, "edit");
   assert.equal(search.results[0].suggested.findLines, "2");
   assert.match(search.results[0].suggested.replaceHint, /trailing newline/);
-  assert.equal(search.results[0].suggestions[0].tool, "inspect_range");
+  assert.equal(search.results[0].suggestions[0].tool, "search");
   assert.equal(search.results[0].suggestions[0].cliCommand, "inspect-range");
 
   const braceGlobSearch = JSON.parse(run(["search-text", "삭제", src, "--glob", "**/*.{tsx, ts}", "--multiedit-spec", "--replace", "Delete", "--json"]));
@@ -1953,18 +1953,14 @@ test("mcp server lists tools and runs universal edit", async () => {
       "edit",
       "file_write",
       "flow",
-      "inspect_range",
       "multiedit",
       "mutate",
       "patch",
       "read_detail",
       "refactor",
       "rename_file",
-      "search_text",
+      "search",
       "select",
-      "ts_edit",
-      "ts_move",
-      "ts_select",
       "verify_file",
     ].sort());
     assert.ok(tools.tools.some((tool) => tool.name === "edit"));
@@ -1972,16 +1968,17 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(tools.tools.some((tool) => tool.name === "delete_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "rename_file"));
     assert.ok(tools.tools.some((tool) => tool.name === "refactor"));
-    assert.ok(tools.tools.some((tool) => tool.name === "ts_select"));
-    assert.ok(tools.tools.some((tool) => tool.name === "ts_edit"));
-    assert.ok(tools.tools.some((tool) => tool.name === "ts_move"));
+    assert.ok(tools.tools.every((tool) => tool.name !== "ts_select"));
+    assert.ok(tools.tools.every((tool) => tool.name !== "ts_edit"));
+    assert.ok(tools.tools.every((tool) => tool.name !== "ts_move"));
     assert.ok(tools.tools.some((tool) => tool.name === "file_write"));
     assert.ok(tools.tools.some((tool) => tool.name === "flow"));
+    assert.ok(tools.tools.some((tool) => tool.name === "search"));
     assert.ok(tools.tools.some((tool) => tool.name === "mutate"));
     assert.ok(tools.tools.some((tool) => tool.name === "apply_dry_run"));
     assert.ok(tools.tools.some((tool) => tool.name === "verify_file"));
-    assert.ok(tools.tools.some((tool) => tool.name === "inspect_range"));
-    assert.ok(tools.tools.some((tool) => tool.name === "search_text"));
+    assert.ok(tools.tools.every((tool) => tool.name !== "inspect_range"));
+    assert.ok(tools.tools.every((tool) => tool.name !== "search_text"));
     assert.ok(tools.tools.some((tool) => tool.name === "read_detail"));
     assert.equal(toolNames.includes("chain_workspace"), false);
     assert.equal(toolNames.includes("apply_plan"), false);
@@ -2017,12 +2014,13 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(actionsDiscovery.structuredContent.actions.includes("delete_file"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("rename_file"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("refactor"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("ts_select"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("ts_edit"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("ts_move"));
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("ts_select"), false);
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("ts_edit"), false);
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("ts_move"), false);
     assert.ok(actionsDiscovery.structuredContent.actions.includes("file_write"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("inspect_range"));
-    assert.ok(actionsDiscovery.structuredContent.actions.includes("search_text"));
+    assert.ok(actionsDiscovery.structuredContent.actions.includes("search"));
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("inspect_range"), false);
+    assert.equal(actionsDiscovery.structuredContent.actions.includes("search_text"), false);
     assert.ok(actionsDiscovery.structuredContent.actions.includes("read_detail"));
     assert.ok(actionsDiscovery.structuredContent.actions.includes("verify_file"));
     assert.equal(actionsDiscovery.structuredContent.actions.includes("create_file"), false);
@@ -2040,7 +2038,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     const editToolMeta = actionTools.find((tool) => tool.name === "edit");
     const mutateMeta = actionTools.find((tool) => tool.name === "mutate");
     const verifyMeta = actionTools.find((tool) => tool.name === "verify_file");
-    const searchTextMeta = actionTools.find((tool) => tool.name === "search_text");
+    const searchMeta = actionTools.find((tool) => tool.name === "search");
     const templatesMeta = advancedTools.find((tool) => tool.name === "templates");
     const scanStringsMeta = advancedTools.find((tool) => tool.name === "scan_strings");
     const jsxAttrMeta = advancedTools.find((tool) => tool.name === "jsx_attr");
@@ -2051,14 +2049,15 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(mutateMeta.best_for.includes("one selected structural mutation"));
     assert.equal(verifyMeta.category, "verify");
     assert.equal(verifyMeta.readOnly, true);
+    assert.equal(searchMeta.category, "discover");
     assert.equal(jsxAttrMeta.category, "structure");
     assert.equal(jsxAttrMeta.exposure, "advanced");
     assert.equal(jsxAttrMeta.registered, false);
     assert.equal(templatesMeta.category, "discover");
     assert.equal(templatesMeta.readOnly, true);
     assert.equal(templatesMeta.registered, false);
-    assert.equal(searchTextMeta.category, "discover");
-    assert.equal(searchTextMeta.readOnly, true);
+    assert.equal(searchMeta.category, "discover");
+    assert.equal(searchMeta.readOnly, true);
     assert.equal(scanStringsMeta.category, "ast");
     assert.equal(scanStringsMeta.readOnly, true);
     assert.equal(scanStringsMeta.registered, false);
@@ -2074,18 +2073,14 @@ test("mcp server lists tools and runs universal edit", async () => {
       "edit",
       "file_write",
       "flow",
-      "inspect_range",
       "multiedit",
       "mutate",
       "patch",
       "read_detail",
       "refactor",
       "rename_file",
-      "search_text",
+      "search",
       "select",
-      "ts_edit",
-      "ts_move",
-      "ts_select",
       "verify_file",
     ].sort());
     assert.ok(actionsDiscovery.structuredContent.profiles.agent.includes("mutate"));
@@ -2150,8 +2145,8 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(mutateBadOp.isError, true);
     assert.match(mutateBadOp.content[0].text, /Supported ops:/);
-    assert.ok(mutateBadOp.structuredContent.supportedOps.includes("body.replace"));
-    assert.ok(mutateBadOp.structuredContent.supportedOps.includes("ast.replace"));
+    assert.match(mutateBadOp.content[0].text, /body\.replace/);
+    assert.match(mutateBadOp.content[0].text, /ast\.replace/);
     assert.ok(mutateBadOp.structuredContent.suggestions.some((suggestion) => suggestion.includes("body.replace")));
 
     const result = await client.callTool({
@@ -2267,7 +2262,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.ok(readFileSync(mcpLoopFile, "utf8").includes("function save(value)"));
 
     const searchTextResult = await client.callTool({
-      name: "search_text",
+      name: "search",
       arguments: { query: "삭제", paths: [mcpSearchDir], glob: "**/*.tsx", context: 1, multieditSpec: true, replace: "Delete" },
     });
     assert.equal(searchTextResult.isError, undefined);
@@ -2281,10 +2276,10 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(searchTextResult.structuredContent.results[0].lineRange, "2");
     assert.equal(searchTextResult.structuredContent.results[0].context, undefined);
     assert.equal(searchTextResult.structuredContent.results[0].suggested, undefined);
-    assert.ok(searchTextResult.structuredContent.suggestions.some((suggestion) => suggestion.includes("inspect_range")));
+    assert.ok(searchTextResult.structuredContent.suggestions.some((suggestion) => suggestion.includes("search")));
 
     const inspectRangeResult = await client.callTool({
-      name: "inspect_range",
+      name: "search",
       arguments: { file: mcpSearchFile, lines: "2:2", context: 1 },
     });
     assert.equal(inspectRangeResult.isError, undefined);

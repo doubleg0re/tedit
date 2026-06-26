@@ -155,7 +155,7 @@ const elementSchema = z.unknown().describe("Element shorthand string or tree nod
 export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
   ...makeEDIT_TOOLS({ fileSchema, runApplyDryRunTool, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runMutateTool, runPatchTool, runRenameFileTool, writeFlagSchema }),
   ...makeGENERATE_TOOLS({ fileSchema, runCreateFileTool, runFileWriteTool, runNewFileTool, runScaffoldFileTool, runWriteFileTool, writeFlagSchema }),
-  ...makeDISCOVERY_TOOLS({ detailFlagSchema, fileSchema, runActionsTool, runHistoryTraceTool, runInspectRangeTool, runReadDetailTool, runScanStringsTool, runSearchTextTool, runSelectTool, runTemplatesTool }),
+  ...makeDISCOVERY_TOOLS({ detailFlagSchema, fileSchema, runActionsTool, runHistoryTraceTool, runInspectRangeTool, runReadDetailTool, runScanStringsTool, runSearchTextTool, runSearchTool, runSelectTool, runTemplatesTool }),
   ...makeAST_TOOLS({ detailFlagSchema, fileSchema, runAstEditTool, runAstSelectTool, runTsEditTool, runTsMoveTool, runTsSelectTool, writeFlagSchema }),
   ...makeREFACTOR_TOOLS({ fileSchema, runAnalyzeStateTool, runRefactorTool, selectorSchema, writeFlagSchema }),
   ...makeVERIFY_TOOLS({ fileSchema, runVerifyFileTool }),
@@ -180,12 +180,8 @@ const AGENT_MCP_TOOL_NAMES = new Set([
   "flow",
   "delete_file",
   "rename_file",
-  "ts_select",
-  "ts_edit",
-  "ts_move",
   "file_write",
-  "inspect_range",
-  "search_text",
+  "search",
   "read_detail",
   "verify_file",
   "refactor",
@@ -478,7 +474,7 @@ function mutateTsSelector(value: unknown, file: string, op: string): string {
   fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix ?? "<none>"}: is not valid for ${op} on ${file}. Valid target prefixes: ${MUTATE_TS_TARGETS}.`, {
     op,
     validTargets: MUTATE_TS_TARGETS,
-    suggestions: [`Use target="fn:<name>" for function body edits, or call ts_select first.`],
+    suggestions: [`Use target="fn:<name>" for function body edits, or call select first.`],
   });
 }
 
@@ -596,6 +592,12 @@ function runTemplatesTool(args: unknown): unknown {
     templates,
     count: templates.length,
   }, input);
+}
+
+function runSearchTool(args: unknown): unknown {
+  const input = recordInput(args, "search");
+  if (input.query !== undefined) return runSearchTextTool(input.file !== undefined && input.path === undefined && input.paths === undefined ? { ...input, path: input.file } : input);
+  return runInspectRangeTool(input);
 }
 
 function runInspectRangeTool(args: unknown): unknown {
@@ -758,8 +760,8 @@ function selectTsMatches(file: string, selector: string | undefined, kind: strin
     preview: match.preview,
     context: match.context,
     canReplaceBody: match.canReplaceBody,
-    editHint: { tool: "ts_edit", file, selector: match.selector },
-    moveHint: { tool: "ts_move", file, target: match.selector },
+    editHint: { tool: "mutate", file, target: match.selector, op: "body.replace" },
+    moveHint: { tool: "mutate", file, target: match.selector, op: "declaration.move" },
   }));
 }
 
@@ -792,7 +794,7 @@ function selectJsxMatches(file: string, selector: string): JsonRecord[] {
       editHint: lineRange
         ? { tool: "edit", file, findLines: lineRange }
         : { tool: "edit", file, findExact: match.preview ?? selector },
-      inspectHint: lineRange ? { tool: "inspect_range", file, lines: lineRange } : undefined,
+      inspectHint: lineRange ? { tool: "search", file, lines: lineRange } : undefined,
     };
   });
 }
@@ -1112,8 +1114,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "Use the host/native Read tool for full file contents; tedit does not duplicate plain file reading yet.",
       "Use actions first when unsure; it returns the current profile, default tools, advanced tools, and examples.",
       "Use select as the common TS/JS/JSX/TSX target discovery facade before choosing mutate for structural edits or edit for text spans.",
-      "Use inspect_range for sed-style line context plus parse status and edit-ready findLines suggestions.",
-      "Use search_text for rg/grep-style raw text discovery when the next step is likely a tedit edit.",
+      "Use search for grep/sed/head/tail-style text and line-range discovery.",
       "Use read_detail only when a compact response returns a $detail descriptor for a field you actually need.",
       "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
       "Pass verify for optional post-write project checks such as typecheck, lint, test, or build.",
@@ -1122,13 +1123,13 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
     profile: {
       current: teditMcpProfileFromEnv(),
-      default_surface: "Agent profile exposes actions, select, edit, multiedit, mutate, apply_dry_run, patch, delete_file, rename_file, ts_select, ts_edit, ts_move, file_write, inspect_range, search_text, read_detail, and verify_file.",
+      default_surface: "Agent profile exposes actions, select, search, edit, multiedit, mutate, apply_dry_run, patch, flow, refactor, file_write, delete_file, rename_file, read_detail, and verify_file.",
       advanced_surface: "Set TEDIT_MCP_PROFILE=all to expose JSX, TS declaration, AST, history, template, extract, plan, and legacy fine-grained tools.",
       refresh_hint: "If actions lists a tool but the host does not expose it as callable, restart or refresh the MCP host; tool schema/name changes are captured only when the host reloads the server.",
     },
     tool_priorities: [
       "select for file-type-aware target discovery", 
-      "search_text or inspect_range for text/range discovery",
+      "search for text/range discovery",
       "edit for one localized change; MCP writes by default unless dryRun:true",
       "mutate for one JSX/TS/import/AST structural change; MCP writes by default unless dryRun:true",
       "multiedit for repeated or cross-file changes",
@@ -1142,20 +1143,20 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     ],
     workflow_guide: [
       { when: "need file-type-aware target discovery", first_tool: "select", then: "mutate for structural ops or edit for text spans", reason: "one common facade routes TS/JS declarations, JSX elements, or text fallback" },
-      { when: "need target context before editing", first_tool: "search_text", then: "inspect_range or edit", reason: "turn raw text matches into line ranges and edit-ready suggestions" },
+      { when: "need target context before editing", first_tool: "search", then: "edit", reason: "turn raw text or line ranges into edit-ready suggestions" },
       { when: "one localized replacement/insertion/deletion", first_tool: "edit", then: "pass dryRun:true first when preview is needed", reason: "MCP edit writes by default; exact/fuzzy/regex/line strategies plus parser guardrails" },
-      { when: "same change across several places or files", first_tool: "search_text", then: "multiedit", reason: "search_text can emit a grouped multiedit spec; multiedit applies atomically" },
+      { when: "same change across several places or files", first_tool: "search", then: "multiedit", reason: "search can emit a grouped multiedit spec; multiedit applies atomically" },
       { when: "already have a generated diff", first_tool: "patch", then: "verify_file for important touched files", reason: "patch accepts unified diff and Codex apply-patch envelopes" },
       { when: "delete or rename one file", first_tool: "delete_file or rename_file", then: "patch for multi-file transactions", reason: "single-file cleanup no longer requires hand-authored patch text" },
       { when: "project-specific validation is needed after write", first_tool: "edit/multiedit/patch with verify", then: "inspect verify stdout/stderr; optionally rollbackOnFail", reason: "repo checks vary, so verification is opt-in per mutation" },
       { when: "create or overwrite a whole file", first_tool: "file_write", then: "verify_file", reason: "mode=write/scaffold/template keeps generation behind write policy and parse verification" },
-      { when: "large plain-TS named function or class edit", first_tool: "ts_select", then: "mutate body.replace/body.insertBefore/body.insertAfter or ts_edit", reason: "named declaration selectors avoid brittle old_string ranges and keep braces/trivia mechanical" },
+      { when: "large plain-TS named function or class edit", first_tool: "select", then: "mutate body.replace/body.insertBefore/body.insertAfter", reason: "named declaration selectors avoid brittle old_string ranges and keep braces/trivia mechanical" },
       { when: "hardcoded JS/TS/JSX strings", first_tool: "scan_strings", then: "mutate ast.replace or ast_edit", reason: "AST scanning covers code strings that structural find does not" },
       { when: "structural JSX/TS/import/AST mutation", first_tool: "mutate", then: "use actions examples when op args are unclear", reason: "single facade covers JSX props/classes/text/nodes, imports, TS body/move, and AST string operations" },
-      { when: "need change history before risky edit", first_tool: "history_trace", then: "inspect_range or edit", reason: "history_trace avoids hand-assembling blame/log commands" },
+      { when: "need change history before risky edit", first_tool: "history_trace", then: "search or edit", reason: "history_trace avoids hand-assembling blame/log commands" },
     ],
     failure_recovery: [
-      { code: "MATCH_NONE", suggestion: "Use returned candidates, search_text, or inspect_range; retry with findLines/fuzzy/regex only after inspecting context." },
+      { code: "MATCH_NONE", suggestion: "Use returned candidates or search; retry with findLines/fuzzy/regex only after inspecting context." },
       { code: "MATCH_NOT_UNIQUE", suggestion: "Use returned candidate line ranges or add expectCount when replaceAll is intended." },
       { code: "PARSE_BROKEN_AFTER_EDIT", suggestion: "Do not force write; inspect the proposed replacement and keep syntax balanced before retrying." },
       { code: "AST_MATCH_NONE", suggestion: "Use scan_strings candidates or switch selector type, for example JSXText instead of StringLiteral." },
@@ -1170,8 +1171,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "delete one file", tool: "delete_file", reason: "dry-run/write delete without authoring a patch envelope" },
       { intent: "rename one file", tool: "rename_file", reason: "dry-run/write move without authoring a patch envelope" },
       { intent: "post-write typecheck/lint/test", tool: "verify option", reason: "optional command hook with timeoutMs and rollbackOnFail" },
-      { intent: "line range context before editing", tool: "inspect_range", reason: "sed-style context plus parser status and edit findLines suggestion" },
-      { intent: "raw text search before editing", tool: "search_text", reason: "grep-style candidates with inspect/edit/multiedit follow-ups" },
+      { intent: "text or line range context before editing", tool: "search", reason: "grep/sed-style candidates plus parser status and edit/multiedit follow-ups" },
       { intent: "who changed this or when", tool: "history_trace", reason: "git blame/log history without hand-assembling commands" },
       { intent: "must-be-new full file", tool: "create_file", reason: "no-overwrite creation is a safety boundary" },
       { intent: "whole-file generation or scaffold/template", tool: "file_write", required: ["mode"], reason: "write/scaffold/template facade with parser guardrails" },
@@ -1179,8 +1179,8 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "structural JSX/TS/import/AST mutation", tool: "mutate", reason: "selector/id/prefixed target edits avoid brittle text spans while hiding backend-specific tools" },
       { intent: "hardcoded text audit", tool: "scan_strings", reason: "AST scan covers JSX text/attrs plus JS/TS string literals; find remains structural" },
       { intent: "code AST discovery or one safe string replacement", tool: "mutate ast.replace", reason: "AST shortcuts target common string/object/JSX text replacements" },
-      { intent: "large TS declaration body edit", tool: "ts_select, then ts_edit", reason: "selector resolves the named declaration and tedit owns the outer braces" },
-      { intent: "reorder TS declarations", tool: "ts_move", reason: "dry-run-first source-range move with carried trivia hints and take/drop overrides" },
+      { intent: "large TS declaration body edit", tool: "select, then mutate body.replace", reason: "selector resolves the named declaration and tedit owns the outer braces" },
+      { intent: "reorder TS declarations", tool: "mutate declaration.move", reason: "single-file declaration move with carried trivia hints and take/drop overrides" },
     ],
     refactor_loop: [
       { intent: "small confident JSX component extraction", tool: "extract_component", required: ["mode=direct", "from", "selector", "to", "name"], reason: "direct dry-run/write extraction with prop inference and parser guardrails" },
@@ -1210,16 +1210,16 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       extract_component_plan: { mode: "plan", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard", planOut: ".tedit/plans/extract-card.json" },
       apply_plan: { plan: ".tedit/plans/extract-card.json", write: true },
       jsx_attr: { action: "prop_set", file: "src/Page.tsx", selector: "Card", name: "data-extracted", value: true, write: true },
-      inspect_range: { file: "src/Page.tsx", lines: "120:140", context: 3 },
+      search_range: { file: "src/Page.tsx", lines: "120:140", context: 3 },
       search_text: { query: "삭제", paths: ["src"], glob: "**/*.tsx", context: 2, multieditSpec: true, replace: "Delete" },
       history_trace: { file: "src/Page.tsx", lines: "120:140", limit: 5 },
       templates: { cwd: "." },
       scan_strings: { file: "src/Page.tsx", contains: "삭제" },
       ast_select: { file: "src/Page.tsx", selector: "ObjectProperty[key.name=\"label\"] > StringLiteral" },
       ast_edit: { file: "src/Page.tsx", call: "toast.error", replace: "Failed", write: true },
-      ts_select: { file: "src/server.ts", selector: "fn:apiGateMetadata" },
-      ts_edit: { file: "src/server.ts", selector: "fn:apiGateMetadata", body: "\n  return buildMetadata();\n" },
-      ts_move: { file: "src/server.ts", target: "fn:apiGateMetadata", before: "fn:startServer", dryRun: true },
+      ts_select_compat: { file: "src/server.ts", selector: "fn:apiGateMetadata" },
+      ts_edit_compat: { file: "src/server.ts", selector: "fn:apiGateMetadata", body: "\n  return buildMetadata();\n" },
+      ts_move_compat: { file: "src/server.ts", target: "fn:apiGateMetadata", before: "fn:startServer", dryRun: true },
       chain_workspace: {
         steps: [
           { action: "extract", from: "src/Page.tsx", selector: "Card", to: "src/components/PageCard.tsx", name: "PageCard" },
@@ -1229,9 +1229,9 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       },
     },
     mcp_write_defaults: {
-      writes_by_default: ["edit", "multiedit", "mutate", "ts_edit", "flow"],
+      writes_by_default: ["edit", "multiedit", "mutate", "flow"],
       preview_only: "pass dryRun:true",
-      conservative_by_default: ["patch", "delete_file", "rename_file", "file_write", "ts_move"],
+      conservative_by_default: ["patch", "delete_file", "rename_file", "file_write"],
     },
     cli_fallbacks: {
       edit: "node dist/cli.js edit src/Page.tsx --find '<LoginButtons variant=\"inline\" />' --replace '<button>로그인</button>' --write --json",

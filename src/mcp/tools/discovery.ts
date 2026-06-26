@@ -3,7 +3,7 @@ import type { TeditMcpTool } from "../../mcp-tools.js";
 
 // ponytail: explicit any avoids runtime imports from the source module; tighten when dependency typing matters.
 export function makeDISCOVERY_TOOLS(deps: any): readonly TeditMcpTool[] {
-  const { detailFlagSchema, fileSchema, runActionsTool, runHistoryTraceTool, runInspectRangeTool, runReadDetailTool, runScanStringsTool, runSearchTextTool, runSelectTool, runTemplatesTool } = deps;
+  const { detailFlagSchema, fileSchema, runActionsTool, runHistoryTraceTool, runInspectRangeTool, runReadDetailTool, runScanStringsTool, runSearchTextTool, runSearchTool, runSelectTool, runTemplatesTool } = deps;
   return [
     {
       name: "actions",
@@ -32,6 +32,36 @@ export function makeDISCOVERY_TOOLS(deps: any): readonly TeditMcpTool[] {
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       handler: runTemplatesTool,
+    },
+    {
+      name: "search",
+      title: "Search",
+      description: "Read-only text/range discovery facade. Pass query for grep-style search, or file plus lines/head/tail for sed/head/tail-style inspection.",
+      category: "discover",
+      aliases: ["grep", "inspect", "range_context", "text_search"],
+      bestFor: ["text discovery", "line context", "grep/sed/head/tail workflows before editing"],
+      inputSchema: {
+        query: z.string().min(1).optional().describe("Literal search text or regex pattern when regex=true. Omit when inspecting file lines/head/tail."),
+        file: fileSchema.optional().describe("File to inspect when using lines/head/tail. Also accepted as single-file search path when query is present."),
+        lines: z.string().min(1).optional().describe("Line range such as 42 or 40:50. Mutually exclusive with query/head/tail."),
+        head: z.number().int().positive().optional().describe("Inspect the first N lines. Mutually exclusive with query/lines/tail."),
+        tail: z.number().int().positive().optional().describe("Inspect the last N content lines. Mutually exclusive with query/lines/head."),
+        paths: z.array(z.string().min(1)).optional().describe("Files or directories to search. Defaults to cwd."),
+        path: z.string().min(1).optional().describe("Single file or directory alias for paths."),
+        regex: z.boolean().optional().describe("Treat query as a JavaScript regular expression."),
+        glob: z.string().optional().describe("Simple glob filter, e.g. **/*.tsx."),
+        context: z.number().int().nonnegative().optional().describe("Additional lines before and after each result or requested range."),
+        multieditSpec: z.boolean().optional().describe("Also return a file-grouped multiedit spec for replacing the matched query."),
+        replace: z.string().optional().describe("Replacement text for multieditSpec. Defaults to a placeholder."),
+        maxResults: z.number().int().positive().optional().describe("Maximum result count. Defaults to 100."),
+        caseSensitive: z.boolean().optional().describe("Use case-sensitive matching. Literal and regex searches default to case-insensitive."),
+        includeHidden: z.boolean().optional().describe("Include hidden files and directories except built-in excluded directories."),
+        output: z.enum(["compact", "detailed"]).optional().describe("Response shape. Defaults to compact; detailed includes full per-result context and suggestions."),
+        includeDetails: z.boolean().optional().describe("Return the detailed response shape."),
+        ...detailFlagSchema,
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      handler: runSearchTool,
     },
     {
       name: "inspect_range",

@@ -492,7 +492,7 @@ function compactSearchTextResult(record: JsonRecord, compact: JsonRecord): JsonR
     compact.results = results;
   }
   const suggestions = [
-    "Use files[].path plus results[].lineRange with inspect_range for surrounding context.",
+    "Use files[].path plus results[].lineRange with search for surrounding context.",
     record.multiedit ? "Pass multiedit to multiedit input to apply the grouped replacement." : "Rerun with multieditSpec=true and replace to get a grouped multiedit handoff.",
   ];
   compact.suggestions = suggestions;

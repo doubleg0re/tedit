@@ -312,7 +312,7 @@ function candidateForMatch(index: number, filePath: string, source: string, line
       replaceHint: "findLines replaces whole lines; include the trailing newline unless replacing the final line.",
     },
     suggestions: [
-      { tool: "inspect_range", cliCommand: "inspect-range", arguments: { file: displayFile, lines: range.lineRange, context: context > 0 ? context : 3 } },
+      { tool: "search", cliCommand: "inspect-range", arguments: { file: displayFile, lines: range.lineRange, context: context > 0 ? context : 3 } },
       { tool: "edit", arguments: { file: displayFile, findLines: range.lineRange, replace: "<replacement including trailing newline>" } },
     ],
   };

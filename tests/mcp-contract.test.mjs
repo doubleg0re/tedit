@@ -21,18 +21,14 @@ test("mcp default profile tools share compact agent contracts", () => {
     "edit",
     "file_write",
     "flow",
-    "inspect_range",
     "multiedit",
     "mutate",
     "patch",
     "read_detail",
     "refactor",
     "rename_file",
-    "search_text",
+    "search",
     "select",
-    "ts_edit",
-    "ts_move",
-    "ts_select",
     "verify_file",
   ].sort());
 
@@ -45,7 +41,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(actions.guidance.$detail, true);
   const guidance = readDetailValue(actions.guidance);
   assert.ok(guidance.edit_loop.some((row) => row.tool === "edit"));
-  assert.ok(guidance.edit_loop.some((row) => row.tool === "search_text"));
+  assert.ok(guidance.edit_loop.some((row) => row.tool === "search"));
   assert.ok(guidance.edit_loop.some((row) => row.tool === "select"));
   assert.ok(guidance.refactor_loop.some((row) => row.tool === "refactor"));
 
@@ -56,7 +52,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.ok(select.matches.some((match) => match.route === "jsx" && match.kind === "jsx.element"));
   assert.ok(select.matches.some((match) => match.editHint?.tool === "edit"));
   assert.ok(select.matches.some((match) => match.editHint?.findLines === "2"));
-  assert.ok(select.matches.some((match) => match.inspectHint?.tool === "inspect_range"));
+  assert.ok(select.matches.some((match) => match.inspectHint?.tool === "search"));
 
   const multilinePage = join(workspace.src, "Multiline.tsx");
   writeFileSync(multilinePage, [
@@ -74,7 +70,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   const multilineSelect = runMcpTool("select", { file: multilinePage, selector: "button" });
   assert.equal(multilineSelect.matches[0].editHint.find, undefined);
   assert.equal(multilineSelect.matches[0].editHint.findLines, "3:7");
-  assert.equal(multilineSelect.matches[0].inspectHint.tool, "inspect_range");
+  assert.equal(multilineSelect.matches[0].inspectHint.tool, "search");
 
   const pythonSelect = runMcpTool("select", { file: workspace.python, selector: "train_model" });
   assert.equal(pythonSelect.ok, true);
@@ -88,7 +84,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(pythonClassSelect.ok, true);
   assert.equal(pythonClassSelect.matches[0].kind, "python.class");
 
-  const inspect = runMcpTool("inspect_range", { file: workspace.page, lines: "2", context: 1 });
+  const inspect = runMcpTool("search", { file: workspace.page, lines: "2", context: 1 });
   assert.equal(inspect.ok, true);
   assert.equal(inspect.success, undefined);
   assert.equal(inspect.kind, "inspect-range");
@@ -98,7 +94,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(inspect.parser, "jsx");
   assert.equal(inspect.suggestions[0].tool, "edit");
 
-  const search = runMcpTool("search_text", {
+  const search = runMcpTool("search", {
     query: "삭제",
     paths: [workspace.src],
     glob: "**/*.tsx",
@@ -123,7 +119,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(search.results[0].lineRange, "2");
   assert.equal(search.results[0].suggested, undefined);
   assert.equal(search.results[0].suggestions, undefined);
-  assert.ok(search.suggestions.some((suggestion) => suggestion.includes("inspect_range")));
+  assert.ok(search.suggestions.some((suggestion) => suggestion.includes("search")));
 
   const verify = runMcpTool("verify_file", { file: workspace.config });
   assert.equal(verify.ok, true);
@@ -182,7 +178,7 @@ test("mcp default profile tools share compact agent contracts", () => {
   assertMutationContract(defaultFlow, workspace.flowText, { changedCount: 1, writtenCount: 1, persisted: true });
   assert.equal(readFileSync(workspace.flowText, "utf8"), "new\n");
 
-  const defaultTsEdit = runMcpTool("ts_edit", { file: workspace.tsDefault, selector: "fn:target", body: "return 2;", diffMode: "stats" });
+  const defaultTsEdit = runMcpTool("mutate", { file: workspace.tsDefault, target: "fn:target", "body.replace": { body: "return 2;" }, diffMode: "stats" });
   assertMutationContract(defaultTsEdit, workspace.tsDefault, { changedCount: 1, writtenCount: 1, persisted: true });
   assert.match(readFileSync(workspace.tsDefault, "utf8"), /return 2;/);
 
@@ -381,7 +377,7 @@ test("compact output stores large payload fields as read_detail artifacts", () =
   assert.equal(result.strings.preview[0].id, "str_1");
   assert.equal(result.strings.preview[0].value, "label-000");
 
-  const search = runMcpTool("search_text", { query: "label-", path: noisy, maxResults: 10, detailFieldMaxBytes: 4096 });
+  const search = runMcpTool("search", { query: "label-", path: noisy, maxResults: 10, detailFieldMaxBytes: 4096 });
   assert.equal(Array.isArray(search.results), true);
   assert.equal(search.results.length, 10);
   assert.equal(search.results.$detail, undefined);
