@@ -3052,7 +3052,8 @@ test("CLI version and subcommand help are concise", () => {
 
   const setupHelp = run(["help", "setup"]);
   assert.match(setupHelp, /--no-agent-guide/);
-  assert.match(setupHelp, /AGENTS\.md\/CLAUDE\.md/);
+  assert.match(setupHelp, /~\/.codex\/AGENTS\.md/);
+  assert.match(setupHelp, /~\/.claude\/CLAUDE\.md/);
 
   const topics = [
     "edit", "multiedit", "verify", "verify-file", "patch", "actions", "templates", "inspect-range", "search-text", "history-trace", "scan-strings", "ast-select", "ast-edit", "analyze-state",

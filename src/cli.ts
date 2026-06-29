@@ -2,7 +2,8 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join as pathJoin, resolve as pathResolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import {
   BASE_ACTIONS,
@@ -333,7 +334,7 @@ function commandActions(args: ParsedArgs): void {
 }
 
 async function commandSetup(args: ParsedArgs): Promise<void> {
-  const target = args.positionals[0] ?? "print";
+  const target = args.positionals[0] ?? "mcp";
   if (target === "print") {
     process.stdout.write(JSON.stringify({ mcpServers: { tedit: { command: "tedit-mcp" } } }, null, 2) + "\n");
     return;
@@ -354,24 +355,30 @@ async function commandSetup(args: ParsedArgs): Promise<void> {
       await commandSetup({ ...args, positionals: ["print"] });
       continue;
     }
-    const result = spawnCommand(command[0], command.slice(1), { stdio: "inherit" });
-    if (result.status !== 0 || result.error) failures.push(`${setupTarget} MCP setup failed.${result.error ? ` ${result.error.message}` : ""}`);
+    const failure = await runMcpSetupCommand(setupTarget, scope, command, args);
+    if (failure) failures.push(failure);
   }
-  await maybeInstallAgentGuides(args, targets);
+  printMcpReloadNotice(targets);
+  await maybeInstallAgentGuides(args, targets, scope);
   if (failures.length) throw new Error(failures.join("\n"));
 }
 
-async function maybeInstallAgentGuides(args: ParsedArgs, targets: SetupTarget[]): Promise<void> {
+function printMcpReloadNotice(targets: SetupTarget[]): void {
+  const host = targets.length === 1 ? targets[0] : "Claude/Codex";
+  process.stdout.write(`MCP config updated. Start a new ${host} session to load it; in Claude Code, use /mcp to reconnect or retry servers in the current session.\n`);
+}
+
+async function maybeInstallAgentGuides(args: ParsedArgs, targets: SetupTarget[], scope: SetupScope): Promise<void> {
   if (args.flags["no-agent-guide"] || args.flags.noAgentGuide) return;
   const yes = Boolean(args.flags.yes || args.flags.y);
-  const planned = agentGuideTargets(targets);
+  const planned = agentGuideTargets(targets, scope);
   for (const filePath of planned) {
     const reason = existsSync(filePath) ? `Add/update tedit MCP guide in ${filePath}? [y/N] ` : `Create ${filePath} with tedit MCP guide? [y/N] `;
     if (!yes && !(await confirm(reason))) continue;
     const result = upsertTeditMcpGuide(filePath);
     if (result) process.stdout.write(result + "\n");
   }
-  if (targets.includes("claude") && existsSync("AGENTS.md")) await maybeInstallClaudeAgentsImport(yes);
+  if (scope === "project" && targets.includes("claude") && existsSync("AGENTS.md")) await maybeInstallClaudeAgentsImport(yes);
 }
 
 async function maybeInstallClaudeAgentsImport(yes: boolean): Promise<void> {
@@ -379,11 +386,18 @@ async function maybeInstallClaudeAgentsImport(yes: boolean): Promise<void> {
   const source = existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
   if (source.includes("@AGENTS.md")) return;
   if (!yes && !(await confirm(`Add @AGENTS.md import to ${filePath} for Claude Code? [y/N] `))) return;
-  writeFileSync(filePath, `@AGENTS.md\n\n${source}`);
-  process.stdout.write(`${filePath}: added @AGENTS.md import.\n`);
+  const backup = writeGuideFile(filePath, source, `@AGENTS.md\n\n${source}`);
+  process.stdout.write(`${filePath}: added @AGENTS.md import.${backup ? ` backup -> ${backup}` : ""}\n`);
 }
 
-function agentGuideTargets(targets: SetupTarget[]): string[] {
+function agentGuideTargets(targets: SetupTarget[], scope: SetupScope): string[] {
+  if (scope === "user") {
+    const files: string[] = [];
+    if (targets.includes("codex")) files.push(pathJoin(homedir(), ".codex", "AGENTS.md"));
+    if (targets.includes("claude")) files.push(pathJoin(homedir(), ".claude", "CLAUDE.md"));
+    return files;
+  }
+
   const files = new Set<string>();
   if (targets.includes("codex")) files.add("AGENTS.md");
   if (targets.includes("claude")) files.add(files.has("AGENTS.md") || existsSync("AGENTS.md") ? "AGENTS.md" : "CLAUDE.md");
@@ -397,14 +411,13 @@ function upsertTeditMcpGuide(filePath: string): string | undefined {
   const current = source.match(/<!-- tedit:mcp-guide sha256:([a-f0-9]+) version:([^\s]+) -->[\s\S]*?<!-- \/tedit:mcp-guide -->/);
   if (current?.[1] === nextHash) return `${filePath}: tedit MCP guide already up to date.`;
   if (current) {
-    writeFileSync(filePath, source.replace(current[0], block));
-    return `${filePath}: updated tedit MCP guide.`;
+    const backup = writeGuideFile(filePath, source, source.replace(current[0], block));
+    return `${filePath}: updated tedit MCP guide.${backup ? ` backup -> ${backup}` : ""}`;
   }
   if (/^## tedit MCP\b/m.test(source)) return `${filePath}: found an unmarked "## tedit MCP" section; left it unchanged.`;
-  const prefix = filePath === "CLAUDE.md" && existsSync("AGENTS.md") && !source.includes("@AGENTS.md") ? "@AGENTS.md\n\n" : "";
   const separator = source && !source.endsWith("\n") ? "\n\n" : source ? "\n" : "";
-  writeFileSync(filePath, prefix + source + separator + block);
-  return `${filePath}: added tedit MCP guide.`;
+  const backup = writeGuideFile(filePath, source, source + separator + block);
+  return `${filePath}: added tedit MCP guide.${backup ? ` backup -> ${backup}` : ""}`;
 }
 
 function teditMcpGuideBlock(): string {
@@ -413,6 +426,25 @@ function teditMcpGuideBlock(): string {
 
 function teditMcpGuideHash(): string {
   return createHash("sha256").update(TEDIT_MCP_GUIDE_BODY.replace(/\r\n/g, "\n")).digest("hex");
+}
+
+function writeGuideFile(filePath: string, previous: string, next: string): string | undefined {
+  if (previous === next) return undefined;
+  mkdirSync(dirname(filePath), { recursive: true });
+  const backup = existsSync(filePath) ? writeGuideBackup(filePath, previous) : undefined;
+  writeFileSync(filePath, next);
+  return backup;
+}
+
+function writeGuideBackup(filePath: string, source: string): string {
+  const basePath = pathResolve(filePath);
+  const stamp = new Date().toISOString().replace(/[^0-9]/g, "");
+  let backupPath = `${basePath}.${stamp}.${process.pid}.bak`;
+  let suffix = 1;
+  while (existsSync(backupPath)) backupPath = `${basePath}.${stamp}.${process.pid}.${suffix++}.bak`;
+  mkdirSync(dirname(backupPath), { recursive: true });
+  writeFileSync(backupPath, source);
+  return backupPath;
 }
 
 async function setupTargets(args: ParsedArgs, target: "mcp" | SetupTarget): Promise<SetupTarget[]> {
@@ -429,6 +461,63 @@ function parseSetupTargets(raw: string): SetupTarget[] {
   if (target === "codex" || target === "2") return ["codex"];
   if (target === "both" || target === "all" || target === "3") return ["claude", "codex"];
   throw new Error("setup --target must be claude, codex, or both.");
+}
+
+async function runMcpSetupCommand(setupTarget: SetupTarget, scope: SetupScope, command: string[], args: ParsedArgs): Promise<string | undefined> {
+  const result = spawnCommand(command[0], command.slice(1), { stdio: "inherit" });
+  if (result.status === 0 && !result.error) return undefined;
+
+  const existing = currentTeditMcpCommand(setupTarget);
+  if (!existing) return `${setupTarget} MCP setup failed.${result.error ? ` ${result.error.message}` : ""}`;
+  if (isExpectedTeditMcpCommand(existing)) {
+    process.stdout.write(`${setupTarget} MCP server tedit already exists with the expected command: ${existing}\n`);
+    return undefined;
+  }
+
+  const next = "tedit-mcp";
+  const yes = Boolean(args.flags.yes || args.flags.y);
+  if (!yes && !(await confirm(`${setupTarget} MCP server tedit already exists as "${existing}". Replace it with "${next}"? [y/N] `))) {
+    process.stdout.write(`${setupTarget} MCP server tedit left unchanged: ${existing}\n`);
+    return undefined;
+  }
+
+  const remove = removeMcpCommand(setupTarget, scope);
+  const removed = spawnCommand(remove[0], remove.slice(1), { stdio: "inherit" });
+  if (removed.status !== 0 || removed.error) return `${setupTarget} MCP replace failed while removing existing tedit.${removed.error ? ` ${removed.error.message}` : ""}`;
+  const added = spawnCommand(command[0], command.slice(1), { stdio: "inherit" });
+  if (added.status !== 0 || added.error) return `${setupTarget} MCP replace failed while adding tedit.${added.error ? ` ${added.error.message}` : ""}`;
+  return undefined;
+}
+
+function currentTeditMcpCommand(target: SetupTarget): string | undefined {
+  const result = spawnCommand(target, ["mcp", "list"], { encoding: "utf8", timeout: 15_000 });
+  const text = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  return target === "claude" ? parseClaudeTeditMcpCommand(text) : parseCodexTeditMcpCommand(text);
+}
+
+function parseClaudeTeditMcpCommand(text: string): string | undefined {
+  const line = text.split(/\r?\n/).find((entry) => entry.trim().startsWith("tedit:"));
+  if (!line) return undefined;
+  return line.replace(/^\s*tedit:\s*/, "").replace(/\s+-\s+(?:✔|✘|!).*$/, "").trim() || undefined;
+}
+
+function parseCodexTeditMcpCommand(text: string): string | undefined {
+  const line = text.split(/\r?\n/).find((entry) => /^tedit\s+/.test(entry));
+  if (!line) return undefined;
+  const rest = line.replace(/^tedit\s+/, "").trim();
+  if (!rest) return undefined;
+  const statusIndex = rest.search(/\s{2,}(?:enabled|disabled)\s{2,}/);
+  const beforeStatus = statusIndex >= 0 ? rest.slice(0, statusIndex).trim() : rest;
+  return beforeStatus.replace(/\s{2,}-\s{2,}-\s*$/, "").trim() || undefined;
+}
+
+function isExpectedTeditMcpCommand(command: string): boolean {
+  return command === "tedit-mcp" || /(?:^|\s)tedit-mcp(?:\s|$)/.test(command);
+}
+
+function removeMcpCommand(target: SetupTarget, scope: SetupScope): string[] {
+  if (target === "codex") return ["codex", "mcp", "remove", "tedit"];
+  return ["claude", "mcp", "remove", "--scope", scope, "tedit"];
 }
 
 function setupCommand(target: SetupTarget, scope: SetupScope): string[] {
@@ -2330,7 +2419,7 @@ function printHelp(command?: string): void {
 
 Start here:
   npm install -g tedit-tools
-  tedit setup mcp        # register MCP; offers AGENTS.md/CLAUDE.md guide
+  tedit setup            # register MCP; offers scoped AGENTS.md/CLAUDE.md guide
   tedit doctor           # verify CLI, MCP server, actions, and updates
 
 Common CLI commands:
@@ -2411,7 +2500,7 @@ function shortHelp(command: string): string | null {
     case "actions":
       return "tedit actions\nUsage:\n  tedit actions [file] [--json]\n\nLists universal base actions and file-specific language actions.";
     case "setup":
-      return "tedit setup\nUsage:\n  tedit setup mcp [--target claude|codex|both] [--scope user|project] [--yes] [--no-agent-guide] [--dry-run]\n  tedit setup codex|claude [--scope user|project] [--yes] [--no-agent-guide] [--dry-run]\n  tedit setup print\n\nInteractive MCP setup asks for host first (claude, codex, or both), then user/project scope. Codex currently supports user scope only. After registering MCP, setup offers to add a short tedit guide to AGENTS.md/CLAUDE.md; use --yes to accept prompts or --no-agent-guide to skip.";
+      return "tedit setup\nUsage:\n  tedit setup mcp [--target claude|codex|both] [--scope user|project] [--yes] [--no-agent-guide] [--dry-run]\n  tedit setup codex|claude [--scope user|project] [--yes] [--no-agent-guide] [--dry-run]\n  tedit setup print\n\nInteractive MCP setup asks for host first (claude, codex, or both), then user/project scope. Codex currently supports user scope only. After registering MCP, setup offers to add a short tedit guide: user scope writes ~/.codex/AGENTS.md or ~/.claude/CLAUDE.md; project scope writes the current project files. Existing files get a sibling .bak before edits. Use --yes to accept prompts or --no-agent-guide to skip.";
     case "doctor":
       return "tedit doctor\nUsage:\n  tedit doctor [--skip-update] [--json]\n\nChecks tedit, tedit-mcp, actions, and available npm updates.";
     case "update":

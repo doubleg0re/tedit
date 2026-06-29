@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -13,6 +13,10 @@ test("setup prints MCP config and host CLI command dry-runs", () => {
   const config = JSON.parse(run(["setup", "print"]));
   assert.deepEqual(config, { mcpServers: { tedit: { command: "tedit-mcp" } } });
 
+  assert.throws(
+    () => run(["setup", "--dry-run"]),
+    /requires --target claude\|codex\|both/,
+  );
   assert.equal(run(["setup", "codex", "--dry-run"]), "codex mcp add tedit -- tedit-mcp\n");
   assert.equal(run(["setup", "codex", "--scope", "user", "--dry-run"]), "codex mcp add tedit -- tedit-mcp\n");
   assert.equal(run(["setup", "claude", "--dry-run"]), "claude mcp add --scope user tedit -- tedit-mcp\n");
@@ -42,31 +46,64 @@ test("setup mcp requires explicit target when not interactive", () => {
   );
 });
 
-test("setup can add hash-marked agent MCP guidance", () => {
+test("setup adds user-scoped agent MCP guidance under the user config dirs", () => {
   const cwd = mkdtempSync(join(tmpdir(), "tedit-setup-guide-"));
+  const home = mkdtempSync(join(tmpdir(), "tedit-setup-home-"));
   const bin = fakeBin(["codex", "claude"]);
-  const env = { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` };
+  const env = homeEnv(home, { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` });
 
-  run(["setup", "codex", "--yes"], env, cwd);
-  const agents = readFileSync(join(cwd, "AGENTS.md"), "utf8");
+  const agentsPath = join(home, ".codex", "AGENTS.md");
+  mkdirSync(join(home, ".codex"), { recursive: true });
+  writeFileSync(agentsPath, "# Existing user guide\n");
+
+  const codexOut = run(["setup", "codex", "--yes"], env, cwd);
+  const codexBackup = codexOut.match(/backup -> (.*AGENTS\.md\.[0-9]+\.[0-9]+(?:\.[0-9]+)?\.bak)/)?.[1];
+  assert.ok(codexBackup);
+  assert.equal(readFileSync(codexBackup, "utf8"), "# Existing user guide\n");
+  assert.equal(existsSync(agentsPath + ".bak"), false);
+  const agents = readFileSync(agentsPath, "utf8");
   assert.match(agents, /<!-- tedit:mcp-guide sha256:[a-f0-9]+ version:[^\s]+ -->/);
   assert.match(agents, /tedit\.mutate/);
+  assert.equal(existsSync(join(cwd, "AGENTS.md")), false);
 
   run(["setup", "codex", "--yes"], env, cwd);
-  const again = readFileSync(join(cwd, "AGENTS.md"), "utf8");
+  const again = readFileSync(agentsPath, "utf8");
   assert.equal((again.match(/tedit:mcp-guide/g) ?? []).length, 2);
 
   run(["setup", "claude", "--yes"], env, cwd);
-  assert.match(readFileSync(join(cwd, "CLAUDE.md"), "utf8"), /^@AGENTS\.md\n/);
+  const claudeGuide = readFileSync(join(home, ".claude", "CLAUDE.md"), "utf8");
+  assert.match(claudeGuide, /## tedit MCP/);
+  assert.doesNotMatch(claudeGuide, /^@AGENTS\.md\n/);
+  assert.equal(existsSync(join(cwd, "CLAUDE.md")), false);
 });
 
-test("setup still offers agent guidance when one host setup fails", () => {
+test("setup adds project-scoped agent MCP guidance in the current project", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "tedit-setup-project-guide-"));
+  const home = mkdtempSync(join(tmpdir(), "tedit-setup-home-"));
+  const bin = fakeBin(["claude"]);
+  const env = homeEnv(home, { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` });
+
+  const claudePath = join(cwd, "CLAUDE.md");
+  writeFileSync(claudePath, "# Existing project guide\n");
+
+  const claudeOut = run(["setup", "claude", "--scope", "project", "--yes"], env, cwd);
+  const claudeBackup = claudeOut.match(/backup -> (.*CLAUDE\.md\.[0-9]+\.[0-9]+(?:\.[0-9]+)?\.bak)/)?.[1];
+  assert.ok(claudeBackup);
+  assert.equal(readFileSync(claudeBackup, "utf8"), "# Existing project guide\n");
+  assert.equal(existsSync(claudePath + ".bak"), false);
+  const claudeGuide = readFileSync(claudePath, "utf8");
+  assert.match(claudeGuide, /## tedit MCP/);
+  assert.equal(existsSync(join(home, ".claude", "CLAUDE.md")), false);
+});
+
+test("setup still offers user-scoped agent guidance when one host setup fails", () => {
   const cwd = mkdtempSync(join(tmpdir(), "tedit-setup-guide-fail-"));
+  const home = mkdtempSync(join(tmpdir(), "tedit-setup-home-"));
   const bin = fakeBin(["codex", "claude"]);
   const claude = join(bin, process.platform === "win32" ? "claude.cmd" : "claude");
   writeFileSync(claude, process.platform === "win32" ? "@echo off\r\nexit /b 9\r\n" : "#!/bin/sh\nexit 9\n");
   if (process.platform !== "win32") chmodSync(claude, 0o755);
-  const env = { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` };
+  const env = homeEnv(home, { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` });
 
   let failed;
   try {
@@ -77,10 +114,59 @@ test("setup still offers agent guidance when one host setup fails", () => {
 
   assert.ok(failed);
   assert.match(failed.stderr, /claude MCP setup failed/);
-  assert.match(readFileSync(join(cwd, "AGENTS.md"), "utf8"), /tedit\.mutate/);
-  const claudeGuide = readFileSync(join(cwd, "CLAUDE.md"), "utf8");
-  assert.match(claudeGuide, /^@AGENTS\.md\n/);
-  assert.doesNotMatch(claudeGuide, /## tedit MCP/);
+  assert.match(readFileSync(join(home, ".codex", "AGENTS.md"), "utf8"), /tedit\.mutate/);
+  assert.match(readFileSync(join(home, ".claude", "CLAUDE.md"), "utf8"), /tedit\.mutate/);
+  assert.equal(existsSync(join(cwd, "AGENTS.md")), false);
+  assert.equal(existsSync(join(cwd, "CLAUDE.md")), false);
+});
+
+test("setup treats an existing tedit MCP with the expected command as success", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "tedit-setup-existing-"));
+  const home = mkdtempSync(join(tmpdir(), "tedit-setup-home-"));
+  const bin = fakeBin();
+  writeFakeCommand(bin, "claude", `
+if [ "$1 $2" = "mcp add" ]; then
+  echo "MCP server tedit already exists in user config"
+  exit 1
+fi
+if [ "$1 $2" = "mcp list" ]; then
+  echo "tedit: tedit-mcp - ✔ Connected"
+  exit 0
+fi
+exit 0
+`);
+  const out = run(["setup", "claude", "--scope", "user", "--yes", "--no-agent-guide"], homeEnv(home, { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }), cwd);
+
+  assert.match(out, /already exists with the expected command: tedit-mcp/);
+});
+
+test("setup replaces an existing tedit MCP with a different command when --yes is set", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "tedit-setup-replace-"));
+  const home = mkdtempSync(join(tmpdir(), "tedit-setup-home-"));
+  const bin = fakeBin();
+  const log = join(cwd, "claude.log");
+  writeFakeCommand(bin, "claude", `
+echo "$@" >> "${log}"
+if [ "$1 $2" = "mcp add" ]; then
+  if [ -f "${join(cwd, "removed")}" ]; then exit 0; fi
+  echo "MCP server tedit already exists in user config"
+  exit 1
+fi
+if [ "$1 $2" = "mcp list" ]; then
+  echo "tedit: node /old/tedit/dist/mcp.js - ✔ Connected"
+  exit 0
+fi
+if [ "$1 $2" = "mcp remove" ]; then
+  touch "${join(cwd, "removed")}"
+  exit 0
+fi
+exit 0
+`);
+
+  run(["setup", "claude", "--scope", "user", "--yes", "--no-agent-guide"], homeEnv(home, { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }), cwd);
+  const calls = readFileSync(log, "utf8");
+  assert.match(calls, /mcp remove --scope user tedit/);
+  assert.match(calls, /mcp add --scope user tedit -- tedit-mcp/);
 });
 
 test("doctor reports local MCP availability without network when requested", () => {
@@ -99,6 +185,17 @@ test("update check reports newer npm version without installing", () => {
   assert.match(out, /npm install -g tedit-tools@latest/);
 });
 
+function writeFakeCommand(dir, name, script) {
+  const file = join(dir, process.platform === "win32" ? `${name}.cmd` : name);
+  writeFileSync(file, process.platform === "win32" ? `@echo off
+sh "${file}.sh" %*
+` : `#!/bin/sh
+${script}
+`);
+  if (process.platform === "win32") writeFileSync(`${file}.sh`, script);
+  if (process.platform !== "win32") chmodSync(file, 0o755);
+}
+
 function fakeBin(extra = []) {
   const dir = mkdtempSync(join(tmpdir(), "tedit-cli-bin-"));
   for (const name of ["tedit-mcp", ...extra]) {
@@ -107,6 +204,10 @@ function fakeBin(extra = []) {
     if (process.platform !== "win32") chmodSync(file, 0o755);
   }
   return dir;
+}
+
+function homeEnv(home, env = {}) {
+  return { ...env, HOME: home, USERPROFILE: home };
 }
 
 function run(args, env = {}, cwd = undefined) {
