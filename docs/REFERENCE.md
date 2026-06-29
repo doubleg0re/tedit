@@ -79,7 +79,7 @@ tedit setup mcp --target both --scope user
 tedit setup mcp --target claude --scope project
 ```
 
-Codex currently supports user-scoped MCP setup only. Setup can also add a short hash-marked tedit MCP guide to `AGENTS.md`/`CLAUDE.md` after confirmation; pass `--yes` to accept prompts or `--no-agent-guide` to skip it. `tedit setup print` emits the manual MCP JSON. If tedit tools do not appear after setup, restart or refresh your MCP host. `tedit update --check` reports newer npm versions; `tedit update` asks before running `npm install -g tedit-tools@latest`.
+Project scope means the MCP registration is written to the current project's host config when the host supports it; Codex currently supports user-scoped MCP setup only. Setup can also add a short hash-marked tedit MCP guide to the current project's `AGENTS.md`/`CLAUDE.md` after confirmation; pass `--yes` to accept prompts or `--no-agent-guide` to skip it. `tedit setup print` emits the manual MCP JSON. If tedit tools do not appear after setup, restart or refresh your MCP host. `tedit update --check` reports newer npm versions; `tedit update` asks before running `npm install -g tedit-tools@latest`.
 
 For MCP hosts, register the installed bin:
 
@@ -326,10 +326,10 @@ output preserves primary payloads such as
 verbosity; the default is `auto`, which inlines small diffs so agents can see
 what changed without another round trip. `stats` keeps counts only. `auto`
 returns a truncated preview for
-large dry-runs; large writes also save the full diff under `.tedit-cache/diffs`
+large dry-runs; large writes also save the full diff under `.tedit/cache/diffs`
 and return `files[].diff.path`. Compact output stores individual non-core fields
 larger than `detailFieldMaxBytes` (default 4096 JSON bytes) under
-`.tedit-cache/details` and returns a `$detail` descriptor with a bounded
+`.tedit/cache/details` and returns a `$detail` descriptor with a bounded
 `preview`; arrays whose compact preview fits are returned inline without an
 artifact. For larger arrays, use the descriptor's `readNext` or call `read_detail`
 with `id`/`file`, optional `path`, `offset`, `limit`, `grep`, `lines`, or
@@ -363,7 +363,7 @@ printf '  const label = "Delete";\n' | tedit edit src/Page.tsx --find-lines 42 -
 
 `search-text` is intentionally a small built-in search bridge, not a full `rg`
 replacement. It searches text files under the given paths, skips common noisy
-directories such as `.git`, `node_modules`, `dist`, and `.tedit-cache`, accepts
+directories such as `.git`, `node_modules`, `dist`, legacy `.tedit-cache`, and `.tedit/cache`, accepts
 a simple `--glob` filter (`*`, `**`, `?`, and comma braces such as
 `**/*.{ts,tsx}`; spaces around brace alternatives are ignored), can include
 nearby lines with `--context`, and returns candidates with `file`, `path`,
@@ -578,7 +578,7 @@ with a warning. Explicit `--write` and `--dry-run` always win.
 
 Set `TEDIT_DEFAULT_WRITE=true|false|auto` to force a default. Explicit
 writes that overwrite files outside git create manifest-backed backups under
-`.tedit-cache/backups/<id>/<relative-file>.bak` by default. Use
+`.tedit/cache/backups/<id>/<relative-file>.bak` by default. Use
 `tedit backups list`, `tedit backups restore <id> [--write]`, and
 `tedit backups clean --older-than 7d [--write]` to inspect, restore, and
 clean them; restore and clean are dry-run by default. Use `--backup` or
@@ -919,7 +919,7 @@ includes full inline text.
     "diffMode": "auto",
     "inlineDiffMaxBytes": 8000,
     "inlineDiffMaxHunks": 10,
-    "diffArtifactDir": ".tedit-cache/diffs"
+    "diffArtifactDir": ".tedit/cache/diffs"
   }
 }
 ```
@@ -1061,7 +1061,7 @@ tedit new server-action src/actions/save.ts --param name=saveDraft --write
 - File creation is available through `create`, `write`, `scaffold`, and `new`; single-file `chain` can also start with `create --source ...` before structural or base edits.
 - Base `edit` is available as a standalone command, inside `workspace-flow` / `chain-workspace`, and mixed into single-file `chain` with JSX actions.
 - `patch` supports unified diff and Codex apply-patch file updates, additions, deletes, and renames.
-- Default write mode is git-aware. Outside git, commands still dry-run unless `--write` is explicit, and explicit overwrites create manifest-backed backups under `.tedit-cache/backups` by default. Sidecar `.tedit.bak` backups remain available with `TEDIT_BACKUP_STYLE=sidecar`.
+- Default write mode is git-aware. Outside git, commands still dry-run unless `--write` is explicit, and explicit overwrites create manifest-backed backups under `.tedit/cache/backups` by default. Sidecar `.tedit.bak` backups remain available with `TEDIT_BACKUP_STYLE=sidecar`.
 - Scaffold shorthand is intentionally shallow. Use `--spec` JSON for nested children and complex props.
 - For PR-quality diffs, inspect `--dry-run` output carefully until more mutation types get surgical patch implementations.
 

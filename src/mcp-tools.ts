@@ -135,7 +135,7 @@ const writeFlagSchema = {
   output: z.enum(["compact", "detailed"]).optional().describe("Response shape. MCP defaults to compact; use detailed for legacy full diffs and internals."),
   includeDiffs: z.boolean().optional().describe("Legacy detailed-diff opt-in. Prefer diffMode for compact agent responses."),
   includeDetails: z.boolean().optional().describe("Return the detailed response shape."),
-  diffMode: z.enum(["off", "stats", "auto", "full"]).optional().describe("Compact diff payload policy. Defaults to auto: inline small diffs and spill large write diffs to .tedit-cache/diffs artifacts. Use stats to keep counts only."),
+  diffMode: z.enum(["off", "stats", "auto", "full"]).optional().describe("Compact diff payload policy. Defaults to auto: inline small diffs and spill large write diffs to .tedit/cache/diffs artifacts. Use stats to keep counts only."),
   inlineDiffMaxBytes: z.number().int().positive().optional().describe("Maximum diff bytes to inline when diffMode is auto."),
   inlineDiffMaxHunks: z.number().int().positive().optional().describe("Maximum hunk count to inline when diffMode is auto."),
   diffArtifactDir: z.string().min(1).optional().describe("Artifact directory for large auto diffs; must stay inside the current working directory."),

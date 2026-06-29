@@ -7,6 +7,7 @@ import test from "node:test";
 import { modulePath } from "../scripts/path-helpers.mjs";
 
 const cli = modulePath("../dist/cli.js", import.meta.url);
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 test("setup prints MCP config and host CLI command dry-runs", () => {
   const config = JSON.parse(run(["setup", "print"]));
@@ -48,7 +49,7 @@ test("setup can add hash-marked agent MCP guidance", () => {
 
   run(["setup", "codex", "--yes"], env, cwd);
   const agents = readFileSync(join(cwd, "AGENTS.md"), "utf8");
-  assert.match(agents, /<!-- tedit:mcp-guide sha256:[a-f0-9]+ version:0\.1\.0 -->/);
+  assert.match(agents, /<!-- tedit:mcp-guide sha256:[a-f0-9]+ version:[^\s]+ -->/);
   assert.match(agents, /tedit\.mutate/);
 
   run(["setup", "codex", "--yes"], env, cwd);
@@ -57,6 +58,29 @@ test("setup can add hash-marked agent MCP guidance", () => {
 
   run(["setup", "claude", "--yes"], env, cwd);
   assert.match(readFileSync(join(cwd, "CLAUDE.md"), "utf8"), /^@AGENTS\.md\n/);
+});
+
+test("setup still offers agent guidance when one host setup fails", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "tedit-setup-guide-fail-"));
+  const bin = fakeBin(["codex", "claude"]);
+  const claude = join(bin, process.platform === "win32" ? "claude.cmd" : "claude");
+  writeFileSync(claude, process.platform === "win32" ? "@echo off\r\nexit /b 9\r\n" : "#!/bin/sh\nexit 9\n");
+  if (process.platform !== "win32") chmodSync(claude, 0o755);
+  const env = { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` };
+
+  let failed;
+  try {
+    run(["setup", "mcp", "--target", "both", "--scope", "user", "--yes"], env, cwd);
+  } catch (error) {
+    failed = error;
+  }
+
+  assert.ok(failed);
+  assert.match(failed.stderr, /claude MCP setup failed/);
+  assert.match(readFileSync(join(cwd, "AGENTS.md"), "utf8"), /tedit\.mutate/);
+  const claudeGuide = readFileSync(join(cwd, "CLAUDE.md"), "utf8");
+  assert.match(claudeGuide, /^@AGENTS\.md\n/);
+  assert.doesNotMatch(claudeGuide, /## tedit MCP/);
 });
 
 test("doctor reports local MCP availability without network when requested", () => {
@@ -71,7 +95,7 @@ test("doctor reports local MCP availability without network when requested", () 
 test("update check reports newer npm version without installing", () => {
   const out = run(["update", "--check"], { TEDIT_TEST_LATEST_VERSION: "9.9.9" });
 
-  assert.match(out, /update available: 0\.1\.0 -> 9\.9\.9/);
+  assert.match(out, new RegExp(`update available: ${packageJson.version.replace(/\./g, "\\.")} -> 9\\.9\\.9`));
   assert.match(out, /npm install -g tedit-tools@latest/);
 });
 

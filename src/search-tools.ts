@@ -235,7 +235,7 @@ function walk(dir: string, options: SearchTextOptions, files: string[]): void {
     }
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (DEFAULT_SEARCH_EXCLUDES.has(entry.name)) continue;
+      if (DEFAULT_SEARCH_EXCLUDES.has(entry.name) || (entry.name === "cache" && basename(dir) === ".tedit")) continue;
       walk(fullPath, options, files);
     } else if (entry.isFile() && isSearchableFile(fullPath, options)) {
       files.push(fullPath);

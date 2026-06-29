@@ -294,7 +294,7 @@ function backupWorkspaceRoot(file: string, policy: WritePolicy): string {
 }
 
 function backupRoot(root: string): string {
-  return join(root, ".tedit-cache", "backups");
+  return join(root, ".tedit", "cache", "backups");
 }
 
 function manifestPath(root: string): string {

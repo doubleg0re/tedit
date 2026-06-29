@@ -346,6 +346,7 @@ async function commandSetup(args: ParsedArgs): Promise<void> {
     process.stdout.write(commands.map((command) => command.join(" ")).join("\n") + "\n");
     return;
   }
+  const failures: string[] = [];
   for (const command of commands) {
     const setupTarget = command[0] as SetupTarget;
     if (!commandExists(setupTarget)) {
@@ -354,9 +355,10 @@ async function commandSetup(args: ParsedArgs): Promise<void> {
       continue;
     }
     const result = spawnCommand(command[0], command.slice(1), { stdio: "inherit" });
-    if (result.status !== 0) throw new Error(`${setupTarget} MCP setup failed.${result.error ? ` ${result.error.message}` : ""}`);
+    if (result.status !== 0 || result.error) failures.push(`${setupTarget} MCP setup failed.${result.error ? ` ${result.error.message}` : ""}`);
   }
   await maybeInstallAgentGuides(args, targets);
+  if (failures.length) throw new Error(failures.join("\n"));
 }
 
 async function maybeInstallAgentGuides(args: ParsedArgs, targets: SetupTarget[]): Promise<void> {
@@ -384,7 +386,7 @@ async function maybeInstallClaudeAgentsImport(yes: boolean): Promise<void> {
 function agentGuideTargets(targets: SetupTarget[]): string[] {
   const files = new Set<string>();
   if (targets.includes("codex")) files.add("AGENTS.md");
-  if (targets.includes("claude")) files.add(existsSync("AGENTS.md") ? "AGENTS.md" : "CLAUDE.md");
+  if (targets.includes("claude")) files.add(files.has("AGENTS.md") || existsSync("AGENTS.md") ? "AGENTS.md" : "CLAUDE.md");
   return [...files];
 }
 

@@ -123,7 +123,7 @@ export function makeDISCOVERY_TOOLS(deps: any): readonly TeditMcpTool[] {
         grep: z.string().optional().describe("Return only lines containing this string after JSON rendering."),
         lines: z.string().optional().describe("Line slice N or N:M after JSON rendering."),
         limitBytes: z.number().int().positive().optional().describe("Maximum response bytes. Defaults to 8000."),
-        detailArtifactDir: z.string().min(1).optional().describe("Artifact directory used with id lookup. Defaults to .tedit-cache/details."),
+        detailArtifactDir: z.string().min(1).optional().describe("Artifact directory used with id lookup. Defaults to .tedit/cache/details."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
       handler: runReadDetailTool,

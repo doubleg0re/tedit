@@ -11,6 +11,7 @@ import { modulePath } from "../scripts/path-helpers.mjs";
 const cli = modulePath("../dist/cli.js", import.meta.url);
 const mcp = modulePath("../dist/mcp.js", import.meta.url);
 const distDir = modulePath("../dist", import.meta.url);
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 async function readMcpDetail(client, descriptor, extra = {}) {
   if (!descriptor || descriptor.$detail !== true) return descriptor;
@@ -1888,10 +1889,8 @@ test("npm pack includes CLI and MCP distribution files", () => {
   });
   const [pack] = JSON.parse(output);
   const files = pack.files.map((file) => file.path);
-  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-
-  assert.equal(pkg.bin.tedit, "./dist/cli.js");
-  assert.equal(pkg.bin["tedit-mcp"], "./dist/mcp.js");
+  assert.equal(packageJson.bin.tedit, "dist/cli.js");
+  assert.equal(packageJson.bin["tedit-mcp"], "dist/mcp.js");
   assert.ok(files.includes("dist/cli.js"));
   assert.ok(files.includes("dist/mcp.js"));
   assert.ok(files.includes("dist/mcp-runner.js"));
@@ -1901,7 +1900,7 @@ test("npm pack includes CLI and MCP distribution files", () => {
   assert.ok(files.includes("package.json"));
   assert.ok(files.every((file) => !file.endsWith(".bak") && !file.endsWith(".tedit.bak")));
   assert.ok(pack.size < 2_000_000);
-  assert.equal(pkg.scripts.postinstall, undefined);
+  assert.equal(packageJson.scripts.postinstall, undefined);
   if (process.platform !== "win32") {
     assert.notEqual(pack.files.find((file) => file.path === "dist/cli.js").mode & 0o111, 0);
     assert.notEqual(pack.files.find((file) => file.path === "dist/mcp.js").mode & 0o111, 0);
@@ -3037,7 +3036,7 @@ test("multiedit summary mode reports failures tersely", () => {
 
 test("CLI version and subcommand help are concise", () => {
   const version = run(["--version"]);
-  assert.match(version, /^tedit 0\.1\.0\n$/);
+  assert.equal(version, `tedit ${packageJson.version}\n`);
 
   const rootHelp = run(["help"]);
   assert.match(rootHelp, /tedit setup mcp/);
@@ -3155,8 +3154,8 @@ test("compact diffMode auto inlines small diffs and spills large write diffs to 
   assert.equal(diff.truncated, true);
   assert.ok(diff.bytes > 8000);
   assert.equal(diff.hunks, 1);
-  assert.ok(realpathSync(diff.path).startsWith(realpathSync(join(dir, ".tedit-cache", "diffs"))));
-  assert.match(diff.relPath, /^\.tedit-cache\/diffs\/large\.txt-[a-f0-9]+\.diff$/);
+  assert.ok(realpathSync(diff.path).startsWith(realpathSync(join(dir, ".tedit", "cache", "diffs"))));
+  assert.match(diff.relPath, /^\.tedit\/cache\/diffs\/large\.txt-[a-f0-9]+\.diff$/);
   assert.match(diff.preview, /diff truncated/);
   assert.match(readFileSync(diff.path, "utf8"), /\+new x/);
   assert.equal(readFileSync(largeFile, "utf8"), largeReplace + "\n");
@@ -3174,7 +3173,7 @@ test("compact diffMode auto does not write dry-run artifacts unless explicitly e
   assert.equal(dryRun.files[0].diff.mode, "truncated");
   assert.equal(dryRun.files[0].diff.path, undefined);
   assert.match(dryRun.files[0].diff.preview, /diff truncated/);
-  assert.equal(existsSync(join(dir, ".tedit-cache", "diffs")), false);
+  assert.equal(existsSync(join(dir, ".tedit", "cache", "diffs")), false);
   assert.equal(readFileSync(dryFile, "utf8"), "old\n");
 
   const explicit = JSON.parse(runRawInCwd(["edit", explicitFile, "--find", "old", "--replace", replace, "--dry-run", "--diff-mode=auto", "--diff-artifacts=true"], dir));
@@ -4057,7 +4056,7 @@ test("explicit write outside git creates a manifest-backed backup before mutatin
   const result = JSON.parse(run(["edit", file, "--find", "old", "--replace", "new", "--write", "--json"]));
 
   assert.equal(result.written, true);
-  assert.match(result.write_policy.backup, /\.tedit-cache\/backups\//);
+  assert.match(result.write_policy.backup, /\.tedit\/cache\/backups\//);
   assert.ok(result.write_policy.backup_id);
   assert.equal(existsSync(file + ".tedit.bak"), false);
   assert.equal(readFileSync(result.write_policy.backup, "utf8"), "old\n");

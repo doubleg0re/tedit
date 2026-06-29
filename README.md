@@ -27,7 +27,7 @@ tedit setup mcp --target both --scope user --yes
 tedit setup mcp --target claude --scope project --yes
 ```
 
-Codex currently supports user-scoped MCP setup only. Setup can also add a short hash-marked tedit MCP guide to `AGENTS.md`/`CLAUDE.md` after confirmation; pass `--yes` to accept prompts or `--no-agent-guide` to skip it.
+Project scope means the MCP registration is written to the current project's host config when the host supports it; Codex currently supports user-scoped MCP setup only. Setup can also add a short hash-marked tedit MCP guide to the current project's `AGENTS.md`/`CLAUDE.md` after confirmation; pass `--yes` to accept prompts or `--no-agent-guide` to skip it.
 
 Manual MCP config after a global install:
 

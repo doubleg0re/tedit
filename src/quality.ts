@@ -273,7 +273,7 @@ const DEFAULT_CONFIG: QualityConfig = {
   diffMode: "auto",
   inlineDiffMaxBytes: 8_000,
   inlineDiffMaxHunks: 10,
-  diffArtifactDir: ".tedit-cache/diffs",
+  diffArtifactDir: ".tedit/cache/diffs",
 };
 
 export function loadQualityConfig(filePath?: string): QualityConfig {

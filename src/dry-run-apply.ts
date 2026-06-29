@@ -19,7 +19,7 @@ type DryRunArtifact = {
   createdAt: string;
 };
 
-const DRY_RUN_DIR = ".tedit-cache/dry-runs";
+const DRY_RUN_DIR = ".tedit/cache/dry-runs";
 const APPLYABLE_TOOLS = new Set([
   "edit",
   "multiedit",

@@ -30,7 +30,7 @@ const requiredFiles = [
 const failures = [];
 const checks = [];
 const missing = requiredFiles.filter((file) => !files.includes(file));
-const backups = files.filter((file) => file.endsWith(".bak") || file.endsWith(".tedit.bak") || file.startsWith(".tedit-cache/"));
+const backups = files.filter((file) => file.endsWith(".bak") || file.endsWith(".tedit.bak") || file.startsWith(".tedit-cache/") || file.startsWith(".tedit/cache/"));
 const lifecycleScripts = ["preinstall", "install", "postinstall"].filter((name) => pkg.scripts?.[name]);
 const metadataFailures = packageMetadataFailures(pkg);
 
