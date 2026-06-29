@@ -1,12 +1,12 @@
 {
   "name": "tedit-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Structure-aware JSX/TSX editing for coding agents.",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "tedit": "./dist/cli.js",
-    "tedit-mcp": "./dist/mcp.js"
+    "tedit": "dist/cli.js",
+    "tedit-mcp": "dist/mcp.js"
   },
   "files": [
     "dist",

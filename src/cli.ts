@@ -2324,101 +2324,31 @@ function printHelp(command?: string): void {
     process.stdout.write(text + "\n");
     return;
   }
-  process.stdout.write(`tedit
+  process.stdout.write(`tedit — structure-aware JSX/TSX editing for coding agents
 
-Usage:
-  tedit edit <file> --find <text> --replace <text> [--replace-all] [--expect-count N] [--dry-run|--write]
-  tedit edit <file> --find <text> --insert-before <text> [--dry-run|--write]
-  tedit edit <file> --find <text> --insert-after <text> [--dry-run|--write]
-  tedit edit <file> --find <text> --delete [--dry-run|--write]
-  tedit edit <file> --find-fuzzy <text> --replace <text> [--dry-run|--write]
-  tedit edit <file> --find-anchor-after <text> --find <text> --replace <text> [--dry-run|--write]
-  tedit edit <file> --find-regex <pattern> [--flags <flags>] --replace <text> [--replace-all] [--dry-run|--write]
-  tedit edit <file> --find-lines N:M --delete [--dry-run|--write]
-  tedit edit <file> --find-file <file> --replace-file <file> [--dry-run|--write]
-  tedit edit <file> --find <text> --replace-stdin [--dry-run|--write]
-  tedit edit <file> --find-stdin --replace <text> [--dry-run|--write]
-  tedit edit <file> --spec <edit-json-or-file> [--summary|--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit multiedit <edits-json> [--summary[=files|edits]|--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit multiedit --from-stdin [--summary[=files|edits]|--quiet] [--diff-out <file>] [--dry-run|--write] < edits.json
-  tedit verify <edits-json> [--summary[=files|edits]|--quiet] [--diff-out <file>]
-  tedit verify --from-stdin [--summary[=files|edits]|--quiet] [--diff-out <file>] < edits.json
-  tedit verify-file <file...> [--json]
-  tedit patch <patch-file> [--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit patch --from-stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
-  tedit patch --stdin [--quiet] [--diff-out <file>] [--dry-run|--write] < change.patch
+Start here:
+  npm install -g tedit-tools
+  tedit setup mcp        # register MCP; offers AGENTS.md/CLAUDE.md guide
+  tedit doctor           # verify CLI, MCP server, actions, and updates
+
+Common CLI commands:
   tedit actions [file] [--json]
-  tedit setup mcp [--target claude|codex|both] [--scope user|project] [--dry-run]
-  tedit setup codex|claude|print [--scope user|project] [--dry-run]
-  tedit doctor [--skip-update] [--json]
-  tedit update [--check|--yes]
-  tedit inspect-range <file> --lines N:M [--context N] [--json]
-  tedit search-text <query> [path...] [--regex] [--glob <glob>] [--context N] [--multiedit-spec --replace <text>] [--max-results N] [--json]
-  tedit history-trace <file> [--lines N:M|--contains <text>|--regex <pattern>] [--limit N] [--json]
-  tedit scan-strings <file> [--contains <text>] [--include-excluded] [--json]
-  tedit ast-select <file> <selector> [--json]
-  tedit ast-edit <file> [selector] --replace <text> [--string text|--contains text|--jsx-text text|--jsx-attr name|--object-key key|--call callee] [--dry-run|--write]
-  tedit ts-select <file> [fn:name|class:Name|method:Owner.name|prop:name|var:name] [--json]
-  tedit ts-edit <file> <selector> --body <body>|--insert-before <code>|--insert-after <code> [--dry-run|--write]
-  tedit ts-move <file> <target-selector> (--before <selector>|--after <selector>) [--confirm-trivia] [--dry-run|--write]
-  tedit analyze-state <file> [--json]
-  tedit refactor-state <file> [--cluster <name>] [--to <hook-file> --name <hookName>] [--external-deps fail|params] [--plan-out <plan-json>|--dry-run|--write]
-  tedit find <file> <selector> [--json]
-  tedit inspect <file> [selector] [--id <id>] [--json]
-  tedit append <file> <selector> --element <json> [--dry-run|--write]
-  tedit prepend <file> <selector> --element <json> [--dry-run|--write]
-  tedit wrap <file> <selector> --with <tag-or-json> [--dry-run|--write]
-  tedit unwrap <file> <selector> [--dry-run|--write]
-  tedit remove <file> <selector> [--dry-run|--write]
-  tedit rename <file> <selector> --to <name> [--dry-run|--write]
-  tedit insertComment <file> <selector> <text> [--position inside-start|inside-end|before|after] [--write]
-  tedit text set <file> <selector> --value <text> [--dry-run|--write]
-  tedit text set <file> <selector> --expr <expr> [--dry-run|--write]
-  tedit text replace <file> <selector> --match-text <text> --with-text <text> [--dry-run|--write]
-  tedit text replace <file> <selector> --match-expr <expr> --with-expr <expr> [--dry-run|--write]
-  tedit prop set <file> <selector> <name> [value] [--expr <code>] [--dry-run|--write]
-  tedit prop remove <file> <selector> <name> [--dry-run|--write]
-  tedit class add <file> <selector> <class...> [--dry-run|--write]
-  tedit class remove <file> <selector> <class...> [--dry-run|--write]
-  tedit class replace <file> <selector> <from> <to> [--dry-run|--write]
-  tedit imports add <file> --from <source> --named A,B [--default Name] [--dry-run|--write]
-  tedit imports remove <file> --from <source> --named A,B [--dry-run|--write]
-  tedit imports rename <file> --from <source> --name Old --to New [--dry-run|--write]
-  tedit imports move <file> --from <source> --to <source> --named A,B [--dry-run|--write]
-  tedit expr replace <file> <selector> --code <expr> [--dry-run|--write]
-  tedit expr wrap <file> <selector> --code 'cond ? $expr : null' [--dry-run|--write]
-  tedit expr unwrap <file> <selector> [--dry-run|--write]
-  tedit expr toTernary <file> <selector> [--alternate <expr>] [--dry-run|--write]
-  tedit expr toShortCircuit <file> <selector> [--dry-run|--write]
-  tedit extract <file> <selector> --to <new-file> --name <ComponentName> [--slot '<selector>.children[=prop]'|--depth N --auto-slot] [--typecheck] [--helpers ask|move|share|as-prop] [--helper name=move|share|leave|as-prop] [--max-props N|--accept-large-props] [--export named|default] [--overwrite] [--plan-out <plan-json>|--dry-run|--write]
-  tedit apply-plan <plan-json> [--only <step-id>] [--skip <step-id>] [--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit plan inspect <plan-json> [--json]
-  tedit create <file> --source <source> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit create <file> --from-file <source-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit create <file> --from-stdin [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit write <file> --source <source> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit write <file> --from-file <source-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit write <file> --from-stdin [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit scaffold <file> --spec <json-or-file> [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit scaffold <file> --directives "use client" --imports "@/lib/utils:cn" --export "function:Button(props)" --body 'button.children="Save"' [--write]
-  tedit new <template> <file> --param name=Button [--overwrite] [--quiet] [--diff-out <file>] [--dry-run|--write]
-  tedit templates [--cwd <dir>] [--json]
-  tedit flow <file> <flow-json> [--params <json-or-file>] [--dry-run|--write]
-  tedit workspace-flow <flow-json> [--params <json-or-file>] [--dry-run|--write]
-  tedit chain <file> find <selector> as body :: append '@body' PageHead :: append '$ret.id' LeftPanel [--write]
-  tedit chain <file> --from-file <chain-file> [--dry-run|--write]
-  tedit chain <file> --from-stdin [--dry-run|--write]
-  tedit chain-workspace extract src/Page.tsx Card --to src/PageCard.tsx --name PageCard :: in src/PageCard.tsx prop.set Card data-extracted true [--write]
-  tedit chain-workspace --from-file <workspace-chain-file> [--dry-run|--write]
-  tedit chain-workspace --from-stdin [--dry-run|--write]
-  tedit rules [--json]
-  tedit backups list [--root <dir>]
-  tedit backups restore <id> [--root <dir>] [--dry-run|--write]
-  tedit backups clean --older-than <duration> [--root <dir>] [--dry-run|--write]
+  tedit edit <file> --find <text> --replace <text> [--dry-run|--write]
+  tedit multiedit <edits-json> [--dry-run|--write]
+  tedit patch <patch-file> [--dry-run|--write]
+  tedit verify-file <file...> [--json]
 
-Mutation commands use git-aware default write mode. Pass --dry-run or --write to be explicit.
-Compact output uses --diff-mode off|stats|auto|full. Default auto inlines small diffs and saves large write diffs under .tedit-cache/diffs; stats keeps counts only.
-Use tedit help <command> for short command-specific help.
+MCP-first workflow:
+  actions -> search/select -> mutate/edit/multiedit/patch -> verify_file
+  MCP edit/multiedit/mutate/flow write by default; pass dryRun:true to preview.
+
+Setup:
+  tedit setup mcp [--target claude|codex|both] [--scope user|project] [--yes] [--no-agent-guide]
+  tedit setup print
+
+Docs:
+  tedit help <command>     # short command help, e.g. setup, edit, patch
+  docs/REFERENCE.md        # full CLI/MCP reference
 `);
 }
 
@@ -2479,7 +2409,7 @@ function shortHelp(command: string): string | null {
     case "actions":
       return "tedit actions\nUsage:\n  tedit actions [file] [--json]\n\nLists universal base actions and file-specific language actions.";
     case "setup":
-      return "tedit setup\nUsage:\n  tedit setup mcp [--target claude|codex|both] [--scope user|project] [--dry-run]\n  tedit setup codex|claude [--scope user|project] [--dry-run]\n  tedit setup print\n\nInteractive MCP setup asks for host first (claude, codex, or both), then user/project scope. Codex currently supports user scope only.";
+      return "tedit setup\nUsage:\n  tedit setup mcp [--target claude|codex|both] [--scope user|project] [--yes] [--no-agent-guide] [--dry-run]\n  tedit setup codex|claude [--scope user|project] [--yes] [--no-agent-guide] [--dry-run]\n  tedit setup print\n\nInteractive MCP setup asks for host first (claude, codex, or both), then user/project scope. Codex currently supports user scope only. After registering MCP, setup offers to add a short tedit guide to AGENTS.md/CLAUDE.md; use --yes to accept prompts or --no-agent-guide to skip.";
     case "doctor":
       return "tedit doctor\nUsage:\n  tedit doctor [--skip-update] [--json]\n\nChecks tedit, tedit-mcp, actions, and available npm updates.";
     case "update":

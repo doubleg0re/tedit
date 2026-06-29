@@ -3039,10 +3039,21 @@ test("CLI version and subcommand help are concise", () => {
   const version = run(["--version"]);
   assert.match(version, /^tedit 0\.1\.0\n$/);
 
+  const rootHelp = run(["help"]);
+  assert.match(rootHelp, /tedit setup mcp/);
+  assert.match(rootHelp, /AGENTS\.md\/CLAUDE\.md guide/);
+  assert.match(rootHelp, /MCP-first workflow/);
+  assert.doesNotMatch(rootHelp, /tedit scaffold <file>/);
+  assert.ok(rootHelp.split("\n").length < 40);
+
   const help = run(["help", "verify"]);
   assert.match(help, /tedit verify/);
   assert.match(help, /explicit dry-run/);
   assert.doesNotMatch(help, /tedit scaffold/);
+
+  const setupHelp = run(["help", "setup"]);
+  assert.match(setupHelp, /--no-agent-guide/);
+  assert.match(setupHelp, /AGENTS\.md\/CLAUDE\.md/);
 
   const topics = [
     "edit", "multiedit", "verify", "verify-file", "patch", "actions", "templates", "inspect-range", "search-text", "history-trace", "scan-strings", "ast-select", "ast-edit", "analyze-state",
