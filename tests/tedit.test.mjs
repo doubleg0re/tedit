@@ -2834,6 +2834,18 @@ test("verify-file enforces Markdown and YAML lightweight boundaries", () => {
   writeFileSync(frontmatterEnd, "---\ntitle: Demo\n...\n# Body\n");
   writeFileSync(mdxList, "# List\n\n- <Component prop=\"x\" />\n");
   writeFileSync(validYaml, "---\nserver:\n  host: localhost\n...\n");
+  const workflowYaml = join(dir, "workflow.yml");
+  writeFileSync(workflowYaml, `jobs:
+  deploy:
+    steps:
+      - name: Setup SSH Key
+        env:
+          SSH_KEY: \${{ secrets.EC2_SSH_KEY }}
+          SSH_HOST: \${{ secrets.EC2_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | base64 -d > ~/.ssh/deploy_key
+`);
   writeFileSync(tabYaml, "server:\n  \thost: localhost\n");
   writeFileSync(oddIndentYaml, "server:\n host: localhost\n");
   writeFileSync(duplicateYaml, "server:\n  host: localhost\n  host: 127.0.0.1\n");
@@ -2843,6 +2855,7 @@ test("verify-file enforces Markdown and YAML lightweight boundaries", () => {
   assert.equal(JSON.parse(run(["verify-file", frontmatterEnd, "--json"])).parse_verified, true);
   assert.equal(JSON.parse(run(["verify-file", mdxList, "--json"])).parse_verified, true);
   assert.equal(JSON.parse(run(["verify-file", validYaml, "--json"])).parser, "yaml-lite");
+  assert.equal(JSON.parse(run(["verify-file", workflowYaml, "--json"])).parser, "yaml-lite");
   assert.equal(JSON.parse(run(["find", frontmatterEnd, "frontmatter", "--json"])).matches[0].attributes.path, "$/frontmatter");
   assert.equal(JSON.parse(run(["find", thematic, "paragraph", "--json"])).matches[0].attributes.text, "---\ncontent\ntitle: Not frontmatter");
 

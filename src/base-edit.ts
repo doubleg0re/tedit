@@ -668,7 +668,7 @@ function verifyYamlLite(source: string): void {
     const sequence = trimmed.match(/^-\s+(.*)$/);
     if (sequence) {
       const value = sequence[1].trim();
-      stack.push({ indent, acceptsChildren: value.length === 0, line: index + 1, keys: new Set() });
+      stack.push({ indent, acceptsChildren: value.length === 0 || isYamlInlineMapping(value), line: index + 1, keys: new Set() });
       continue;
     }
     const mapping = trimmed.match(/^([^:#][^:]*):(\s*(.*))?$/);
@@ -677,8 +677,16 @@ function verifyYamlLite(source: string): void {
     if (parent.keys.has(key)) throw new Error(`Duplicate YAML key "${key}" at line ${index + 1}.`);
     parent.keys.add(key);
     const value = (mapping[3] ?? "").trim();
-    stack.push({ indent, acceptsChildren: value.length === 0, line: index + 1, keys: new Set() });
+    stack.push({ indent, acceptsChildren: value.length === 0 || isYamlBlockScalarIndicator(value), line: index + 1, keys: new Set() });
   }
+}
+
+function isYamlInlineMapping(value: string): boolean {
+  return /^([^:#][^:]*):(?:\s+.*)?$/.test(value);
+}
+
+function isYamlBlockScalarIndicator(value: string): boolean {
+  return /^[|>][+-]?(?:\s+#.*)?$/.test(value);
 }
 
 function verifyCodeFences(lines: string[]): void {
