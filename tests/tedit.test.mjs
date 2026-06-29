@@ -2516,6 +2516,17 @@ test("base edit exact replace dry-runs and writes unsupported files", () => {
   assert.equal(readFileSync(file, "utf8"), "# Title\nnew value\n");
 });
 
+test("base edit accepts an empty replacement for deletion", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "notes.txt");
+  writeFileSync(file, "keep\nremove me\n");
+
+  const result = JSON.parse(run(["edit", file, "--find", "remove me\n", "--replace", "", "--write", "--json"]));
+  assert.equal(result.success, true);
+  assert.equal(result.changed, true);
+  assert.equal(readFileSync(file, "utf8"), "keep\n");
+});
+
 test("base edit reports ambiguous exact matches with candidates", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "copy.txt");

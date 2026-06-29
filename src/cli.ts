@@ -2243,7 +2243,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 
     const name = arg.slice(2);
     const next = rest[i + 1];
-    if (next && !next.startsWith("--")) {
+    if (next !== undefined && !next.startsWith("--")) {
       addFlag(flags, name, next);
       i++;
     } else {
