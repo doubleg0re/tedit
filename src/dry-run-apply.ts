@@ -55,6 +55,7 @@ export function attachDryRunApplySuggestion(tool: string, args: unknown, result:
     result.suggestions = [...new Set([...suggestions, "Review the diff. To apply this exact dry-run without resending arguments, call apply_dry_run with suggestedActions[0].arguments."])].slice(0, 3);
     const actions = Array.isArray(result.suggestedActions) ? result.suggestedActions.filter(isRecord) : [];
     result.suggestedActions = [action, ...actions];
+    result.next = ["call apply_dry_run with suggestedActions[0].arguments to apply"];
   } catch {
     // ponytail: apply hints are UX sugar; never fail a successful edit because cache writing failed.
   }

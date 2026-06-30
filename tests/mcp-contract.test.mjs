@@ -157,7 +157,7 @@ test("mcp default profile tools share compact agent contracts", () => {
     diffMode: "stats",
   });
   assertMutationContract(edit, workspace.notes, { changedCount: 1, writtenCount: 0, persisted: false });
-  assert.equal(edit.next[0], "rerun with write=true to apply");
+  assert.equal(edit.next[0], "call apply_dry_run with suggestedActions[0].arguments to apply");
   assert.equal(edit.suggestedActions[0].tool, "apply_dry_run");
 
   const applyDryRun = runMcpTool("apply_dry_run", edit.suggestedActions[0].arguments);
@@ -339,6 +339,9 @@ test("mcp default profile tools share compact agent contracts", () => {
   assertMutationContract(written, workspace.generated, { changedCount: 1, writtenCount: 0, persisted: false });
   assert.equal(written.parser, "json");
   assert.equal(written.files[0].change, "created");
+  assert.equal(written.next[0], "call apply_dry_run with suggestedActions[0].arguments to apply");
+  assert.equal(written.suggestedActions[0].tool, "apply_dry_run");
+  assert.match(written.suggestedActions[0].arguments.id, /^dryrun_/);
 
   const refactor = runMcpTool("refactor", {
     kind: "state",

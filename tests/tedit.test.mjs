@@ -2224,7 +2224,7 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.equal(detailedEdit.isError, undefined);
     assert.match(detailedEdit.structuredContent.diff, /final value/);
     assert.ok(detailedEdit.structuredContent.write_policy);
-    assert.deepEqual(detailedEdit.structuredContent.next, ["rerun with write=true to apply"]);
+    assert.deepEqual(detailedEdit.structuredContent.next, ["call apply_dry_run with suggestedActions[0].arguments to apply"]);
     assert.equal(detailedEdit.structuredContent.suggestedActions[0].tool, "apply_dry_run");
 
     const appliedDryRun = await client.callTool({
