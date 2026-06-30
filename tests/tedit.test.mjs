@@ -1891,6 +1891,13 @@ test("npm pack includes CLI and MCP distribution files", () => {
   const files = pack.files.map((file) => file.path);
   assert.equal(packageJson.bin.tedit, "dist/cli.js");
   assert.equal(packageJson.bin["tedit-mcp"], "dist/mcp.js");
+  assert.equal(packageJson.main, "./dist/index.js");
+  assert.equal(packageJson.types, "./dist/index.d.ts");
+  assert.equal(packageJson.exports["."].import, "./dist/index.js");
+  assert.equal(packageJson.exports["./mcp"].import, "./dist/mcp.js");
+  assert.equal(packageJson.repository.url, "git+https://github.com/doubleg0re/tedit.git");
+  assert.equal(packageJson.homepage, "https://github.com/doubleg0re/tedit#readme");
+  assert.equal(packageJson.bugs.url, "https://github.com/doubleg0re/tedit/issues");
   assert.ok(files.includes("dist/cli.js"));
   assert.ok(files.includes("dist/mcp.js"));
   assert.ok(files.includes("dist/mcp-runner.js"));

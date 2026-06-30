@@ -543,17 +543,20 @@ function parseSetupScope(raw: string): SetupScope {
 
 function commandDoctor(args: ParsedArgs): void {
   const latest = args.flags["skip-update"] ? undefined : latestNpmVersion(false);
+  const cliPath = currentCliPath();
+  const mcpSibling = siblingBinPath("tedit-mcp");
+  const mcpPath = commandPath("tedit-mcp");
   const checks = [
-    { name: "tedit", ok: true, detail: packageVersion() },
-    { name: "tedit-mcp", ok: commandExists("tedit-mcp"), detail: commandPath("tedit-mcp") ?? "not found" },
-    { name: "actions", ok: true, detail: String(BASE_ACTIONS.length + listRules().flatMap((rule) => rule.actions).length) + " actions" },
+    { name: "tedit cli", ok: true, detail: `${cliPath} ${packageVersion()}` },
+    { name: "tedit-mcp", ok: Boolean(mcpSibling || mcpPath), detail: `sibling: ${mcpSibling ?? "not found"}; PATH: ${mcpPath ?? "not found"}` },
+    { name: "actions", ok: true, detail: String(actionCount()) + " actions" },
   ];
   const ok = checks.every((check) => check.ok);
   if (args.flags.json) {
     process.stdout.write(JSON.stringify({ ok, version: packageVersion(), latest, checks }, null, 2) + "\n");
   } else {
     process.stdout.write(checks.map((check) => `${check.ok ? "✓" : "✗"} ${check.name}: ${check.detail}`).join("\n") + "\n");
-    if (latest && latest !== packageVersion()) process.stdout.write(`ℹ update available: ${packageVersion()} -> ${latest}\n  run: tedit update\n`);
+    if (latest && versionCompare(latest, packageVersion()) > 0) process.stdout.write(`ℹ update available: ${packageVersion()} -> ${latest}\n  run: tedit update\n`);
   }
   if (!ok) process.exitCode = 1;
 }
@@ -561,7 +564,8 @@ function commandDoctor(args: ParsedArgs): void {
 async function commandUpdate(args: ParsedArgs): Promise<void> {
   const latest = latestNpmVersion(true);
   const current = packageVersion();
-  if (latest === current) {
+  if (!latest) throw new Error("Could not check npm latest version.");
+  if (versionCompare(latest, current) <= 0) {
     process.stdout.write(`tedit is up to date (${current}).\n`);
     return;
   }
@@ -2330,6 +2334,16 @@ function commandPath(command: string): string | undefined {
   return result.status === 0 ? result.stdout.trim() || undefined : undefined;
 }
 
+function currentCliPath(): string {
+  return pathResolve(process.argv[1] ?? "tedit");
+}
+
+function siblingBinPath(command: string): string | undefined {
+  const dir = dirname(currentCliPath());
+  const candidates = process.platform === "win32" ? [pathJoin(dir, `${command}.cmd`), pathJoin(dir, command)] : [pathJoin(dir, command)];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
 function commandExists(command: string): boolean {
   return commandPath(command) !== undefined;
 }
@@ -2360,11 +2374,29 @@ function quoteWindowsArg(arg: string): string {
 
 function latestNpmVersion(required: boolean): string | undefined {
   if (process.env.TEDIT_TEST_LATEST_VERSION) return process.env.TEDIT_TEST_LATEST_VERSION;
-  const result = spawnCommand("npm", ["view", "tedit", "version"], { encoding: "utf8", timeout: 5000 });
+  const result = spawnCommand("npm", ["view", "tedit-tools", "version"], { encoding: "utf8", timeout: 5000 });
   const stdout = typeof result.stdout === "string" ? result.stdout : result.stdout?.toString("utf8") ?? "";
   if (result.status === 0) return stdout.trim();
   if (required) throw new Error("Could not check npm latest version.");
   return undefined;
+}
+
+function actionCount(): number {
+  return BASE_ACTIONS.length + 9 + listRules().flatMap((rule) => rule.actions).length;
+}
+
+function versionCompare(left: string, right: string): number {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index++) {
+    const diff = (a[index] ?? 0) - (b[index] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function versionParts(version: string): number[] {
+  return version.split("-", 1)[0].split(".").map((part) => Number.parseInt(part, 10)).map((part) => Number.isFinite(part) ? part : 0);
 }
 
 async function confirm(question: string): Promise<boolean> {

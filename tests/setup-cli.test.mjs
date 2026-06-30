@@ -175,6 +175,8 @@ test("doctor reports local MCP availability without network when requested", () 
 
   assert.equal(doctor.ok, true);
   assert.equal(doctor.checks.find((check) => check.name === "tedit-mcp").ok, true);
+  assert.match(doctor.checks.find((check) => check.name === "tedit-mcp").detail, /PATH:/);
+  assert.equal(doctor.checks.find((check) => check.name === "actions").detail, "80 actions");
   assert.equal(doctor.latest, undefined);
 });
 
@@ -183,6 +185,20 @@ test("update check reports newer npm version without installing", () => {
 
   assert.match(out, new RegExp(`update available: ${packageJson.version.replace(/\./g, "\\.")} -> 9\\.9\\.9`));
   assert.match(out, /npm install -g tedit-tools@latest/);
+});
+
+test("update check queries tedit-tools and ignores older latest versions", () => {
+  const bin = mkdtempSync(join(tmpdir(), "tedit-cli-npm-"));
+  const calls = join(bin, "npm-calls.txt");
+  writeFakeCommand(bin, "npm", `echo "$@" >> "${calls}"
+if [ "$1" = "view" ]; then echo "0.0.4"; exit 0; fi
+exit 1
+`);
+
+  const out = run(["update", "--check"], { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` });
+
+  assert.match(readFileSync(calls, "utf8"), /view tedit-tools version/);
+  assert.match(out, new RegExp(`tedit is up to date \\(${packageJson.version.replace(/\./g, "\\.")}\\)`));
 });
 
 function writeFakeCommand(dir, name, script) {
