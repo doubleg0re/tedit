@@ -313,6 +313,10 @@ test("mcp default profile tools share compact agent contracts", () => {
     () => runMcpTool("mutate", { file: workspace.server, op: "body.replace", target: "ts:startServer", args: { body: "return ok;" }, dryRun: true }),
     (err) => err.code === "INVALID_MCP_INPUT" && err.details?.validPrefixes?.includes("fn:") && err.details?.didYouMean === "fn:startServer",
   );
+  assert.throws(
+    () => runMcpTool("mutate", { file: workspace.server, op: "text.replace", "text.replace": { find: "function startServer() { return old; }", replace: "function startServer() { return next; }" }, dryRun: true }),
+    (err) => err.code === "INVALID_MCP_INPUT" && err.details?.suggestions?.some((item) => item.includes('op="body.replace" target="fn:startServer"')),
+  );
 
   const deleted = runMcpTool("delete_file", { file: workspace.deleteMe, diffMode: "stats" });
   assertMutationContract(deleted, workspace.deleteMe, { changedCount: 1, writtenCount: 0, persisted: false });

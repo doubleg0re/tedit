@@ -319,7 +319,7 @@ function runMutateTool(args: unknown): unknown {
   if (!MUTATE_SUPPORTED_OPS.includes(op as typeof MUTATE_SUPPORTED_OPS[number])) mutateUnsupportedOp(op);
 
   if (isMutateJsxOp(op)) {
-    const target = mutateJsxTarget(input.target, file, op);
+    const target = mutateJsxTarget(input.target, file, op, opArgs);
     return withAgentFields(runWorkspaceFlow([mutateJsxStep(file, op, target, opArgs)], writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT)), input);
   }
 
@@ -339,7 +339,8 @@ function runMutateTool(args: unknown): unknown {
 
 function mutateOperationFromInput(input: JsonRecord): { op: string; args: JsonRecord } {
   if (input.op !== undefined) {
-    return { op: normalizeMutateOp(requiredString(input.op, "mutate requires op.")), args: recordOrUndefined(input.args, "mutate args") ?? {} };
+    const op = normalizeMutateOp(requiredString(input.op, "mutate requires op."));
+    return { op, args: recordOrUndefined(input.args, "mutate args") ?? recordOrUndefined(input[op], `mutate ${op} args`) ?? {} };
   }
   const opKeys = Object.keys(input).filter((key) => MUTATE_OP_ALIASES.has(key));
   if (opKeys.length === 1) return { op: normalizeMutateOp(opKeys[0]), args: recordOrUndefined(input[opKeys[0]], `mutate ${opKeys[0]} args`) ?? {} };
@@ -399,8 +400,9 @@ function mutateUnsupportedOp(op: string): never {
   });
 }
 
-function mutateJsxTarget(value: unknown, file: string, op: string): string {
+function mutateJsxTarget(value: unknown, file: string, op: string, opArgs: JsonRecord = {}): string {
   if (value && typeof value === "object" && !Array.isArray(value) && typeof (value as JsonRecord).id === "string") return mutateJsxTarget(`id:${(value as JsonRecord).id}`, file, op);
+  if (value === undefined || value === false) mutateMissingTargetFail(op, file, opArgs);
   const raw = requiredString(value, `mutate op "${op}" requires target. Valid prefixes: ${mutateTargetHelp(op).prefixes.join(", ")}.`);
   const [prefix, rest] = splitTargetPrefix(raw);
   if (!prefix) mutateTargetFail(op, file, raw, prefix);
@@ -416,6 +418,27 @@ function mutateJsxTarget(value: unknown, file: string, op: string): string {
     }
   }
   mutateTargetFail(op, file, raw, prefix);
+}
+
+function mutateMissingTargetFail(op: string, file: string, opArgs: JsonRecord): never {
+  const help = mutateTargetHelp(op);
+  const functionName = op === "text.replace" ? functionNameFromTextReplaceArgs(opArgs) : undefined;
+  fail("INVALID_MCP_INPUT", `mutate op "${op}" requires target. Valid prefixes: ${help.prefixes.join(", ")}.`, {
+    op,
+    validPrefixes: help.prefixes,
+    examples: help.examples,
+    suggestions: [
+      ...(functionName ? [`For replacing function ${functionName}, use mutate op="body.replace" target="fn:${functionName}" with args.body containing only the function body.`] : []),
+      ...(functionName ? ["For exact whole-block text replacement, use edit with find/replace instead of mutate text.replace."] : []),
+      "For JSX text replacement, pass target such as target=\"jsx:Button\" plus args.matchText/args.withText.",
+      `Call select on ${file} first when the structural target is ambiguous.`,
+    ],
+  });
+}
+
+function functionNameFromTextReplaceArgs(args: JsonRecord): string | undefined {
+  const source = typeof args.find === "string" ? args.find : typeof args.matchText === "string" ? args.matchText : undefined;
+  return source?.match(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/)?.[1];
 }
 
 function mutateTsSelector(value: unknown, file: string, op: string): string {
