@@ -7,7 +7,7 @@ const mutateOpKeySchema = Object.fromEntries([
   "text.set", "text.replace", "expr.replace", "expr.wrap", "expr.toTernary",
   "wrap", "remove", "rename", "append", "prepend", "unwrap", "insertComment",
   "imports.add", "imports.remove", "imports.rename", "imports.move",
-  "body.replace", "body.insertBefore", "body.insertAfter", "declaration.move",
+  "body.replace", "body.insertBefore", "body.insertAfter", "declaration.move", "declaration.rename",
   "ast.replace",
 ].map((op) => [op, mutateArgSchema])) as z.ZodRawShape;
 
@@ -18,10 +18,10 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
     {
       name: "edit",
       title: "Universal Edit",
-      description: "Safer replacement for routine Edit calls: exact, fuzzy, anchor, regex, or line-range edits with git-aware write policy, parse verification, and retry hints. MCP writes by default; pass dryRun:true to preview.",
+      description: "Safer replacement for routine Edit calls: exact, line-range, regex, anchor, or best-effort whitespace-fuzzy edits with git-aware write policy, syntax parse verification, and retry hints. MCP writes by default; pass dryRun:true to preview.",
       category: "edit",
       aliases: ["safe_edit", "base_edit", "edit.replace"],
-      bestFor: ["single localized text/code edit", "retryable exact/fuzzy match", "line-range or regex replacement"],
+      bestFor: ["single localized text/code edit", "retryable exact/line match", "line-range or regex replacement"],
       inputSchema: {
         file: fileSchema,
         find: z.string().optional(),
@@ -79,7 +79,7 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
       bestFor: ["one selected structural mutation", "select id then mutate", "agent-facing JSX/TS mutation without choosing backend tools"],
       inputSchema: {
         file: fileSchema,
-        op: z.string().min(1).optional().describe("Dotted operation such as prop.set, class.add, text.set, wrap, imports.rename, body.replace, declaration.move, or ast.replace. Optional when using an operation key like {\"prop.set\":{...}}."),
+        op: z.string().min(1).optional().describe("Dotted operation such as prop.set, class.add, text.set, wrap, imports.rename, body.replace, declaration.rename, declaration.move, or ast.replace. Optional when using an operation key like {\"prop.set\":{...}}."),
         target: z.union([z.string().min(1), z.record(z.string(), z.unknown())]).optional().describe("Required for JSX/TS/AST ops: jsx:<selector>, id:jsx:<id>, fn:<name>, objectKey:<key>, call:<callee>, etc. Omit for imports.* ops."),
         args: z.record(z.string(), z.unknown()).optional().describe("Operation arguments. Examples: {name,value} for prop.set, {classes} or {className} for class.add/remove, {from,to} for class.replace/imports.rename, {body} for body.replace, {replace} for ast.replace."),
         kind: z.string().optional().describe("Optional validation hint; routing defaults to auto."),

@@ -121,6 +121,21 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.equal(search.results[0].suggestions, undefined);
   assert.ok(search.suggestions.some((suggestion) => suggestion.includes("search")));
 
+  const overview = runMcpTool("search", { file: workspace.packedHtml });
+  assert.equal(overview.ok, true);
+  assert.equal(overview.kind, "file-overview");
+  assert.equal(overview.packed.detected, true);
+  assert.equal(overview.parser, "markup");
+  assert.equal(overview.markup.title, "Bundled Page");
+  assert.equal(overview.markup.scripts[0].packed, true);
+  assert.ok(overview.suggestions.some((suggestion) => suggestion.arguments?.query === "<script"));
+
+  const packedInspect = runMcpTool("search", { file: workspace.packedHtml, lines: "1" });
+  assert.equal(packedInspect.ok, true);
+  assert.equal(packedInspect.packed.detected, true);
+  assert.equal(packedInspect.lines[0].truncated, true);
+  assert.ok(packedInspect.lines[0].text.length < 5000);
+
   const verify = runMcpTool("verify_file", { file: workspace.config });
   assert.equal(verify.ok, true);
   assert.equal(verify.success, undefined);
@@ -297,6 +312,10 @@ test("mcp default profile tools share compact agent contracts", () => {
   const mutateTsBody = runMcpTool("mutate", { file: workspace.server, op: "body.replace", target: "fn:startServer", args: { body: 'return "new";' }, diffMode: "stats" });
   assertMutationContract(mutateTsBody, workspace.server, { changedCount: 1, writtenCount: 1, persisted: true });
   assert.match(readFileSync(workspace.server, "utf8"), /return "new";/);
+  const mutateTsRename = runMcpTool("mutate", { file: workspace.server, target: "fn:startServer", "declaration.rename": { to: "bootServer" }, diffMode: "stats" });
+  assertMutationContract(mutateTsRename, workspace.server, { changedCount: 1, writtenCount: 1, persisted: true });
+  assert.match(readFileSync(workspace.server, "utf8"), /function bootServer/);
+  assert.ok(mutateTsRename.warnings.some((warning) => warning.code === "TS_RENAME_EXPORTED_SYMBOL"));
   const mutateImport = runMcpTool("mutate", { file: workspace.mutatePage, op: "imports.rename", args: { from: "./old", name: "OldName", to: "NewName" }, diffMode: "stats" });
   assertMutationContract(mutateImport, workspace.mutatePage, { changedCount: 1, writtenCount: 1, persisted: true });
   assert.match(readFileSync(workspace.mutatePage, "utf8"), /import \{ NewName \} from "\.\/old"/);
@@ -316,6 +335,10 @@ test("mcp default profile tools share compact agent contracts", () => {
   assert.throws(
     () => runMcpTool("mutate", { file: workspace.server, op: "text.replace", "text.replace": { find: "function startServer() { return old; }", replace: "function startServer() { return next; }" }, dryRun: true }),
     (err) => err.code === "INVALID_MCP_INPUT" && err.details?.suggestions?.some((item) => item.includes('op="body.replace" target="fn:startServer"')),
+  );
+  assert.throws(
+    () => runMcpTool("mutate", { file: workspace.mutatePage, op: "imports.rename", args: { from: "./old", to: "NewName" }, dryRun: true }),
+    (err) => err.code === "INVALID_MCP_INPUT" && /imports\.rename.*args\.from, args\.name, and args\.to/.test(err.message),
   );
 
   const deleted = runMcpTool("delete_file", { file: workspace.deleteMe, diffMode: "stats" });
@@ -432,6 +455,7 @@ function createWorkspace() {
   const renameNew = join(root, "new-name.txt");
   const verifyPass = join(root, "verify-pass.txt");
   const verifyFail = join(root, "verify-fail.txt");
+  const packedHtml = join(root, "packed.html");
   writeFileSync(page, "export function Page() {\n  return <button>삭제</button>;\n}\n");
   writeFileSync(mutatePage, "import { OldName } from \"./old\";\nexport function MutatePage() {\n  return <Button className=\"old\">Hello</Button>;\n}\n");
   writeFileSync(server, "export function startServer() {\n  return \"old\";\n}\n");
@@ -486,7 +510,8 @@ export function StatePage() {
   writeFileSync(renameOld, "move me\n");
   writeFileSync(verifyPass, "before\n");
   writeFileSync(verifyFail, "before\n");
-  return { root, src, page, mutatePage, server, messages, statePage, python, notes, defaultEdit, multiA, multiB, flowText, tsDefault, config, generated, deleteMe, renameOld, renameNew, verifyPass, verifyFail };
+  writeFileSync(packedHtml, `<!doctype html><html><head><title>Bundled Page</title><style>${".".repeat(30_000)}</style></head><body><div id="app"></div><script>${"x".repeat(30_000)}</script></body></html>`);
+  return { root, src, page, mutatePage, server, messages, statePage, python, notes, defaultEdit, multiA, multiB, flowText, tsDefault, config, generated, deleteMe, renameOld, renameNew, verifyPass, verifyFail, packedHtml };
 }
 
 function assertMutationContract(result, path, expected) {

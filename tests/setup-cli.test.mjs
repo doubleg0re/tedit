@@ -169,6 +169,22 @@ exit 0
   assert.match(calls, /mcp add --scope user tedit -- tedit-mcp/);
 });
 
+test("setup offers project git exclude for .tedit cache", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "tedit-setup-exclude-"));
+  const home = mkdtempSync(join(tmpdir(), "tedit-setup-home-"));
+  const bin = fakeBin(["claude"]);
+  execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+
+  const out = run(["setup", "claude", "--scope", "project", "--yes", "--no-agent-guide"], homeEnv(home, { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }), cwd);
+  const excludePath = join(cwd, ".git", "info", "exclude");
+  assert.match(out, /added \.tedit\/ exclude/);
+  assert.equal((readFileSync(excludePath, "utf8").match(/^\.tedit\/$/gm) ?? []).length, 1);
+
+  const again = run(["setup", "claude", "--scope", "project", "--yes", "--no-agent-guide"], homeEnv(home, { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }), cwd);
+  assert.match(again, /\.tedit\/ already excluded/);
+  assert.equal((readFileSync(excludePath, "utf8").match(/^\.tedit\/$/gm) ?? []).length, 1);
+});
+
 test("doctor reports local MCP availability without network when requested", () => {
   const bin = fakeBin();
   const doctor = JSON.parse(run(["doctor", "--skip-update", "--json"], { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }));

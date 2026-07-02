@@ -79,13 +79,13 @@ The `actions` response includes an agent workflow guide. The intended loop is:
 - `search` when the target is not certain yet or line context is needed.
 - `select` when a structural JSX/TSX or TS/JS target is available.
 - `mutate` after `select` for one structural target, e.g. JSX props/classes/text/wrap or TS body changes.
-- `edit` for one localized text replacement, insertion, deletion, regex, fuzzy, or line-range change.
+- `edit` for one localized text replacement, insertion, deletion, regex, best-effort whitespace-fuzzy, or line-range change.
 - `multiedit` after `search` when the same change spans several places or files.
 - `apply_dry_run` when a successful dry-run returns `suggestedActions`; it reapplies the reviewed change by id after source-hash checks.
 - `delete_file` or `rename_file` for one-file cleanup or moves without hand-authoring a patch envelope.
 - `patch` only when the change already exists as a unified diff or apply-patch envelope.
 - `file_write` for whole-file generation through `mode: "write"`, `mode: "scaffold"`, or `mode: "template"`.
-- `verify_file` before or after edits when parser coverage matters.
+- `verify_file` before or after edits when syntax/parser coverage matters. It is not a typecheck.
 
 MCP `edit`, `multiedit`, `mutate`, and `flow` write by default; pass `dryRun:true` to preview. Add `verify` when typecheck/lint/test breakage matters.
 
@@ -100,6 +100,9 @@ Example MCP payloads:
 
 // tedit.multiedit: atomic repeated/cross-file text edits
 { "edits": [{ "file": "src/a.ts", "find": "Old", "replace": "New" }], "dryRun": true }
+
+// Add semantic verification for risky writes (typecheck/lint/test)
+{ "file": "src/config.ts", "find": "timeout: 3000", "replace": "timeout: 5000", "verify": { "cmd": ["npm", "run", "typecheck"], "timeoutMs": 30000, "rollbackOnFail": true } }
 
 // tedit.patch: apply an existing unified diff
 { "patch": "--- a/src/a.ts

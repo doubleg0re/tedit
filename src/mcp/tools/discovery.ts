@@ -36,13 +36,13 @@ export function makeDISCOVERY_TOOLS(deps: any): readonly TeditMcpTool[] {
     {
       name: "search",
       title: "Search",
-      description: "Read-only text/range discovery facade. Pass query for grep-style search, or file plus lines/head/tail for sed/head/tail-style inspection.",
+      description: "Read-only text/range discovery facade. Pass file only for a packed-file overview, query for grep-style search, or file plus lines/head/tail for sed/head/tail-style inspection.",
       category: "discover",
       aliases: ["grep", "inspect", "range_context", "text_search"],
       bestFor: ["text discovery", "line context", "grep/sed/head/tail workflows before editing"],
       inputSchema: {
         query: z.string().min(1).optional().describe("Literal search text or regex pattern when regex=true. Omit when inspecting file lines/head/tail."),
-        file: fileSchema.optional().describe("File to inspect when using lines/head/tail. Also accepted as single-file search path when query is present."),
+        file: fileSchema.optional().describe("File to overview or inspect when using lines/head/tail. Also accepted as single-file search path when query is present."),
         lines: z.string().min(1).optional().describe("Line range such as 42 or 40:50. Mutually exclusive with query/head/tail."),
         head: z.number().int().positive().optional().describe("Inspect the first N lines. Mutually exclusive with query/lines/tail."),
         tail: z.number().int().positive().optional().describe("Inspect the last N content lines. Mutually exclusive with query/lines/head."),

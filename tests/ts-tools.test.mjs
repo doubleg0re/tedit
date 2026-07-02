@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { runMcpTool } from "../dist/mcp-tools.js";
-import { parseTsTriviaMap, runTsEdit, runTsMove, runTsSelect, serializeTsTriviaMap } from "../dist/ts-tools.js";
+import { parseTsTriviaMap, runTsEdit, runTsMove, runTsRename, runTsSelect, serializeTsTriviaMap } from "../dist/ts-tools.js";
 
 test("ts trivia map is lossless and classifies comments/directives/blank lines", () => {
   const source = "\"use client\";\r\n\r\n// owned\r\nexport function alpha() {\r\n  const x = /* intra */ 1; // same line\r\n}\r\n";
@@ -135,6 +135,61 @@ test("ts-move rejects stale source hashes", () => {
     () => runTsMove(file, { target: "fn:a", after: "fn:b", sourceHash: dryRun.sourceHash, confirmTrivia: true, write: true, noBackup: true }),
     (error) => error.code === "TS_SOURCE_HASH_MISMATCH",
   );
+});
+
+test("ts-rename updates same-file function class and const bindings", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "tedit-ts-rename-"));
+  const file = join(workspace, "rename.ts");
+  writeFileSync(file, [
+    "function alpha() { return 1; }",
+    "const beta = alpha();",
+    "class Service {}",
+    "const current = new Service();",
+    "const gamma = () => beta;",
+    "export { alpha, Service, gamma };",
+    "",
+  ].join("\n"));
+
+  const fn = runTsRename(file, { selector: "fn:alpha", to: "delta", write: true, noBackup: true });
+  assert.equal(fn.referencesUpdated, 2);
+  let source = readFileSync(file, "utf8");
+  assert.match(source, /function delta\(\)/);
+  assert.match(source, /const beta = delta\(\)/);
+  assert.match(source, /export \{ delta, Service, gamma \}/);
+
+  runTsRename(file, { selector: "class:Service", to: "Worker", write: true, noBackup: true });
+  source = readFileSync(file, "utf8");
+  assert.match(source, /class Worker/);
+  assert.match(source, /new Worker\(\)/);
+
+  runTsRename(file, { selector: "var:beta", to: "total", write: true, noBackup: true });
+  source = readFileSync(file, "utf8");
+  assert.match(source, /const total = delta\(\)/);
+  assert.match(source, /=> total/);
+});
+
+test("ts-rename reports ambiguous and exported-symbol cases", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "tedit-ts-rename-warn-"));
+  const ambiguous = join(workspace, "ambiguous.ts");
+  writeFileSync(ambiguous, [
+    "const item = 1;",
+    "function outer() {",
+    "  const item = 2;",
+    "  return item;",
+    "}",
+    "",
+  ].join("\n"));
+  assert.throws(
+    () => runTsRename(ambiguous, { selector: "var:item", to: "entry", dryRun: true }),
+    (error) => error.code === "TS_DECLARATION_MATCH_NOT_UNIQUE",
+  );
+
+  const exported = join(workspace, "exported.ts");
+  writeFileSync(exported, "export function start() { return start.name; }\n");
+  const result = runTsRename(exported, { selector: "fn:start", to: "boot", dryRun: true });
+  assert.equal(result.written, false);
+  assert.match(result.diff, /function boot/);
+  assert.ok(result.warnings.some((warning) => warning.code === "TS_RENAME_EXPORTED_SYMBOL"));
 });
 
 test("mcp advanced ts tools return compact mutation contracts", () => {

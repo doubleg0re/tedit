@@ -107,6 +107,11 @@ export type TsEditOptions = WritePolicyFlags & {
   insertAfter?: string;
 };
 
+export type TsRenameOptions = WritePolicyFlags & {
+  selector: string;
+  to: string;
+};
+
 export type TsMoveOptions = WritePolicyFlags & {
   target: string;
   before?: string;
@@ -289,6 +294,59 @@ export function runTsEdit(filePath: string, options: TsEditOptions): JsonRecord 
   };
 }
 
+export function runTsRename(filePath: string, options: TsRenameOptions): JsonRecord {
+  if (options.write && options.dryRun) fail("INVALID_TS_RENAME", "Use only one of write or dryRun.");
+  const source = readFileSync(filePath, "utf8");
+  const parsed = parseTsSource(source);
+  const target = resolveDeclaration(filePath, source, parsed, options.selector);
+  if (target.kind !== "fn" && target.kind !== "class" && target.kind !== "var") {
+    fail("TS_RENAME_UNSUPPORTED_TARGET", "declaration.rename currently supports single-file fn:, class:, and var: declarations only.", {
+      target: publicDeclaration(target),
+      suggestions: [
+        "Use edit/multiedit for method or property renames.",
+        "Use refactor for multi-file or symbol-graph-aware moves.",
+      ],
+    });
+  }
+  const to = validIdentifierName(options.to, "declaration.rename requires args.to to be a valid identifier.");
+  if (to === target.name) fail("TS_RENAME_NOOP", `Target ${target.selector} is already named ${to}.`, { target: publicDeclaration(target) });
+
+  const patches = renamePatchesForDeclaration(filePath, source, parsed, target, to);
+  const nextSource = applyPatches(source, patches);
+  const changed = source !== nextSource;
+  const parseVerification = verifyParseForFile(filePath, nextSource);
+  const diff = unifiedDiff(source, nextSource, filePath);
+  const semanticWarnings = renameWarnings(source, target);
+  const warnings = [...qualityWarnings(filePath, source, nextSource), ...semanticWarnings];
+  const policy = resolveWritePolicy(filePath, options);
+  const shouldWrite = policy.write;
+  let backup: BackupResult = {};
+
+  if (shouldWrite && changed) {
+    backup = maybeWriteBackup(filePath, source, policy, changed, nextSource);
+    writeFileSync(filePath, nextSource);
+  }
+
+  return {
+    success: true,
+    kind: "ts-rename",
+    file: filePath,
+    action: "declaration.rename",
+    selector: options.selector,
+    target: publicDeclaration(target),
+    from: target.name,
+    to,
+    referencesUpdated: patches.length - 1,
+    changed,
+    written: shouldWrite && changed,
+    ...parseVerificationFields(parseVerification),
+    warnings,
+    write_policy: writePolicyReport(policy, backup),
+    ...(backup.path ? { backup: backup.path } : {}),
+    ...(diff ? { diff } : {}),
+  };
+}
+
 export function runTsMove(filePath: string, options: TsMoveOptions): JsonRecord {
   if (options.write && options.dryRun) fail("INVALID_TS_MOVE", "Use only one of write or dryRun.");
   const source = readFileSync(filePath, "utf8");
@@ -419,6 +477,94 @@ function patchForTsEdit(source: string, parsed: ParsedTsSource, target: Internal
   }
   const end = lineEndIncludingNewline(parsed.lines, target.declarationRange.end);
   return { start: end, end, text };
+}
+
+function renamePatchesForDeclaration(filePath: string, source: string, parsed: ParsedTsSource, target: InternalDeclaration, to: string): SourcePatch[] {
+  let patches: SourcePatch[] | undefined;
+
+  traverseAst(parsed.ast, {
+    FunctionDeclaration(path) {
+      if (!path.node.id || target.kind !== "fn") return;
+      if (!sameDeclarationPath(path as NodePath<t.Node>, parsed, target)) return;
+      patches = bindingRenamePatches(path, path.node.id, parsed, to);
+      path.stop();
+    },
+    ClassDeclaration(path) {
+      if (!path.node.id || target.kind !== "class") return;
+      if (!sameDeclarationPath(path as NodePath<t.Node>, parsed, target)) return;
+      patches = bindingRenamePatches(path, path.node.id, parsed, to);
+      path.stop();
+    },
+    VariableDeclarator(path) {
+      if (!t.isIdentifier(path.node.id) || target.kind !== "var") return;
+      if (!sameDeclarationPath(path as NodePath<t.Node>, parsed, target)) return;
+      patches = bindingRenamePatches(path, path.node.id, parsed, to);
+      path.stop();
+    },
+  });
+
+  if (!patches) {
+    fail("TS_RENAME_BINDING_UNAVAILABLE", `Could not resolve a rename binding for ${target.selector}.`, {
+      target: publicDeclaration(target),
+      suggestions: ["Use edit/multiedit for this declaration shape.", "Run select to confirm the target selector."],
+    });
+  }
+  if (patches.length === 0) {
+    fail("TS_RENAME_BINDING_UNAVAILABLE", `No identifier ranges were available for ${target.selector}.`, {
+      target: publicDeclaration(target),
+    });
+  }
+  return dedupePatches(patches);
+}
+
+function sameDeclarationPath(path: NodePath<t.Node>, parsed: ParsedTsSource, target: InternalDeclaration): boolean {
+  const range = declarationRangeForPath(path, parsed);
+  return range.start === target.declarationRange.start && range.end === target.declarationRange.end;
+}
+
+function bindingRenamePatches(path: NodePath<t.Node>, identifier: t.Identifier, parsed: ParsedTsSource, to: string): SourcePatch[] {
+  const binding = path.scope.getBinding(identifier.name);
+  if (!binding) {
+    fail("TS_RENAME_BINDING_UNAVAILABLE", `Could not resolve binding for ${identifier.name}.`, {
+      suggestions: ["Use edit/multiedit for this declaration shape."],
+    });
+  }
+  const nodes = [binding.identifier, ...binding.referencePaths.map((referencePath) => referencePath.node)]
+    .filter((node): node is t.Identifier => t.isIdentifier(node));
+  return nodes.map((node) => {
+    const range = rangeForNode(node, parsed);
+    return { start: range.start, end: range.end, text: to };
+  });
+}
+
+function validIdentifierName(value: string, message: string): string {
+  if (!/^[$A-Z_a-z][$\w]*$/.test(value)) fail("INVALID_TS_RENAME", message, { received: value });
+  return value;
+}
+
+function dedupePatches(patches: SourcePatch[]): SourcePatch[] {
+  const byRange = new Map<string, SourcePatch>();
+  for (const patch of patches) byRange.set(`${patch.start}:${patch.end}`, patch);
+  return [...byRange.values()].sort((a, b) => b.start - a.start);
+}
+
+function applyPatches(source: string, patches: SourcePatch[]): string {
+  let next = source;
+  for (const patch of [...patches].sort((a, b) => b.start - a.start)) next = applyPatch(next, patch);
+  return next;
+}
+
+function renameWarnings(source: string, target: InternalDeclaration): JsonRecord[] {
+  const declaration = source.slice(target.declarationRange.start, target.declarationRange.end);
+  if (!/^\s*export\b/.test(declaration)) return [];
+  return [{
+    code: "TS_RENAME_EXPORTED_SYMBOL",
+    level: "warn",
+    file: target.file,
+    selector: target.selector,
+    message: `Renamed exported symbol ${target.name} in one file only; external imports may need updates.`,
+    next_step_hint: "Run a typecheck via verify or use refactor for cross-file symbol-aware changes.",
+  }];
 }
 
 function normalizeTsEditBody(body: string): string {

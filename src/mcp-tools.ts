@@ -13,9 +13,9 @@ import {
 import { fileChainToWorkspaceFlow, parseChainSegments, parseChainText, parseElementShorthand, workspaceChainToFlow } from "./chain.js";
 import { getOptionalAdapterForFile } from "./core/registry.js";
 import { runAstEdit as runAstEditEngine, runAstSelect, runScanStrings } from "./ast-tools.js";
-import { inspectRange, searchText } from "./search-tools.js";
+import { inspectFileOverview, inspectRange, searchText } from "./search-tools.js";
 import { historyTrace } from "./history-tools.js";
-import { runTsEdit as runTsEditEngine, runTsMove as runTsMoveEngine, runTsSelect } from "./ts-tools.js";
+import { runTsEdit as runTsEditEngine, runTsMove as runTsMoveEngine, runTsRename as runTsRenameEngine, runTsSelect } from "./ts-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { runBaseEditOperation } from "./edit-engine.js";
 import { fail } from "./errors.js";
@@ -75,7 +75,7 @@ const MUTATE_JSX_OPS = [
   "wrap", "unwrap", "rename", "remove", "append", "prepend", "insertComment",
 ] as const;
 const MUTATE_IMPORT_OPS = ["imports.add", "imports.remove", "imports.rename", "imports.move"] as const;
-const MUTATE_TS_OPS = ["body.replace", "body.insertBefore", "body.insertAfter", "declaration.move"] as const;
+const MUTATE_TS_OPS = ["body.replace", "body.insertBefore", "body.insertAfter", "declaration.move", "declaration.rename"] as const;
 const MUTATE_AST_OPS = ["ast.replace"] as const;
 const MUTATE_SUPPORTED_OPS = [...MUTATE_JSX_OPS, ...MUTATE_IMPORT_OPS, ...MUTATE_TS_OPS, ...MUTATE_AST_OPS] as const;
 const MUTATE_OP_ALIASES = new Map<string, string>([
@@ -324,6 +324,7 @@ function runMutateTool(args: unknown): unknown {
   }
 
   if (isMutateImportOp(op)) {
+    validateMutateImportArgs(op, opArgs);
     return withAgentFields(runWorkspaceFlow([{ action: op, file, ...importFields(opArgs) }], writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT)), input);
   }
 
@@ -333,6 +334,7 @@ function runMutateTool(args: unknown): unknown {
   if (op === "body.insertBefore") return runTsEditTool({ ...input, selector: mutateTsSelector(input.target, file, op), action: "insert-before", insertBefore: requiredString(pick(opArgs, "insertBefore", "body", "value", "code"), 'mutate op "body.insertBefore" requires args.insertBefore, args.body, args.value, or args.code.') });
   if (op === "body.insertAfter") return runTsEditTool({ ...input, selector: mutateTsSelector(input.target, file, op), action: "insert-after", insertAfter: requiredString(pick(opArgs, "insertAfter", "body", "value", "code"), 'mutate op "body.insertAfter" requires args.insertAfter, args.body, args.value, or args.code.') });
   if (op === "declaration.move") return runTsMoveTool({ ...input, target: mutateTsSelector(input.target, file, op), before: optionalString(opArgs.before), after: optionalString(opArgs.after), take: opArgs.take, drop: opArgs.drop, confirmTrivia: booleanValue(opArgs.confirmTrivia), sourceHash: optionalString(opArgs.sourceHash), includeTriviaContent: booleanValue(opArgs.includeTriviaContent) });
+  if (op === "declaration.rename") return runTsRenameTool({ ...input, selector: mutateTsSelector(input.target, file, op), to: requiredString(pick(opArgs, "to", "name"), 'mutate op "declaration.rename" requires args.to or args.name.') });
 
   mutateUnsupportedOp(op);
 }
@@ -358,6 +360,15 @@ function isMutateJsxOp(op: string): op is typeof MUTATE_JSX_OPS[number] {
 
 function isMutateImportOp(op: string): op is typeof MUTATE_IMPORT_OPS[number] {
   return (MUTATE_IMPORT_OPS as readonly string[]).includes(op);
+}
+
+function validateMutateImportArgs(op: typeof MUTATE_IMPORT_OPS[number], args: JsonRecord): void {
+  if (op === "imports.add" && args.from === undefined) fail("INVALID_MCP_INPUT", 'mutate op "imports.add" requires args.from.');
+  if (op === "imports.remove" && args.from === undefined) fail("INVALID_MCP_INPUT", 'mutate op "imports.remove" requires args.from.');
+  if (op === "imports.rename" && (args.from === undefined || args.name === undefined || args.to === undefined)) {
+    fail("INVALID_MCP_INPUT", 'mutate op "imports.rename" requires args.from, args.name, and args.to. Example: {"imports.rename":{"from":"./old","name":"OldName","to":"NewName"}}');
+  }
+  if (op === "imports.move" && (args.from === undefined || args.to === undefined)) fail("INVALID_MCP_INPUT", 'mutate op "imports.move" requires args.from and args.to.');
 }
 
 function mutateJsxStep(file: string, op: typeof MUTATE_JSX_OPS[number], target: string, args: JsonRecord): WorkspaceFlowStep {
@@ -464,6 +475,7 @@ function mutateAstTarget(value: unknown, op: string): JsonRecord {
 function mutateTargetHelp(op: string): { prefixes: string[]; examples: string[] } {
   if (op === "body.replace") return { prefixes: ["fn:", "method:", "class:"], examples: ['target="fn:<name>"', 'target="method:<owner.name>"'] };
   if (op === "body.insertBefore" || op === "body.insertAfter" || op === "declaration.move") return { prefixes: ["fn:", "class:", "method:", "prop:", "var:"], examples: ['target="fn:<name>"', 'target="class:<name>"'] };
+  if (op === "declaration.rename") return { prefixes: ["fn:", "class:", "var:"], examples: ['target="fn:<name>"', 'target="var:<name>"'] };
   if (isMutateJsxOp(op)) return { prefixes: ["jsx:", "id:jsx:"], examples: ['target="jsx:Button"', 'target="id:jsx:<id>"'] };
   if (op === "ast.replace") return { prefixes: ["objectKey:", "call:", "string:", "contains:", "jsxText:", "jsxAttr:", "ast:"], examples: ['target="objectKey:label"', 'target="call:toast.error"'] };
   return { prefixes: [], examples: [] };
@@ -594,6 +606,9 @@ function runTemplatesTool(args: unknown): unknown {
 function runSearchTool(args: unknown): unknown {
   const input = recordInput(args, "search");
   if (input.query !== undefined) return runSearchTextTool(input.file !== undefined && input.path === undefined && input.paths === undefined ? { ...input, path: input.file } : input);
+  if (input.file !== undefined && input.lines === undefined && input.head === undefined && input.tail === undefined) {
+    return withAgentFields(inspectFileOverview(requiredString(input.file, "search file must be a string.")), input);
+  }
   return runInspectRangeTool(input);
 }
 
@@ -758,6 +773,7 @@ function selectTsMatches(file: string, selector: string | undefined, kind: strin
     context: match.context,
     canReplaceBody: match.canReplaceBody,
     editHint: { tool: "mutate", file, target: match.selector, op: "body.replace" },
+    renameHint: ["fn", "class", "var"].includes(String(match.kind)) ? { tool: "mutate", file, target: match.selector, op: "declaration.rename" } : undefined,
     moveHint: { tool: "mutate", file, target: match.selector, op: "declaration.move" },
   }));
 }
@@ -1065,6 +1081,17 @@ function runTsMoveTool(args: unknown): unknown {
   }), input, restorePoints);
 }
 
+function runTsRenameTool(args: unknown): unknown {
+  const input = recordInput(args, "ts_rename");
+  const filePath = requiredString(input.file, "ts_rename requires file.");
+  const restorePoints = captureRestorePoints([filePath]);
+  return withVerifiedAgentFields(runTsRenameEngine(filePath, {
+    selector: requiredString(input.selector, "ts_rename requires selector."),
+    to: requiredString(input.to, "ts_rename requires to."),
+    ...writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT),
+  }), input, restorePoints);
+}
+
 function astEditSelectorFromInput(input: JsonRecord): string {
   const selector = optionalString(input.selector);
   const stringValue = optionalString(input.string);
@@ -1113,8 +1140,8 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       "Use select as the common TS/JS/JSX/TSX target discovery facade before choosing mutate for structural edits or edit for text spans.",
       "Use search for grep/sed/head/tail-style text and line-range discovery.",
       "Use read_detail only when a compact response returns a $detail descriptor for a field you actually need.",
-      "Use verify_file when parser coverage or current-file validity matters before or after an edit.",
-      "Pass verify for optional post-write project checks such as typecheck, lint, test, or build.",
+      "Use verify_file when syntax/parser coverage matters before or after an edit; it is not a typecheck.",
+      "Pass verify for optional post-write semantic checks such as typecheck, lint, test, or build.",
       "Set TEDIT_MCP_PROFILE=all for JSX, TS declaration, AST, history, template, and refactor helpers.",
     ],
     no_read_file_tool: "A plain read_file MCP tool would currently be less useful than native Read. Add one only when it returns tedit-specific value such as parser status, stable selectors, slices, hashes, or retry-ready targets.",
@@ -1141,19 +1168,20 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     workflow_guide: [
       { when: "need file-type-aware target discovery", first_tool: "select", then: "mutate for structural ops or edit for text spans", reason: "one common facade routes TS/JS declarations, JSX elements, or text fallback" },
       { when: "need target context before editing", first_tool: "search", then: "edit", reason: "turn raw text or line ranges into edit-ready suggestions" },
-      { when: "one localized replacement/insertion/deletion", first_tool: "edit", then: "pass dryRun:true first when preview is needed", reason: "MCP edit writes by default; exact/fuzzy/regex/line strategies plus parser guardrails" },
+      { when: "one localized replacement/insertion/deletion", first_tool: "edit", then: "pass dryRun:true first when preview is needed", reason: "MCP edit writes by default; exact/line/regex plus best-effort fuzzy and parser guardrails" },
       { when: "same change across several places or files", first_tool: "search", then: "multiedit", reason: "search can emit a grouped multiedit spec; multiedit applies atomically" },
       { when: "already have a generated diff", first_tool: "patch", then: "verify_file for important touched files", reason: "patch accepts unified diff and Codex apply-patch envelopes" },
       { when: "delete or rename one file", first_tool: "delete_file or rename_file", then: "patch for multi-file transactions", reason: "single-file cleanup no longer requires hand-authored patch text" },
       { when: "project-specific validation is needed after write", first_tool: "edit/multiedit/patch with verify", then: "inspect verify stdout/stderr; optionally rollbackOnFail", reason: "repo checks vary, so verification is opt-in per mutation" },
       { when: "create or overwrite a whole file", first_tool: "file_write", then: "verify_file", reason: "mode=write/scaffold/template keeps generation behind write policy and parse verification" },
       { when: "large plain-TS named function or class edit", first_tool: "select", then: "mutate body.replace/body.insertBefore/body.insertAfter", reason: "named declaration selectors avoid brittle old_string ranges and keep braces/trivia mechanical" },
+      { when: "single-file TS/JS declaration rename", first_tool: "select", then: "mutate declaration.rename with verify for exported symbols", reason: "updates same-file binding references and warns when external imports may need a typecheck" },
       { when: "hardcoded JS/TS/JSX strings", first_tool: "scan_strings", then: "mutate ast.replace or ast_edit", reason: "AST scanning covers code strings that structural find does not" },
       { when: "structural JSX/TS/import/AST mutation", first_tool: "mutate", then: "use actions examples when op args are unclear", reason: "single facade covers JSX props/classes/text/nodes, imports, TS body/move, and AST string operations" },
       { when: "need change history before risky edit", first_tool: "history_trace", then: "search or edit", reason: "history_trace avoids hand-assembling blame/log commands" },
     ],
     failure_recovery: [
-      { code: "MATCH_NONE", suggestion: "Use returned candidates or search; retry with findLines/fuzzy/regex only after inspecting context." },
+      { code: "MATCH_NONE", suggestion: "Use returned candidates or search; retry with findLines/regex first. findFuzzy is whitespace-only best-effort, not semantic matching." },
       { code: "MATCH_NOT_UNIQUE", suggestion: "Use returned candidate line ranges or add expectCount when replaceAll is intended." },
       { code: "PARSE_BROKEN_AFTER_EDIT", suggestion: "Do not force write; inspect the proposed replacement and keep syntax balanced before retrying." },
       { code: "AST_MATCH_NONE", suggestion: "Use scan_strings candidates or switch selector type, for example JSXText instead of StringLiteral." },
@@ -1171,6 +1199,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
         "prop.set/prop.remove/class.add/class.remove/class.replace/text.set/text.replace/wrap/remove/rename/append/prepend": ["jsx:", "id:jsx:"],
         "body.replace": ["fn:", "method:", "class:"],
         "body.insertBefore/body.insertAfter/declaration.move": ["fn:", "class:", "method:", "prop:", "var:"],
+        "declaration.rename": ["fn:", "class:", "var:"],
         "imports.add/imports.remove/imports.rename/imports.move": ["<omit target>"],
         "ast.replace": ["objectKey:", "call:", "string:", "contains:", "jsxText:", "jsxAttr:", "ast:"],
       },
@@ -1178,6 +1207,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
         jsx_prop: { file: "src/Page.tsx", target: "jsx:Button", "prop.set": { name: "disabled", value: true } },
         jsx_class: { file: "src/Page.tsx", target: "jsx:h1", "class.add": { className: "tracking-[-0.02em]" } },
         ts_body: { file: "src/server.ts", target: "fn:<name>", "body.replace": { body: "return server.start();" } },
+        ts_rename: { file: "src/server.ts", target: "fn:<name>", "declaration.rename": { to: "startServer" } },
         import_rename: { file: "src/Page.tsx", "imports.rename": { from: "./old", name: "OldName", to: "NewName" } },
         ast_string: { file: "src/messages.ts", target: "objectKey:label", "ast.replace": { replace: "Delete" } },
       },
@@ -1189,7 +1219,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
     },
     edit_loop: [
       { intent: "select target across TS/JS/JSX/TSX", tool: "select", reason: "file-type-aware facade returning normalized matches and follow-up edit hints" },
-      { intent: "one localized edit", tool: "edit", reason: "MCP writes by default; pass dryRun:true for preview, with exact/fuzzy/line/regex strategies and parse verification" },
+      { intent: "one localized edit", tool: "edit", reason: "MCP writes by default; pass dryRun:true for preview, with exact/line/regex and best-effort fuzzy strategies plus syntax parse verification" },
       { intent: "apply reviewed dry-run", tool: "apply_dry_run", reason: "reuses the stored dry-run args after source-hash verification" },
       { intent: "several coordinated text edits", tool: "multiedit", reason: "atomic application across files and same-file sequential edits" },
       { intent: "already generated diff", tool: "patch", reason: "atomic unified diff/apply-patch input with verification" },
@@ -1205,6 +1235,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { intent: "hardcoded text audit", tool: "scan_strings", reason: "AST scan covers JSX text/attrs plus JS/TS string literals; find remains structural" },
       { intent: "code AST discovery or one safe string replacement", tool: "mutate ast.replace", reason: "AST shortcuts target common string/object/JSX text replacements" },
       { intent: "large TS declaration body edit", tool: "select, then mutate body.replace", reason: "selector resolves the named declaration and tedit owns the outer braces" },
+      { intent: "single-file TS declaration rename", tool: "select, then mutate declaration.rename", reason: "updates same-file binding references and warns for exported symbols" },
       { intent: "reorder TS declarations", tool: "mutate declaration.move", reason: "single-file declaration move with carried trivia hints and take/drop overrides" },
     ],
     refactor_loop: [
@@ -1225,6 +1256,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       mutate_class_add: { file: "src/Page.tsx", op: "class.add", target: "jsx:h1", args: { className: "tracking-[-0.02em]" } },
       mutate_class: { file: "src/Page.tsx", op: "class.replace", target: "jsx:Button", args: { from: "primary", to: "secondary" }, dryRun: true },
       mutate_ts_body: { file: "src/server.ts", op: "body.replace", target: "fn:startServer", args: { body: "return server.start();" }, dryRun: true },
+      mutate_ts_rename: { file: "src/server.ts", target: "fn:startServer", "declaration.rename": { to: "bootServer" }, dryRun: true },
       mutate_import: { file: "src/Page.tsx", op: "imports.rename", args: { from: "./old", name: "OldName", to: "NewName" }, dryRun: true },
       mutate_ast: { file: "src/messages.ts", op: "ast.replace", target: "objectKey:label", args: { replace: "Delete" }, dryRun: true },
       delete_file: { file: "src/generated/LoginButtons.tsx", dryRun: true },

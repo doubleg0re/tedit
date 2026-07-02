@@ -73,12 +73,53 @@ type MultieditSpec = {
   truncated: boolean;
 };
 
+type MarkupBlockSummary = {
+  tag: string;
+  attrs?: string;
+  lineRange: string;
+  bytes: number;
+  chars: number;
+  packed: boolean;
+  preview: string;
+};
+
 const DEFAULT_SEARCH_EXCLUDES = new Set([".git", "node_modules", "dist", "build", "coverage", ".tedit-cache"]);
 const TEXT_EXTENSIONS = new Set([
   ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py", ".pyw",
   ".json", ".jsonl", ".md", ".mdx", ".txt", ".css", ".scss",
   ".html", ".xml", ".yml", ".yaml",
 ]);
+const MAX_INSPECT_LINE_TEXT = 4000;
+const PACKED_LINE_CHARS = 20_000;
+
+export function inspectFileOverview(filePath: string): JsonRecord {
+  const source = readFileSync(filePath, "utf8");
+  const lines = source.split(/\r?\n/);
+  const longLines = largestLines(lines).filter((line) => Number(line.chars) >= PACKED_LINE_CHARS);
+  const verification = verifyParseForFile(filePath, source);
+
+  return {
+    success: true,
+    kind: "file-overview",
+    file: filePath,
+    path: relativeAgentPath(process.cwd(), filePath),
+    bytes: Buffer.byteLength(source, "utf8"),
+    chars: source.length,
+    lineCount: lines.length,
+    packed: {
+      detected: longLines.length > 0,
+      reason: longLines.length > 0 ? "one or more very long lines; inspect/search returns previews instead of dumping full packed content" : "none",
+      longLines,
+    },
+    ...parseVerificationFields(verification),
+    ...(isMarkupFile(filePath) ? { markup: markupOverview(source) } : {}),
+    suggestions: [
+      { tool: "search", arguments: { file: filePath, head: 40 }, reason: "read the human-authored wrapper/header first" },
+      { tool: "search", arguments: { file: filePath, query: "<script", maxResults: 10 }, reason: "locate bundled script blocks without reading the whole bundle" },
+      { tool: "search", arguments: { file: filePath, query: "id=", maxResults: 20 }, reason: "find stable DOM anchors inside packed HTML" },
+    ],
+  };
+}
 
 export function inspectRange(filePath: string, options: InspectRangeOptions): JsonRecord {
   const source = readFileSync(filePath, "utf8");
@@ -91,6 +132,7 @@ export function inspectRange(filePath: string, options: InspectRangeOptions): Js
   };
   const byteRange = byteRangeForLines(source, expanded);
   const verification = verifyParseForFile(filePath, source);
+  const packedLines = packedLinesInRange(lines, expanded);
 
   return {
     success: true,
@@ -100,6 +142,7 @@ export function inspectRange(filePath: string, options: InspectRangeOptions): Js
     expanded,
     byteRange,
     lines: lineObjects(lines, expanded),
+    ...(packedLines.length > 0 ? { packed: { detected: true, longLines: packedLines } } : {}),
     ...parseVerificationFields(verification),
     suggested: {
       tool: "edit",
@@ -343,9 +386,91 @@ function rangeForOffsets(source: string, start: number, end: number): SourceRang
 function lineObjects(lines: string[], range: LineRange): SourceLine[] {
   const output: SourceLine[] = [];
   for (let line = range.start; line <= range.end; line++) {
-    output.push({ number: line, text: lines[line - 1] ?? "" });
+    output.push(lineObject(line, lines[line - 1] ?? "") as SourceLine);
   }
   return output;
+}
+
+function lineObject(number: number, text: string): JsonRecord {
+  if (text.length <= MAX_INSPECT_LINE_TEXT) return { number, text };
+  return {
+    number,
+    text: `${text.slice(0, MAX_INSPECT_LINE_TEXT)}…`,
+    truncated: true,
+    chars: text.length,
+    bytes: Buffer.byteLength(text, "utf8"),
+  };
+}
+
+function packedLinesInRange(lines: string[], range: LineRange): JsonRecord[] {
+  const packed: JsonRecord[] = [];
+  for (let line = range.start; line <= range.end; line++) {
+    const text = lines[line - 1] ?? "";
+    if (text.length >= PACKED_LINE_CHARS) packed.push(lineStats(line, text));
+  }
+  return packed;
+}
+
+function largestLines(lines: string[]): JsonRecord[] {
+  return lines
+    .map((text, index) => lineStats(index + 1, text))
+    .sort((a, b) => Number(b.chars) - Number(a.chars))
+    .slice(0, 5);
+}
+
+function lineStats(number: number, text: string): JsonRecord {
+  return {
+    number,
+    chars: text.length,
+    bytes: Buffer.byteLength(text, "utf8"),
+    preview: text.slice(0, 160),
+  };
+}
+
+function isMarkupFile(filePath: string): boolean {
+  return [".html", ".htm", ".xml", ".svg"].includes(extname(filePath));
+}
+
+function markupOverview(source: string): JsonRecord {
+  const title = source.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim();
+  const tags = new Map<string, number>();
+  for (const match of source.matchAll(/<([A-Za-z][\w:-]*)\b/g)) {
+    const tag = match[1].toLowerCase();
+    tags.set(tag, (tags.get(tag) ?? 0) + 1);
+  }
+  const ids = [...source.matchAll(/\bid=(['"])(.*?)\1/g)].slice(0, 30).map((match) => match[2]);
+  const blocks = markupBlocks(source);
+  return {
+    ...(title ? { title } : {}),
+    topTags: [...tags.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([tag, count]) => ({ tag, count })),
+    ids,
+    scripts: blocks.filter((block) => block.tag === "script"),
+    styles: blocks.filter((block) => block.tag === "style"),
+  };
+}
+
+function markupBlocks(source: string): MarkupBlockSummary[] {
+  const blocks: MarkupBlockSummary[] = [];
+  const regex = /<(script|style)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+  for (const match of source.matchAll(regex)) {
+    const raw = match[0];
+    const content = match[3] ?? "";
+    blocks.push({
+      tag: match[1].toLowerCase(),
+      ...(match[2]?.trim() ? { attrs: match[2].trim().slice(0, 200) } : {}),
+      lineRange: rangeForOffsets(source, match.index ?? 0, (match.index ?? 0) + raw.length).lineRange,
+      bytes: Buffer.byteLength(raw, "utf8"),
+      chars: raw.length,
+      packed: hasPackedLine(content),
+      preview: content.trim().slice(0, 180),
+    });
+  }
+  return blocks.sort((a, b) => b.bytes - a.bytes).slice(0, 10);
+}
+
+function hasPackedLine(source: string): boolean {
+  if (source.length < PACKED_LINE_CHARS) return false;
+  return source.split(/\r?\n/).some((line) => line.length >= PACKED_LINE_CHARS);
 }
 
 function offsetLoc(offset: number, starts: number[]): { line: number; column: number } {

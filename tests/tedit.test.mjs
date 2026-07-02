@@ -241,6 +241,17 @@ test("search-text and inspect-range bridge grep and sed workflows", () => {
   assert.equal(tail.lines[0].text, "  return <button>{label}</button>;");
   assert.equal(tail.lines[1].text, "}");
 
+  const packedHtml = join(src, "packed.html");
+  writeFileSync(packedHtml, `<!doctype html><html><head><title>Bundled Page</title></head><body><div id="app"></div><script>${"x".repeat(30_000)}</script></body></html>`);
+  const overview = JSON.parse(run(["inspect-range", packedHtml, "--json"]));
+  assert.equal(overview.kind, "file-overview");
+  assert.equal(overview.packed.detected, true);
+  assert.equal(overview.markup.title, "Bundled Page");
+  assert.equal(overview.markup.scripts[0].packed, true);
+  const packedLine = JSON.parse(run(["inspect-range", packedHtml, "--lines", "1", "--json"]));
+  assert.equal(packedLine.lines[0].truncated, true);
+  assert.ok(packedLine.lines[0].text.length < 5000);
+
   const edit = JSON.parse(run(["edit", file, "--find-lines", "2", "--replace", "  const label = \"Delete\";\n", "--write", "--json"]));
   assert.equal(edit.written, true);
   assert.match(readFileSync(file, "utf8"), /"Delete"/);
@@ -2601,6 +2612,20 @@ test("base edit fuzzy strategy applies whitespace-insensitive replacements", () 
   run(["edit", file, "--find-fuzzy", "const answer = 42;", "--replace", "const answer = 43;", "--write"]);
 
   assert.equal(readFileSync(file, "utf8"), "const answer = 43;\n");
+});
+
+test("base edit fuzzy strategy tolerates missing spaces around punctuation", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "source.ts");
+  writeFileSync(file, "function save( value ) {\n  return value;\n}\n");
+
+  const failed = runFail(["edit", file, "--find", "function save(value)", "--replace", "function save(next)", "--write"]);
+  assert.equal(failed.body.code, "MATCH_FUZZY_ONLY");
+  assert.equal(failed.body.details.matches[0].lineRange, "1");
+
+  run(["edit", file, "--find-fuzzy", "function save(value)", "--replace", "function save(next)", "--write"]);
+
+  assert.equal(readFileSync(file, "utf8"), "function save(next) {\n  return value;\n}\n");
 });
 
 test("base edit anchor strategy inserts relative to a section marker", () => {

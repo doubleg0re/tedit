@@ -215,8 +215,12 @@ function compactPayloadResult(record: JsonRecord, kind: string, options: OutputO
     return externalizeLargeFields(compact, options);
   }
   if (kind === "inspect-range") {
-    copyKeys(record, compact, ["file", "requested", "expanded", "byteRange", "lines", "parse_verified", "parser", "parse_skipped", "parse_skip_reason", "suggested", "suggestions"]);
+    copyKeys(record, compact, ["file", "requested", "expanded", "byteRange", "lines", "packed", "parse_verified", "parser", "parse_skipped", "parse_skip_reason", "suggested", "suggestions"]);
     if (typeof record.file === "string") compact.path = record.file;
+    return externalizeLargeFields(compact, options);
+  }
+  if (kind === "file-overview") {
+    copyKeys(record, compact, ["file", "path", "bytes", "chars", "lineCount", "packed", "parse_verified", "parser", "parse_skipped", "parse_skip_reason", "markup", "suggestions"]);
     return externalizeLargeFields(compact, options);
   }
   if (kind === "search-text") {
@@ -698,6 +702,7 @@ function payloadSummary(record: JsonRecord, kind: string): string {
   if (typeof record.summary === "string") return record.summary;
   if (kind === "find" && Array.isArray(record.matches)) return String(record.matches.length) + " " + plural("match", record.matches.length);
   if (kind === "inspect-range" && Array.isArray(record.lines)) return String(record.lines.length) + " " + plural("line", record.lines.length);
+  if (kind === "file-overview") return fileOverviewSummary(record);
   if (kind === "search-text" && Array.isArray(record.results)) return searchTextSummary(record);
   if (kind === "history-trace" && Array.isArray(record.commits)) return String(record.commits.length) + " history " + plural("commit", record.commits.length);
   if (kind === "templates" && Array.isArray(record.templates)) return String(record.templates.length) + " " + plural("template", record.templates.length);
@@ -733,6 +738,21 @@ function searchTextSummary(record: JsonRecord): string {
     }
   }
   return parts.join("; ");
+}
+
+function fileOverviewSummary(record: JsonRecord): string {
+  const bytes = typeof record.bytes === "number" ? record.bytes : 0;
+  const lineCount = typeof record.lineCount === "number" ? record.lineCount : 0;
+  const packed = record.packed && typeof record.packed === "object" && !Array.isArray(record.packed)
+    ? (record.packed as JsonRecord).detected === true
+    : false;
+  return `${formatBytes(bytes)}, ${lineCount} ${plural("line", lineCount)}${packed ? ", packed" : ""}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)} KB`;
+  return `${bytes} B`;
 }
 
 function searchResultFileCount(results: unknown): number {

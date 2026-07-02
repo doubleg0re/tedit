@@ -366,17 +366,26 @@ function findFuzzy(source: string, pattern: string): RawMatch[] {
   if (normalizedPattern.text.length === 0) fail("INVALID_BASE_EDIT", "Fuzzy find pattern cannot be empty.");
 
   const normalizedSource = normalizeWhitespace(source, false);
+  const matches = fuzzyNormalizedMatches(normalizedSource, normalizedPattern.text);
+  if (matches.length > 0) return matches;
+
+  const compactPattern = normalizeNoWhitespace(pattern);
+  if (compactPattern.text.length === 0) fail("INVALID_BASE_EDIT", "Fuzzy find pattern cannot be empty.");
+  return fuzzyNormalizedMatches(normalizeNoWhitespace(source), compactPattern.text);
+}
+
+function fuzzyNormalizedMatches(normalizedSource: { text: string; starts: number[]; ends: number[] }, pattern: string): RawMatch[] {
   const matches: RawMatch[] = [];
   let cursor = 0;
   while (cursor <= normalizedSource.text.length) {
-    const normalizedStart = normalizedSource.text.indexOf(normalizedPattern.text, cursor);
+    const normalizedStart = normalizedSource.text.indexOf(pattern, cursor);
     if (normalizedStart < 0) break;
-    const normalizedEnd = normalizedStart + normalizedPattern.text.length - 1;
+    const normalizedEnd = normalizedStart + pattern.length - 1;
     matches.push({
       start: normalizedSource.starts[normalizedStart],
       end: normalizedSource.ends[normalizedEnd],
     });
-    cursor = normalizedStart + Math.max(normalizedPattern.text.length, 1);
+    cursor = normalizedStart + Math.max(pattern.length, 1);
   }
   return dedupeMatches(matches);
 }
@@ -980,6 +989,19 @@ function normalizeWhitespace(input: string, trim: boolean): { text: string; star
     ends.pop();
   }
 
+  return { text, starts, ends };
+}
+
+function normalizeNoWhitespace(input: string): { text: string; starts: number[]; ends: number[] } {
+  let text = "";
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (let index = 0; index < input.length; index++) {
+    if (/\s/.test(input[index])) continue;
+    text += input[index];
+    starts.push(index);
+    ends.push(index + 1);
+  }
   return { text, starts, ends };
 }
 

@@ -18,7 +18,7 @@ import { chainToFlow, fileChainToWorkspaceFlow, parseChainSegments, parseChainTe
 import type { ImportEditSpec, TextMatchSpec, TextValueSpec, TreeNodeSpec, ValueSpec } from "./core/document.js";
 import { getOptionalAdapterForFile, listRules, openDocumentForFile } from "./core/registry.js";
 import { runAstEdit, runAstSelect, runScanStrings } from "./ast-tools.js";
-import { inspectRange, searchText } from "./search-tools.js";
+import { inspectFileOverview, inspectRange, searchText } from "./search-tools.js";
 import { historyTrace } from "./history-tools.js";
 import { runTsEdit, runTsMove, runTsSelect } from "./ts-tools.js";
 import { unifiedDiff } from "./diff.js";
@@ -66,11 +66,11 @@ Safer edits than raw text — parser-checked where supported, dry-run previews, 
 Prefer native edit for obvious one-line changes. Otherwise:
 - \`tedit.actions\` — start here when unsure.
 - \`tedit.search\` / \`tedit.select\` — find text or structural targets.
-- \`tedit.edit\` — find/replace by text when the match is uncertain or syntax must stay valid.
+- \`tedit.edit\` — exact/line/regex text edits with parser guardrails; use search/select first when the match is uncertain.
 - \`tedit.mutate\` — change by structural target: JSX props/classes, TS body, imports, or AST string.
 - \`tedit.multiedit\` — repeated or cross-file edits.
 - \`tedit.patch\` — when you already have a unified diff / apply-patch.
-- Preview risky edits with \`dryRun:true\` because MCP edits write by default. Add \`verify\` for typecheck/lint/test when breakage matters.
+- Preview risky edits with \`dryRun:true\` because MCP edits write by default. Parser checks are syntax-only; add \`verify\` for typecheck/lint/test when semantic breakage matters.
 `;
 
 let currentArgs: ParsedArgs | undefined;
@@ -360,6 +360,7 @@ async function commandSetup(args: ParsedArgs): Promise<void> {
   }
   printMcpReloadNotice(targets);
   await maybeInstallAgentGuides(args, targets, scope);
+  await maybeInstallGitExclude(args);
   if (failures.length) throw new Error(failures.join("\n"));
 }
 
@@ -445,6 +446,31 @@ function writeGuideBackup(filePath: string, source: string): string {
   mkdirSync(dirname(backupPath), { recursive: true });
   writeFileSync(backupPath, source);
   return backupPath;
+}
+
+async function maybeInstallGitExclude(args: ParsedArgs): Promise<void> {
+  if (args.flags["no-cache-exclude"] || args.flags.noCacheExclude) return;
+  const excludePath = gitInfoExcludePath();
+  if (!excludePath) return;
+  const yes = Boolean(args.flags.yes || args.flags.y);
+  if (!yes && !(await confirm(`Add .tedit/ to ${excludePath}? [y/N] `))) return;
+  const source = existsSync(excludePath) ? readFileSync(excludePath, "utf8") : "";
+  if (source.split(/\r?\n/).some((line) => line.trim() === ".tedit/")) {
+    process.stdout.write(`${excludePath}: .tedit/ already excluded.\n`);
+    return;
+  }
+  mkdirSync(dirname(excludePath), { recursive: true });
+  writeFileSync(excludePath, source + (source && !source.endsWith("\n") ? "\n" : "") + ".tedit/\n");
+  process.stdout.write(`${excludePath}: added .tedit/ exclude.\n`);
+}
+
+function gitInfoExcludePath(): string | undefined {
+  const inside = spawnCommand("git", ["rev-parse", "--is-inside-work-tree"], { encoding: "utf8", timeout: 5_000 });
+  if (inside.status !== 0 || String(inside.stdout).trim() !== "true") return undefined;
+  const exclude = spawnCommand("git", ["rev-parse", "--git-path", "info/exclude"], { encoding: "utf8", timeout: 5_000 });
+  if (exclude.status !== 0) return undefined;
+  const value = String(exclude.stdout).trim();
+  return value ? pathResolve(value) : undefined;
 }
 
 async function setupTargets(args: ParsedArgs, target: "mcp" | SetupTarget): Promise<SetupTarget[]> {
@@ -579,7 +605,12 @@ async function commandUpdate(args: ParsedArgs): Promise<void> {
 }
 
 function commandInspectRange(args: ParsedArgs): void {
-  const [filePath] = requirePositionals(args, 1, "inspect-range <file> (--lines N:M | --head N | --tail N) [--context N] [--json]");
+  const [filePath] = requirePositionals(args, 1, "inspect-range <file> [--lines N:M | --head N | --tail N] [--context N] [--json]");
+  if (stringFlag(args, "lines") === undefined && positiveIntegerFlag(args, "head") === undefined && positiveIntegerFlag(args, "tail") === undefined) {
+    const result = inspectFileOverview(filePath);
+    output(args, result, formatFileOverview(result));
+    return;
+  }
   const result = inspectRange(filePath, {
     ...(stringFlag(args, "lines") === undefined ? {} : { lines: stringFlag(args, "lines") }),
     ...(positiveIntegerFlag(args, "head") === undefined ? {} : { head: positiveIntegerFlag(args, "head") }),
@@ -2144,6 +2175,21 @@ function formatSearchResults(results: unknown[]): string {
   }).join("\n");
 }
 
+function formatFileOverview(result: Record<string, unknown>): string {
+  const parts = [
+    `${result.file}`,
+    `${result.bytes} bytes, ${result.lineCount} lines`,
+  ];
+  const packed = result.packed as { detected?: boolean } | undefined;
+  if (packed?.detected) parts.push("packed: yes");
+  if (typeof result.parser === "string") parts.push(`parser: ${result.parser}`);
+  const markup = result.markup as { title?: string; scripts?: unknown[]; styles?: unknown[] } | undefined;
+  if (markup?.title) parts.push(`title: ${markup.title}`);
+  if (markup?.scripts) parts.push(`scripts: ${markup.scripts.length}`);
+  if (markup?.styles) parts.push(`styles: ${markup.styles.length}`);
+  return parts.join("\n");
+}
+
 function formatHistoryTrace(result: unknown): string {
   const record = result as { target?: { type?: string; path?: string; lines?: string; contains?: string; regex?: string }; latest?: { commit?: string; date?: string; subject?: string }; commits?: unknown[]; blame?: unknown[] };
   const target = record.target ?? {};
@@ -2532,7 +2578,7 @@ function shortHelp(command: string): string | null {
     case "actions":
       return "tedit actions\nUsage:\n  tedit actions [file] [--json]\n\nLists universal base actions and file-specific language actions.";
     case "setup":
-      return "tedit setup\nUsage:\n  tedit setup mcp [--target claude|codex|both] [--scope user|project] [--yes] [--no-agent-guide] [--dry-run]\n  tedit setup codex|claude [--scope user|project] [--yes] [--no-agent-guide] [--dry-run]\n  tedit setup print\n\nInteractive MCP setup asks for host first (claude, codex, or both), then user/project scope. Codex currently supports user scope only. After registering MCP, setup offers to add a short tedit guide: user scope writes ~/.codex/AGENTS.md or ~/.claude/CLAUDE.md; project scope writes the current project files. Existing files get a sibling .bak before edits. Use --yes to accept prompts or --no-agent-guide to skip.";
+      return "tedit setup\nUsage:\n  tedit setup mcp [--target claude|codex|both] [--scope user|project] [--yes] [--no-agent-guide] [--dry-run]\n  tedit setup codex|claude [--scope user|project] [--yes] [--no-agent-guide] [--dry-run]\n  tedit setup print\n\nInteractive MCP setup asks for host first (claude, codex, or both), then user/project scope. Codex currently supports user scope only. After registering MCP, setup offers to add a short tedit guide: user scope writes ~/.codex/AGENTS.md or ~/.claude/CLAUDE.md; project scope writes the current project files. Existing files get a sibling .bak before edits. Use --yes to accept prompts, --no-agent-guide to skip guide edits, or --no-cache-exclude to skip .git/info/exclude.";
     case "doctor":
       return "tedit doctor\nUsage:\n  tedit doctor [--skip-update] [--json]\n\nChecks tedit, tedit-mcp, actions, and available npm updates.";
     case "update":
