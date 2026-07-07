@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { parseVerificationFields, verifyParseForFile, type ParseVerificationFields } from "./base-edit.js";
+import { parseVerificationFields, verifyParseForEdit, type ParseVerificationFields } from "./base-edit.js";
 import { fail, TeditError } from "./errors.js";
 import { commitWorkspaceUpdates, type WorkspaceFileChange, type WorkspaceFlowOptions } from "./workspace-flow.js";
 
@@ -56,15 +56,15 @@ export function runPatchInput(input: string, options: WorkspaceFlowOptions = {})
 
     const next = patch.hunks.length === 0 ? source : applyPatchToSource(source, patch);
     if (patch.renamed && sourceFile && sourceFile !== targetFile) {
-      return [{ file: sourceFile, deleted: true }, { file: targetFile, source: next }];
+      return [{ file: sourceFile, deleted: true }, { file: targetFile, source: next, original: source }];
     }
-    return [{ file: targetFile, source: next }];
+    return [{ file: targetFile, source: next, original: source }];
   });
 
   const parse = updates.flatMap((update) => {
     if (update.deleted) return [];
     try {
-      const verification = verifyParseForFile(update.file, update.source);
+      const verification = verifyParseForEdit(update.file, update.original ?? "", update.source);
       return [{
         file: update.file,
         ...parseVerificationFields(verification),
@@ -93,7 +93,7 @@ export function runPatchInput(input: string, options: WorkspaceFlowOptions = {})
   };
 }
 
-type WorkspaceFileChangeInput = Parameters<typeof commitWorkspaceUpdates>[0][number];
+type WorkspaceFileChangeInput = Parameters<typeof commitWorkspaceUpdates>[0][number] & { original?: string };
 
 export function parsePatchInput(input: string): ParsedPatchFile[] {
   const trimmed = input.trimStart();

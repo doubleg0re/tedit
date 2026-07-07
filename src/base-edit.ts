@@ -69,7 +69,7 @@ export type BaseEditGuardrail = {
   appended: "\n" | "\r\n";
 };
 
-export type ParseSkipReason = "disabled" | "unsupported_extension" | "parser_unavailable";
+export type ParseSkipReason = "disabled" | "unsupported_extension" | "parser_unavailable" | "conflict_markers_present";
 
 export type BaseParseVerification = {
   verified: boolean;
@@ -155,7 +155,7 @@ export function planBaseEdit(options: BaseEditOptions): BaseEditPlan {
 
   const guarded = guardLineReplaceMutation(options.source, options.strategy, matches, options.mutation);
   const nextSource = applyMutation(options.source, matches, guarded.mutation, Boolean(options.replaceAll));
-  const parseVerification = verifyParseForFile(options.filePath, nextSource, options.verifyParse !== false);
+  const parseVerification = verifyParseForEdit(options.filePath, options.source, nextSource, options.verifyParse !== false);
   const diff = unifiedDiff(options.source, nextSource, options.filePath);
 
   return {
@@ -512,6 +512,17 @@ export function verifyParseForFile(filePath: string, source: string, enabled = t
       next_step_hint: "Inspect the reported line, fix the syntax, then rerun the same tedit command.",
     });
   }
+}
+
+export function verifyParseForEdit(filePath: string, previous: string, next: string, enabled = true): BaseParseVerification {
+  if (enabled && hasConflictMarkers(previous) && hasConflictMarkers(next)) {
+    return { verified: false, skipped: true, skipReason: "conflict_markers_present" };
+  }
+  return verifyParseForFile(filePath, next, enabled);
+}
+
+function hasConflictMarkers(source: string): boolean {
+  return /^(<<<<<<<|=======|>>>>>>>) /m.test(source) || /^(<<<<<<<|=======|>>>>>>>)$/m.test(source);
 }
 
 function parserForExtension(extension: string): string | undefined {

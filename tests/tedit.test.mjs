@@ -2774,6 +2774,18 @@ test("base edit verifies registered language rules before writing", () => {
   assert.equal(readFileSync(file, "utf8"), original);
 });
 
+test("base edit can update files that still contain merge conflict markers", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Page.tsx");
+  writeFileSync(file, "export function Page() {\n<<<<<<< HEAD\n  return <Old />;\n=======\n  return <New />;\n>>>>>>> branch\n}\n");
+
+  const result = JSON.parse(run(["edit", file, "--find", "<Old />", "--replace", "<Local />", "--write", "--json"]));
+
+  assert.equal(result.parse_skipped, true);
+  assert.equal(result.parse_skip_reason, "conflict_markers_present");
+  assert.match(readFileSync(file, "utf8"), /<Local \/>/);
+});
+
 test("base edit verifies JSON before writing", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "config.json");

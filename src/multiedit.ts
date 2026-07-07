@@ -3,7 +3,7 @@ import {
   parseLineRange,
   parseVerificationFields,
   planBaseEdit,
-  verifyParseForFile,
+  verifyParseForEdit,
   type BaseEditMutation,
   type BaseFindStrategy,
   type ParseVerificationFields,
@@ -116,7 +116,7 @@ export function runMultiedit(edits: unknown[], options: WorkspaceFlowOptions = {
 
   const parse = [...states.values()].map((state) => {
     try {
-      const verification = verifyParseForFile(state.file, state.next);
+      const verification = verifyParseForEdit(state.file, state.original, state.next);
       return {
         file: state.file,
         ...parseVerificationFields(verification),
