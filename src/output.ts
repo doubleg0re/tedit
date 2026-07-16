@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { agentPath, relativeAgentPath } from "./agent-path.js";
+import { ensureTeditCacheDir } from "./cache-dir.js";
 import { loadQualityConfig } from "./quality.js";
 
 export type OutputMode = "compact" | "detailed";
@@ -371,7 +372,7 @@ function writeDetailArtifact(field: string, value: unknown, bytes: number, optio
   const preview = detailPreview(value, outputPositive(options.detailFieldMaxBytes, DEFAULT_DETAIL_FIELD_MAX_BYTES));
   const previewCount = Array.isArray(preview) ? preview.length : undefined;
   const remaining = Array.isArray(value) && previewCount !== undefined ? Math.max(0, value.length - previewCount) : undefined;
-  mkdirSync(artifactDir, { recursive: true });
+  ensureTeditCacheDir(artifactDir);
   writeFileSync(artifactPath, JSON.stringify({ id, field, bytes, value }, null, 2));
   return {
     $detail: true,
@@ -897,7 +898,7 @@ function writeDiffArtifact(diff: string, file: AgentFileSummary, options: Output
     const hash = createHash("sha256").update(file.path).update("\0").update(diff).digest("hex").slice(0, 16);
     const safeBase = sanitizeArtifactName(basename(file.path) || "diff");
     const artifactPath = resolve(artifactDir, `${safeBase}-${hash}.diff`);
-    mkdirSync(artifactDir, { recursive: true });
+    ensureTeditCacheDir(artifactDir);
     writeFileSync(artifactPath, diff);
     return { ok: true, path: artifactPath, relPath: relativeAgentPath(cwd, artifactPath) };
   } catch (error) {

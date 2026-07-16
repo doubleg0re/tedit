@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { agentPath } from "./agent-path.js";
+import { ensureTeditCacheDir } from "./cache-dir.js";
 import { fail } from "./errors.js";
 import { loadQualityConfig } from "./quality.js";
 
@@ -234,7 +235,7 @@ function writeCachedBackup(file: string, previous: string, policy: WritePolicy, 
   const backupPath = join(backupRoot(root), id, safeRelative(root, file) + ".bak");
   const manifest = readManifest(root);
   try {
-    mkdirSync(dirname(backupPath), { recursive: true });
+    ensureTeditCacheDir(dirname(backupPath));
     writeFileSync(backupPath, previous);
     manifest.backups.push({
       id,
@@ -281,7 +282,7 @@ function readManifest(root: string): BackupManifest {
 
 function writeManifest(root: string, manifest: BackupManifest): void {
   const path = manifestPath(root);
-  mkdirSync(dirname(path), { recursive: true });
+  ensureTeditCacheDir(dirname(path));
   writeFileSync(path, JSON.stringify({ version: 1, backups: manifest.backups }, null, 2) + "\n");
 }
 

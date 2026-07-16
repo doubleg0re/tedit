@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { ensureTeditCacheDir } from "./cache-dir.js";
 import { fail } from "./errors.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -85,7 +86,7 @@ function writeDryRunArtifact(tool: string, args: JsonRecord, result: JsonRecord)
   const files = resultFiles(result).map(fileState);
   if (files.length === 0) throw new Error("No files to apply.");
   const id = `dryrun_${randomUUID()}`;
-  mkdirSync(resolve(process.cwd(), DRY_RUN_DIR), { recursive: true });
+  ensureTeditCacheDir(resolve(process.cwd(), DRY_RUN_DIR));
   writeFileSync(dryRunPath(id), JSON.stringify({ id, tool, args, files, createdAt: new Date().toISOString() }, null, 2));
   return id;
 }
