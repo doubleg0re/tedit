@@ -69,7 +69,7 @@ export type BaseEditGuardrail = {
   appended: "\n" | "\r\n";
 };
 
-export type ParseSkipReason = "disabled" | "unsupported_extension" | "parser_unavailable" | "conflict_markers_present";
+export type ParseSkipReason = "disabled" | "unsupported_extension" | "parser_unavailable" | "conflict_markers_present" | "pre_existing_parse_error";
 
 export type BaseParseVerification = {
   verified: boolean;
@@ -525,7 +525,24 @@ export function verifyParseForEdit(filePath: string, previous: string, next: str
   if (enabled && hasConflictMarkers(previous) && hasConflictMarkers(next)) {
     return { verified: false, skipped: true, skipReason: "conflict_markers_present" };
   }
-  return verifyParseForFile(filePath, next, enabled);
+  try {
+    return verifyParseForFile(filePath, next, enabled);
+  } catch (error) {
+    // The edit did not break the file if it never parsed to begin with; new/empty files stay enforced.
+    if (previous.trim().length > 0 && failsParse(filePath, previous)) {
+      return { verified: false, skipped: true, skipReason: "pre_existing_parse_error" };
+    }
+    throw error;
+  }
+}
+
+function failsParse(filePath: string, source: string): boolean {
+  try {
+    verifyParseForFile(filePath, source);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function hasConflictMarkers(source: string): boolean {
@@ -666,13 +683,18 @@ function frontmatterStatus(lines: string[]): "closed" | "unclosed" | "not-frontm
 }
 
 function verifyYamlLite(source: string): void {
-  const stack: Array<{ indent: number; acceptsChildren: boolean; line: number; keys: Set<string> }> = [{ indent: -1, acceptsChildren: true, line: 0, keys: new Set() }];
+  const stack: Array<{ indent: number; acceptsChildren: boolean; blockScalar: boolean; line: number; keys: Set<string> }> = [{ indent: -1, acceptsChildren: true, blockScalar: false, line: 0, keys: new Set() }];
   const lines = source.split(/\r?\n/);
   let sawContent = false;
   for (let index = 0; index < lines.length; index++) {
     const raw = lines[index];
     if (!raw.trim() || raw.trimStart().startsWith("#")) continue;
     const trimmed = raw.trimStart();
+    const indent = raw.match(/^ */)?.[0].length ?? 0;
+    while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop();
+    const parent = stack[stack.length - 1];
+    // Block scalar bodies (run: |, script: >) are opaque text, not YAML structure.
+    if (parent.blockScalar && indent > parent.indent) continue;
     if (trimmed === "---") {
       if (sawContent) throw new Error(`Multiple YAML documents are not supported at line ${index + 1}.`);
       sawContent = true;
@@ -685,17 +707,14 @@ function verifyYamlLite(source: string): void {
     }
     sawContent = true;
     if (/^[ \t]*\t/.test(raw)) throw new Error(`YAML tabs are not supported at line ${index + 1}.`);
-    const indent = raw.match(/^ */)?.[0].length ?? 0;
     if (indent % 2 !== 0) throw new Error(`YAML indentation must use multiples of two spaces at line ${index + 1}.`);
-    while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop();
-    const parent = stack[stack.length - 1];
     if (indent > parent.indent && !parent.acceptsChildren) {
       throw new Error(`Indented child under scalar YAML value at line ${index + 1}.`);
     }
     const sequence = trimmed.match(/^-\s+(.*)$/);
     if (sequence) {
-      const value = sequence[1].trim();
-      stack.push({ indent, acceptsChildren: value.length === 0 || isYamlInlineMapping(value), line: index + 1, keys: new Set() });
+      const flags = yamlSequenceEntryFlags(sequence[1].trim());
+      stack.push({ indent, ...flags, line: index + 1, keys: new Set() });
       continue;
     }
     const mapping = trimmed.match(/^([^:#][^:]*):(\s*(.*))?$/);
@@ -704,16 +723,21 @@ function verifyYamlLite(source: string): void {
     if (parent.keys.has(key)) throw new Error(`Duplicate YAML key "${key}" at line ${index + 1}.`);
     parent.keys.add(key);
     const value = (mapping[3] ?? "").trim();
-    stack.push({ indent, acceptsChildren: value.length === 0 || isYamlBlockScalarIndicator(value), line: index + 1, keys: new Set() });
+    const blockScalar = isYamlBlockScalarIndicator(value);
+    stack.push({ indent, acceptsChildren: value.length === 0 || blockScalar, blockScalar, line: index + 1, keys: new Set() });
   }
 }
 
-function isYamlInlineMapping(value: string): boolean {
-  return /^([^:#][^:]*):(?:\s+.*)?$/.test(value);
+function yamlSequenceEntryFlags(value: string): { acceptsChildren: boolean; blockScalar: boolean } {
+  if (value.length === 0) return { acceptsChildren: true, blockScalar: false };
+  if (isYamlBlockScalarIndicator(value)) return { acceptsChildren: true, blockScalar: true };
+  const inline = value.match(/^([^:#][^:]*):(?:\s+(.*))?$/);
+  if (!inline) return { acceptsChildren: false, blockScalar: false };
+  return { acceptsChildren: true, blockScalar: isYamlBlockScalarIndicator((inline[2] ?? "").trim()) };
 }
 
 function isYamlBlockScalarIndicator(value: string): boolean {
-  return /^[|>][+-]?(?:\s+#.*)?$/.test(value);
+  return /^[|>][0-9+-]{0,2}(?:\s+#.*)?$/.test(value);
 }
 
 function verifyCodeFences(lines: string[]): void {

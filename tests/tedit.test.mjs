@@ -2894,12 +2894,33 @@ test("verify-file enforces Markdown and YAML lightweight boundaries", () => {
   writeFileSync(oddIndentYaml, "server:\n host: localhost\n");
   writeFileSync(duplicateYaml, "server:\n  host: localhost\n  host: 127.0.0.1\n");
   writeFileSync(multiDocYaml, "name: one\n---\nname: two\n");
+  const blockScalarYaml = join(dir, "block-scalar.yml");
+  writeFileSync(blockScalarYaml, `jobs:
+  build:
+    steps:
+      - name: Test
+        run: |
+          echo "\${{ github.ref }}"
+          if [ -n "$FOO" ]; then
+           echo odd-indent-shell
+          fi
+          cat <<EOF
+          \techo tabbed-heredoc
+          EOF
+          echo "dup: 1"
+          echo "dup: 1"
+          ---
+      - run: >
+          folded scalar text
+           continued with odd indent
+`);
 
   assert.equal(JSON.parse(run(["verify-file", thematic, "--json"])).parse_verified, true);
   assert.equal(JSON.parse(run(["verify-file", frontmatterEnd, "--json"])).parse_verified, true);
   assert.equal(JSON.parse(run(["verify-file", mdxList, "--json"])).parse_verified, true);
   assert.equal(JSON.parse(run(["verify-file", validYaml, "--json"])).parser, "yaml-lite");
   assert.equal(JSON.parse(run(["verify-file", workflowYaml, "--json"])).parser, "yaml-lite");
+  assert.equal(JSON.parse(run(["verify-file", blockScalarYaml, "--json"])).parse_verified, true);
   assert.equal(JSON.parse(run(["find", frontmatterEnd, "frontmatter", "--json"])).matches[0].attributes.path, "$/frontmatter");
   assert.equal(JSON.parse(run(["find", thematic, "paragraph", "--json"])).matches[0].attributes.text, "---\ncontent\ntitle: Not frontmatter");
 
@@ -2907,6 +2928,25 @@ test("verify-file enforces Markdown and YAML lightweight boundaries", () => {
     const failed = runFail(["verify-file", file, "--json"]);
     assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
   }
+});
+
+test("edit downgrades parse verification when the original file already fails its parser", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "legacy.yaml");
+  writeFileSync(file, "server:\n host: localhost\n port: 8080\n");
+
+  const result = JSON.parse(run(["edit", file, "--find", "8080", "--replace", "9090", "--write", "--json"]));
+  assert.equal(result.success, true);
+  assert.equal(result.parse_verified, false);
+  assert.equal(result.parse_skipped, true);
+  assert.equal(result.parse_skip_reason, "pre_existing_parse_error");
+  assert.equal(readFileSync(file, "utf8"), "server:\n host: localhost\n port: 9090\n");
+
+  const emptyTarget = join(dir, "fresh.json");
+  writeFileSync(emptyTarget, "");
+  const stillEnforced = runFail(["edit", emptyTarget, "--find-lines", "1", "--replace", "{broken", "--write"]);
+  assert.equal(stillEnforced.status, 1);
+  assert.equal(stillEnforced.body.code, "PARSE_BROKEN_AFTER_EDIT");
 });
 
 test("verify-file fails on invalid parseable files without modifying them", () => {
