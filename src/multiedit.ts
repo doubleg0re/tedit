@@ -35,6 +35,7 @@ type MultieditFileState = {
   file: string;
   original: string;
   next: string;
+  steps: Array<{ edit: number; source: string }>;
 };
 
 export function runMultieditInput(input: string, options: WorkspaceFlowOptions = {}): MultieditResult {
@@ -99,6 +100,7 @@ export function runMultiedit(edits: unknown[], options: WorkspaceFlowOptions = {
         verifyParse: false,
       });
       state.next = plan.nextSource;
+      state.steps.push({ edit: index, source: plan.nextSource });
       results.push({
         edit: index,
         file: edit.file,
@@ -122,7 +124,7 @@ export function runMultiedit(edits: unknown[], options: WorkspaceFlowOptions = {
         ...parseVerificationFields(verification),
       };
     } catch (error) {
-      rethrowWithEditContext(error, undefined, state.file);
+      rethrowWithEditContext(error, firstParseBrokenEdit(state), state.file);
     }
   });
 
@@ -232,9 +234,21 @@ function ensureState(states: Map<string, MultieditFileState>, file: string): Mul
   if (existing) return existing;
   if (!existsSync(file)) fail("FILE_NOT_FOUND", `File not found: ${file}`);
   const original = readFileSync(file, "utf8");
-  const state = { file, original, next: original };
+  const state = { file, original, next: original, steps: [] };
   states.set(file, state);
   return state;
+}
+
+function firstParseBrokenEdit(state: MultieditFileState): number | undefined {
+  for (const step of state.steps) {
+    try {
+      verifyParseForEdit(state.file, state.original, step.source);
+      continue;
+    } catch {
+      return step.edit;
+    }
+  }
+  return undefined;
 }
 
 function rethrowWithEditContext(error: unknown, edit: number | undefined, file: string): never {

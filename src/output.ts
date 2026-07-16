@@ -198,9 +198,23 @@ function compactErrorResult(record: JsonRecord, files: AgentFileSummary[], optio
   };
   if (typeof record.code === "string") compact.code = record.code;
   if (typeof record.error === "string") compact.error = record.error;
+  promoteErrorLocation(compact, record.details);
   if (options.includeDetails && record.details !== undefined) compact.details = record.details;
   if (suggestions.length > 0) compact.suggestions = suggestions;
   return compact;
+}
+
+const ERROR_LOCATION_KEYS = ["file", "edit", "parser", "parser_error", "line", "snippet"];
+
+function promoteErrorLocation(compact: JsonRecord, details: unknown): void {
+  for (let level = details, depth = 0; level && typeof level === "object" && !Array.isArray(level) && depth < 4; depth++) {
+    const record = level as JsonRecord;
+    for (const key of ERROR_LOCATION_KEYS) {
+      const value = record[key];
+      if (compact[key] === undefined && (typeof value === "string" || typeof value === "number")) compact[key] = value;
+    }
+    level = record.cause;
+  }
 }
 
 function compactPayloadResult(record: JsonRecord, kind: string, options: OutputOptions): JsonRecord {

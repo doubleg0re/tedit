@@ -1,6 +1,6 @@
 import { getOptionalAdapterForFile } from "./core/registry.js";
 import { unifiedDiff } from "./diff.js";
-import { fail } from "./errors.js";
+import { fail, TeditError } from "./errors.js";
 import { spawnSync } from "node:child_process";
 import { extname } from "node:path";
 
@@ -503,15 +503,22 @@ export function verifyParseForFile(filePath: string, source: string, enabled = t
     }
     return { verified: true, parser };
   } catch (error) {
+    const cause = unwrapParserError(error);
     fail("PARSE_BROKEN_AFTER_EDIT", "Edit would produce invalid syntax for this file type; no write was performed.", {
       rule: parser,
       parser,
-      parser_error: error instanceof Error ? error.message : String(error),
-      ...parseErrorLocation(error, source),
-      ...(parser === "json" ? jsonParseLocation(error) : {}),
+      parser_error: cause instanceof Error ? cause.message : String(cause),
+      ...parseErrorLocation(cause, source),
+      ...(parser === "json" ? jsonParseLocation(cause) : {}),
       next_step_hint: "Inspect the reported line, fix the syntax, then rerun the same tedit command.",
     });
   }
+}
+
+function unwrapParserError(error: unknown): unknown {
+  if (!(error instanceof TeditError) || !error.details || typeof error.details !== "object") return error;
+  const parserError = (error.details as Record<string, unknown>).parser_error;
+  return typeof parserError === "string" ? new Error(parserError) : error;
 }
 
 export function verifyParseForEdit(filePath: string, previous: string, next: string, enabled = true): BaseParseVerification {

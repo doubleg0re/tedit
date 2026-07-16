@@ -76,7 +76,7 @@ test("recovery: compact parse failures keep a concrete suggestion", () => {
     "--find",
     "\"enabled\": true",
     "--replace",
-    "\"enabled\": }",
+    "\"enabled\": true,",
     "--dry-run",
   ], dir);
   assert.equal(failed.status, 1);
@@ -84,6 +84,33 @@ test("recovery: compact parse failures keep a concrete suggestion", () => {
   assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
   assert.equal(failed.body.suggestions[0], "Inspect the reported line, fix the syntax, then rerun the same tedit command.");
   assert.equal(failed.body.details, undefined);
+  assert.equal(failed.body.parser, "json");
+  assert.match(failed.body.parser_error, /JSON/);
+  assert.equal(failed.body.line, 3);
+  assert.equal(failed.body.snippet, "}");
+});
+
+test("recovery: compact multiedit parse failures report the file and first broken edit", () => {
+  const dir = createWorkspace();
+  writeFileSync(join(dir, "other.json"), "{\n  \"name\": \"tedit\"\n}\n");
+
+  const failed = runFail(["multiedit", "--from-stdin", "--dry-run"], dir, JSON.stringify({
+    edits: [
+      { file: "other.json", find: "\"tedit\"", replace: "\"tedit-tools\"" },
+      { file: "config.json", find: "\"enabled\": true", replace: "\"enabled\": true," },
+      { file: "config.json", find: "\"enabled\": true,", replace: "\"enabled\": true,," },
+    ],
+  }));
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.ok, false);
+  assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
+  assert.equal(failed.body.file, "config.json");
+  assert.equal(failed.body.edit, 1);
+  assert.equal(failed.body.parser, "json");
+  assert.match(failed.body.parser_error, /JSON/);
+  assert.equal(typeof failed.body.line, "number");
+  assert.equal(typeof failed.body.snippet, "string");
+  assert.equal(readFileSync(join(dir, "config.json"), "utf8"), "{\n  \"enabled\": true\n}\n");
 });
 
 function createWorkspace() {
