@@ -3,7 +3,7 @@ import type { DocumentAdapter, RuleMetadata } from "../../core/document.js";
 
 export const jsxRule: RuleMetadata = {
   name: "jsx",
-  extensions: [".js", ".jsx", ".ts", ".tsx"],
+  extensions: [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"],
   actions: [
     "find",
     "inspect",

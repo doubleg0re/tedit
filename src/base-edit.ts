@@ -67,6 +67,10 @@ export type BaseEditGuardrail = {
   message: string;
   lineRange: string;
   appended: "\n" | "\r\n";
+} | {
+  kind: "large-exact-find-structural-hint";
+  message: string;
+  lines: number;
 };
 
 export type ParseSkipReason = "disabled" | "unsupported_extension" | "parser_unavailable" | "conflict_markers_present" | "pre_existing_parse_error";
@@ -189,6 +193,7 @@ export function planBaseEdit(options: BaseEditOptions): BaseEditPlan {
   }
 
   const guarded = guardLineReplaceMutation(options.source, options.strategy, matches, options.mutation);
+  guarded.guardrails.push(...largeExactFindHint(options));
   const nextSource = applyMutation(options.source, matches, guarded.mutation, Boolean(options.replaceAll));
   const parseVerification = verifyParseForEdit(options.filePath, options.source, nextSource, options.verifyParse !== false);
   const diff = unifiedDiff(options.source, nextSource, options.filePath);
@@ -713,6 +718,21 @@ function guardLineReplaceMutation(source: string, strategy: BaseFindStrategy, ma
   };
 }
 
+const LARGE_EXACT_FIND_LINES = 10;
+
+// 긴 exact 블록 재현은 한 글자 오차로 왕복을 낭비하기 쉬워 구조 타겟팅 경로를 권한다.
+function largeExactFindHint(options: BaseEditOptions): BaseEditGuardrail[] {
+  if (options.strategy.kind !== "exact") return [];
+  const lines = options.strategy.pattern.split("\n").length;
+  if (lines < LARGE_EXACT_FIND_LINES) return [];
+  if (getOptionalAdapterForFile(options.filePath)?.rule.name !== "jsx") return [];
+  return [{
+    kind: "large-exact-find-structural-hint",
+    message: `Exact find spans ${lines} lines. Consider running select first next time: a structural target with mutate (e.g. body.replace fn:<name>) avoids reproducing long exact text.`,
+    lines,
+  }];
+}
+
 export function verifyParseForFile(filePath: string, source: string, enabled = true): BaseParseVerification {
   if (!enabled) return { verified: false, skipped: true, skipReason: "disabled" };
   const adapter = getOptionalAdapterForFile(filePath);
@@ -787,8 +807,8 @@ function parserForExtension(extension: string): string | undefined {
 
 function parserLabelForAdapter(ruleName: string, extension: string): string {
   if (ruleName !== "jsx") return ruleName;
-  if (extension === ".ts") return "typescript";
-  if (extension === ".js") return "javascript";
+  if (extension === ".ts" || extension === ".mts" || extension === ".cts") return "typescript";
+  if (extension === ".js" || extension === ".mjs" || extension === ".cjs") return "javascript";
   return ruleName;
 }
 

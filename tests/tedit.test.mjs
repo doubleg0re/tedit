@@ -1032,7 +1032,7 @@ test("rules command exposes registered rules", () => {
   const result = JSON.parse(run(["rules", "--json"]));
   assert.equal(result.success, true);
   assert.equal(result.rules[0].name, "jsx");
-  assert.deepEqual(result.rules[0].extensions, [".js", ".jsx", ".ts", ".tsx"]);
+  assert.deepEqual(result.rules[0].extensions, [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]);
   assert.equal(result.rules[1].name, "json");
   assert.deepEqual(result.rules[1].extensions, [".json", ".jsonl", ".ndjson"]);
   assert.equal(result.rules[2].name, "yaml");
@@ -2806,6 +2806,55 @@ test("base edit drift scan skips oversized files", () => {
   assert.equal(failed.status, 1);
   assert.equal(failed.body.code, "MATCH_NONE");
   assert.equal(failed.body.details.drift_scan, "skipped_large_file");
+});
+
+test("base edit parse-verifies mjs cjs mts module files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const mjsFile = join(dir, "mod.mjs");
+  writeFileSync(mjsFile, "export function alpha() {\n  return 1;\n}\n");
+  const mjs = JSON.parse(run(["edit", mjsFile, "--find", "return 1;", "--replace", "return 2;", "--write", "--json"]));
+  assert.equal(mjs.parse_verified, true);
+  assert.equal(mjs.parser, "javascript");
+
+  const broken = runFail(["edit", mjsFile, "--find", "return 2;\n}", "--replace", "return 2;", "--write"]);
+  assert.equal(broken.body.code, "PARSE_BROKEN_AFTER_EDIT");
+  assert.equal(readFileSync(mjsFile, "utf8"), "export function alpha() {\n  return 2;\n}\n");
+
+  const cjsFile = join(dir, "mod.cjs");
+  writeFileSync(cjsFile, "module.exports = function beta() {\n  return 1;\n};\n");
+  const cjs = JSON.parse(run(["edit", cjsFile, "--find", "return 1;", "--replace", "return 3;", "--write", "--json"]));
+  assert.equal(cjs.parse_verified, true);
+  assert.equal(cjs.parser, "javascript");
+
+  const mtsFile = join(dir, "mod.mts");
+  writeFileSync(mtsFile, "export const gamma: number = 1;\n");
+  const mts = JSON.parse(run(["edit", mtsFile, "--find", "= 1;", "--replace", "= 2;", "--write", "--json"]));
+  assert.equal(mts.parse_verified, true);
+  assert.equal(mts.parser, "typescript");
+});
+
+test("base edit hints select-first for large exact finds on structural files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "engine.ts");
+  const body = Array.from({ length: 12 }, (_, index) => `  const step${index} = ${index};`).join("\n");
+  const fn = `function bigOne() {\n${body}\n  return step0;\n}`;
+  writeFileSync(file, fn + "\n");
+
+  const replaced = fn.replace("return step0;", "return step1;");
+  const large = JSON.parse(run(["edit", file, "--find", fn, "--replace", replaced, "--write", "--json"]));
+  const hint = (large.guardrails ?? []).find((item) => item.kind === "large-exact-find-structural-hint");
+  assert.ok(hint);
+  assert.match(hint.message, /select/);
+  assert.match(hint.message, /mutate/);
+  assert.equal(hint.lines, 15);
+
+  const small = JSON.parse(run(["edit", file, "--find", "return step1;", "--replace", "return step2;", "--write", "--json"]));
+  assert.ok(!(small.guardrails ?? []).some((item) => item.kind === "large-exact-find-structural-hint"));
+
+  const textFile = join(dir, "notes.txt");
+  writeFileSync(textFile, fn + "\n");
+  const text = JSON.parse(run(["edit", textFile, "--find", fn, "--replace", replaced, "--write", "--json"]));
+  assert.ok(!(text.guardrails ?? []).some((item) => item.kind === "large-exact-find-structural-hint"));
 });
 
 test("base edit anchor strategy inserts relative to a section marker", () => {
