@@ -3901,6 +3901,76 @@ test("className conflict guardrail does not flag mutually exclusive ternary bran
   assert.deepEqual(result.warnings, []);
 });
 
+test("className conflict guardrail classifies bg arbitrary values by css property", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const okFile = join(dir, "BgOk.tsx");
+  const conflictFile = join(dir, "BgConflict.tsx");
+  writeFileSync(okFile, `export function BgOk() {
+  return <>
+    <section className="bg-[url('/images/hero.jpg')] bg-cover bg-[position:68%_center] sm:bg-center" />
+    <div className="bg-[image:var(--hero)] bg-[length:200px_100px] bg-red-500" />
+    <div className="bg-[linear-gradient(to_right,#fff,#000)] bg-warm-50" />
+  </>;
+}
+`);
+  writeFileSync(conflictFile, `export function BgConflict() {
+  return <>
+    <div className="bg-[#FAFAF9] bg-warm-50" />
+    <div className="bg-[color:var(--surface)] bg-point" />
+  </>;
+}
+`);
+
+  const ok = JSON.parse(run(["verify-file", okFile, "--json"]));
+  const conflict = JSON.parse(run(["verify-file", conflictFile, "--json"]));
+
+  assert.deepEqual(ok.warnings, []);
+  assert.ok(conflict.warnings.some((item) => item.group === "background-color" && item.classes.includes("bg-[#FAFAF9]") && item.classes.includes("bg-warm-50")));
+  assert.ok(conflict.warnings.some((item) => item.group === "background-color" && item.classes.includes("bg-[color:var(--surface)]") && item.classes.includes("bg-point")));
+});
+
+test("className conflict guardrail keeps chained ternary branches exclusive", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "Chain.tsx");
+  writeFileSync(file, `import { cn } from "clsx";
+export function Chain({ i, sel, avail }) {
+  return <>
+    <span className={i === 0 ? "text-red-500" : i === 6 ? "text-blue-500" : "text-green-500"} />
+    <button className={cn("px-2", i === 0 ? "text-red-500" : i === 6 ? "text-blue-500" : "text-green-500")} />
+    <li className={!avail ? "text-gray-400 bg-gray-50" : sel ? "bg-point text-white" : "text-black bg-warm-50"} />
+  </>;
+}
+`);
+
+  const result = JSON.parse(run(["verify-file", file, "--json"]));
+  assert.deepEqual(result.warnings, []);
+});
+
+test("className conflict guardrail only flags classes that certainly apply together", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const okFile = join(dir, "CondOk.tsx");
+  const conflictFile = join(dir, "CondConflict.tsx");
+  writeFileSync(okFile, `import { cn } from "clsx";
+export function CondOk({ open, active }) {
+  return <>
+    <svg className={cn("h-4 text-sn-dim", open && "rotate-180 text-sn-yellow")} />
+    <div className={cn("px-2", { "text-white": active, "text-black": !active })} />
+  </>;
+}
+`);
+  writeFileSync(conflictFile, `export function CondConflict({ sel }) {
+  return <span className={sel ? "text-red-500 text-blue-500" : "text-green-500"} />;
+}
+`);
+
+  const ok = JSON.parse(run(["verify-file", okFile, "--json"]));
+  const conflict = JSON.parse(run(["verify-file", conflictFile, "--json"]));
+
+  assert.deepEqual(ok.warnings, []);
+  assert.equal(conflict.warnings.length, 1);
+  assert.deepEqual(conflict.warnings[0].classes, ["text-red-500", "text-blue-500"]);
+});
+
 test("className conflict guardrail honors project config groups and disable flag", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const configDir = join(dir, ".tedit");

@@ -119,8 +119,7 @@ type HandlerUsage = {
 
 type ClassToken = {
   value: string;
-  exclusiveGroup?: string;
-  branch?: "consequent" | "alternate";
+  branchPath?: string[];
 };
 
 type ClassEffect = {
@@ -404,27 +403,32 @@ function extractClassTokensFromExpression(expression: t.Expression | t.JSXEmptyE
     return classTokensFromText(expression.quasis.map((quasi) => quasi.value.cooked ?? quasi.value.raw).join(""));
   }
   if (t.isLogicalExpression(expression)) {
+    const branchGroup = `${expression.start ?? ""}:${expression.end ?? ""}`;
     return [
-      ...extractExpressionLikeTokens(expression.left),
-      ...extractExpressionLikeTokens(expression.right),
+      ...markBranch(extractExpressionLikeTokens(expression.left), `${branchGroup}#left`),
+      ...markBranch(extractExpressionLikeTokens(expression.right), `${branchGroup}#right`),
     ];
   }
   if (t.isConditionalExpression(expression)) {
-    const exclusiveGroup = `${expression.start ?? ""}:${expression.end ?? ""}`;
+    const branchGroup = `${expression.start ?? ""}:${expression.end ?? ""}`;
     return [
-      ...markExclusiveBranch(extractExpressionLikeTokens(expression.consequent), exclusiveGroup, "consequent"),
-      ...markExclusiveBranch(extractExpressionLikeTokens(expression.alternate), exclusiveGroup, "alternate"),
+      ...markBranch(extractExpressionLikeTokens(expression.consequent), `${branchGroup}#consequent`),
+      ...markBranch(extractExpressionLikeTokens(expression.alternate), `${branchGroup}#alternate`),
     ];
   }
   if (t.isArrayExpression(expression)) {
     return expression.elements.flatMap((element) => element ? extractExpressionLikeTokens(element) : []);
   }
   if (t.isObjectExpression(expression)) {
-    return expression.properties.flatMap((property) => {
+    const branchGroup = `${expression.start ?? ""}:${expression.end ?? ""}`;
+    return expression.properties.flatMap((property, index) => {
       if (!t.isObjectProperty(property) || property.computed) return [];
-      if (t.isStringLiteral(property.key)) return classTokensFromText(property.key.value);
-      if (t.isIdentifier(property.key)) return classTokensFromText(property.key.name);
-      return [];
+      const tokens = t.isStringLiteral(property.key)
+        ? classTokensFromText(property.key.value)
+        : t.isIdentifier(property.key)
+          ? classTokensFromText(property.key.name)
+          : [];
+      return markBranch(tokens, `${branchGroup}#prop${index}`);
     });
   }
   if (t.isCallExpression(expression) && isClassNameHelperCall(expression.callee)) {
@@ -455,10 +459,8 @@ function classTokensFromText(value: string): ClassToken[] {
   return splitClassTokens(value).map((token) => ({ value: token }));
 }
 
-function markExclusiveBranch(tokens: ClassToken[], exclusiveGroup: string, branch: "consequent" | "alternate"): ClassToken[] {
-  return tokens.map((token) => token.exclusiveGroup
-    ? token
-    : { ...token, exclusiveGroup, branch });
+function markBranch(tokens: ClassToken[], branchEntry: string): ClassToken[] {
+  return tokens.map((token) => ({ ...token, branchPath: [branchEntry, ...(token.branchPath ?? [])] }));
 }
 
 function conflictsForClassTokens(
@@ -479,7 +481,7 @@ function conflictsForClassTokens(
     const key = `${parsed.variant}\u0000${effect.family}`;
     const entry = byGroup.get(key) ?? { family: effect.family, variant: parsed.variant, classes: [] };
     const classEffect = { ...className, effect };
-    if (!entry.classes.some((item) => item.value === classEffect.value && item.exclusiveGroup === classEffect.exclusiveGroup && item.branch === classEffect.branch)) {
+    if (!entry.classes.some((item) => item.value === classEffect.value && branchPathKey(item) === branchPathKey(classEffect))) {
       entry.classes.push(classEffect);
     }
     byGroup.set(key, entry);
@@ -509,7 +511,7 @@ function conflictingClassValues(classes: ClassTokenEffect[]): string[] {
   for (let index = 0; index < classes.length; index++) {
     for (let otherIndex = index + 1; otherIndex < classes.length; otherIndex++) {
       if (classes[index].value === classes[otherIndex].value) continue;
-      if (!canClassTokensCoexist(classes[index], classes[otherIndex])) continue;
+      if (!areClassTokensCertainlyCoApplied(classes[index], classes[otherIndex])) continue;
       if (!classEffectsOverlap(classes[index].effect, classes[otherIndex].effect)) continue;
       conflicts.add(classes[index].value);
       conflicts.add(classes[otherIndex].value);
@@ -518,9 +520,14 @@ function conflictingClassValues(classes: ClassTokenEffect[]): string[] {
   return [...conflicts];
 }
 
-function canClassTokensCoexist(left: ClassToken, right: ClassToken): boolean {
-  if (!left.exclusiveGroup || !right.exclusiveGroup) return true;
-  return left.exclusiveGroup !== right.exclusiveGroup || left.branch === right.branch;
+// 정적 분석으로 배타성을 증명할 수 없는 조합(교차 분기, 조건부 vs static)은
+// 경고하지 않는다 — 동일 branch path만 "확실히 동시 적용"으로 취급.
+function areClassTokensCertainlyCoApplied(left: ClassToken, right: ClassToken): boolean {
+  return branchPathKey(left) === branchPathKey(right);
+}
+
+function branchPathKey(token: ClassToken): string {
+  return (token.branchPath ?? []).join(" ");
 }
 
 function classEffectsOverlap(left: ClassEffect, right: ClassEffect): boolean {
@@ -719,7 +726,18 @@ function isBackgroundColorUtility(utility: string): boolean {
   if (["bg-fixed", "bg-local", "bg-scroll", "bg-cover", "bg-contain", "bg-auto", "bg-center", "bg-top", "bg-right", "bg-bottom", "bg-left", "bg-none"].includes(utility)) {
     return false;
   }
+  const arbitrary = arbitraryBracketValue(stripSlashSuffix(utility), "bg");
+  if (arbitrary !== null) return isArbitraryBackgroundColorValue(arbitrary);
   return !["bg-opacity-", "bg-blend-", "bg-clip-", "bg-origin-", "bg-gradient-", "bg-size-"].some((prefix) => utility.startsWith(prefix));
+}
+
+// bg-[...]는 background-image/position/size로도 쓰여서 값을 보고 판별해야 한다.
+function isArbitraryBackgroundColorValue(value: string): boolean {
+  if (value.startsWith("color:")) return true;
+  if (/^(image|position|size|length):/.test(value)) return false;
+  if (/^url\(/.test(value)) return false;
+  if (/^(linear|radial|conic)-gradient\(/.test(value)) return false;
+  return true;
 }
 
 function isBorderWidthUtilityForGroup(utility: string, group: string): boolean {
