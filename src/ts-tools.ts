@@ -299,24 +299,28 @@ export function runTsRename(filePath: string, options: TsRenameOptions): JsonRec
   const source = readFileSync(filePath, "utf8");
   const parsed = parseTsSource(source);
   const target = resolveDeclaration(filePath, source, parsed, options.selector);
-  if (target.kind !== "fn" && target.kind !== "class" && target.kind !== "var") {
-    fail("TS_RENAME_UNSUPPORTED_TARGET", "declaration.rename currently supports single-file fn:, class:, and var: declarations only.", {
+  const isClassMember = (target.kind === "method" || target.kind === "prop") && CLASS_MEMBER_RENAME_CONTEXTS.has(target.context);
+  if (target.kind !== "fn" && target.kind !== "class" && target.kind !== "var" && !isClassMember) {
+    fail("TS_RENAME_UNSUPPORTED_TARGET", "declaration.rename supports single-file fn:, class:, var: declarations and class-owned method:/prop: members only.", {
       target: publicDeclaration(target),
       suggestions: [
-        "Use edit/multiedit for method or property renames.",
+        "Use edit/multiedit for object-literal member renames.",
         "Use refactor for multi-file or symbol-graph-aware moves.",
       ],
     });
   }
-  const to = validIdentifierName(options.to, "declaration.rename requires args.to to be a valid identifier.");
+  const to = isClassMember
+    ? validMemberRenameName(options.to, target.name)
+    : validIdentifierName(options.to, "declaration.rename requires args.to to be a valid identifier.");
   if (to === target.name) fail("TS_RENAME_NOOP", `Target ${target.selector} is already named ${to}.`, { target: publicDeclaration(target) });
 
-  const patches = renamePatchesForDeclaration(filePath, source, parsed, target, to);
+  const member = isClassMember ? memberRenamePatches(parsed, target, to) : undefined;
+  const patches = member ? member.patches : renamePatchesForDeclaration(filePath, source, parsed, target, to);
   const nextSource = applyPatches(source, patches);
   const changed = source !== nextSource;
   const parseVerification = verifyParseForFile(filePath, nextSource);
   const diff = unifiedDiff(source, nextSource, filePath);
-  const semanticWarnings = renameWarnings(source, target);
+  const semanticWarnings = [...renameWarnings(source, target), ...(member ? memberRenameWarnings(target, member.unresolvedRefs) : [])];
   const warnings = [...qualityWarnings(filePath, source, nextSource), ...semanticWarnings];
   const policy = resolveWritePolicy(filePath, options);
   const shouldWrite = policy.write;
@@ -535,6 +539,131 @@ function bindingRenamePatches(path: NodePath<t.Node>, identifier: t.Identifier, 
     const range = rangeForNode(node, parsed);
     return { start: range.start, end: range.end, text: to };
   });
+}
+
+const CLASS_MEMBER_RENAME_CONTEXTS = new Set(["class method", "class private method", "class property", "class private property"]);
+
+function validMemberRenameName(value: string, currentName: string): string {
+  const isPrivate = currentName.startsWith("#");
+  if (!isPrivate && value.startsWith("#")) {
+    fail("INVALID_TS_RENAME", "declaration.rename cannot change a public member into a private one.", { received: value });
+  }
+  const plain = value.startsWith("#") ? value.slice(1) : value;
+  if (!/^[$A-Z_a-z][$\w]*$/.test(plain)) {
+    fail("INVALID_TS_RENAME", "declaration.rename requires args.to to be a valid member name.", { received: value });
+  }
+  return isPrivate ? `#${plain}` : plain;
+}
+
+type MemberRenamePlan = { patches: SourcePatch[]; unresolvedRefs: number };
+
+function memberRenamePatches(parsed: ParsedTsSource, target: InternalDeclaration, to: string): MemberRenamePlan {
+  const isPrivate = target.name.startsWith("#");
+  const referenceName = isPrivate ? target.name.slice(1) : target.name;
+  const patches: SourcePatch[] = [];
+  let found = false;
+
+  const capture = (path: NodePath<t.ClassMethod | t.ClassPrivateMethod | t.ClassProperty | t.ClassPrivateProperty>): void => {
+    if (found || !sameDeclarationPath(path as NodePath<t.Node>, parsed, target)) return;
+    if (!t.isIdentifier(path.node.key) && !t.isPrivateName(path.node.key)) return;
+    found = true;
+    const keyRange = rangeForNode(path.node.key, parsed);
+    patches.push({ start: keyRange.start, end: keyRange.end, text: to });
+    const bodyPath = path.parentPath;
+    if (bodyPath.isClassBody()) {
+      patches.push(...(isPrivate
+        ? privateMemberReferencePatches(bodyPath, referenceName, to, parsed)
+        : thisMemberReferencePatches(bodyPath, referenceName, to, parsed)));
+    }
+    path.stop();
+  };
+
+  traverseAst(parsed.ast, {
+    ClassMethod(path) { if (target.kind === "method") capture(path); },
+    ClassPrivateMethod(path) { if (target.kind === "method") capture(path); },
+    ClassProperty(path) { if (target.kind === "prop") capture(path); },
+    ClassPrivateProperty(path) { if (target.kind === "prop") capture(path); },
+  });
+
+  if (!found) {
+    fail("TS_RENAME_BINDING_UNAVAILABLE", `Could not resolve a rename target for ${target.selector}.`, {
+      target: publicDeclaration(target),
+      suggestions: ["Run select to confirm the target selector."],
+    });
+  }
+  const deduped = dedupePatches(patches);
+  return { patches: deduped, unresolvedRefs: countUnpatchedMemberRefs(parsed, referenceName, isPrivate, deduped) };
+}
+
+// private 멤버는 클래스 밖 접근이 문법상 불가라 body 안 참조 전부가 안전한 갱신 대상.
+function privateMemberReferencePatches(classBody: NodePath<t.ClassBody>, name: string, to: string, parsed: ParsedTsSource): SourcePatch[] {
+  const patches: SourcePatch[] = [];
+  classBody.traverse({
+    Class(path) {
+      if (classBodyDeclaresPrivate(path.node.body, name)) path.skip();
+    },
+    PrivateName(path) {
+      if (path.node.id.name !== name) return;
+      const range = rangeForNode(path.node, parsed);
+      patches.push({ start: range.start, end: range.end, text: to });
+    },
+  });
+  return patches;
+}
+
+function classBodyDeclaresPrivate(body: t.ClassBody, name: string): boolean {
+  return body.body.some((memberNode) =>
+    (t.isClassPrivateMethod(memberNode) || t.isClassPrivateProperty(memberNode)) && memberNode.key.id.name === name);
+}
+
+// public 멤버는 this가 클래스 인스턴스로 보장되는 범위만 갱신: arrow는 투과, function/중첩 class에서 중단.
+function thisMemberReferencePatches(classBody: NodePath<t.ClassBody>, name: string, to: string, parsed: ParsedTsSource): SourcePatch[] {
+  const patches: SourcePatch[] = [];
+  const record = (object: t.Node, property: t.Node, computed: boolean): void => {
+    if (computed || !t.isThisExpression(object) || !t.isIdentifier(property) || property.name !== name) return;
+    const range = rangeForNode(property, parsed);
+    patches.push({ start: range.start, end: range.end, text: to });
+  };
+  classBody.traverse({
+    FunctionDeclaration(path) { path.skip(); },
+    FunctionExpression(path) { path.skip(); },
+    ObjectMethod(path) { path.skip(); },
+    Class(path) { path.skip(); },
+    MemberExpression(path) { record(path.node.object, path.node.property, path.node.computed); },
+    OptionalMemberExpression(path) { record(path.node.object, path.node.property, path.node.computed); },
+  });
+  return patches;
+}
+
+function countUnpatchedMemberRefs(parsed: ParsedTsSource, name: string, isPrivate: boolean, patches: SourcePatch[]): number {
+  const patched = new Set(patches.map((patch) => `${patch.start}:${patch.end}`));
+  let count = 0;
+  const record = (property: t.Node, computed: boolean): void => {
+    const matches = isPrivate
+      ? t.isPrivateName(property) && property.id.name === name
+      : !computed && t.isIdentifier(property) && property.name === name;
+    if (!matches) return;
+    const range = rangeForNode(property, parsed);
+    if (!patched.has(`${range.start}:${range.end}`)) count += 1;
+  };
+  traverseAst(parsed.ast, {
+    MemberExpression(path) { record(path.node.property, path.node.computed); },
+    OptionalMemberExpression(path) { record(path.node.property, path.node.computed); },
+  });
+  return count;
+}
+
+function memberRenameWarnings(target: InternalDeclaration, unresolvedRefs: number): JsonRecord[] {
+  if (unresolvedRefs === 0) return [];
+  return [{
+    code: "TS_RENAME_MEMBER_EXTERNAL_REFS",
+    level: "warn",
+    file: target.file,
+    selector: target.selector,
+    count: unresolvedRefs,
+    message: `Renamed class member ${target.name} but ${unresolvedRefs} same-file member access(es) outside the safe this scope were not updated.`,
+    next_step_hint: "Review the remaining accesses with search, update them via edit/multiedit, or run a typecheck via verify.",
+  }];
 }
 
 function validIdentifierName(value: string, message: string): string {

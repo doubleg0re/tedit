@@ -83,6 +83,7 @@ const MUTATE_OP_ALIASES = new Map<string, string>([
   ["replace-body", "body.replace"],
   ["insert-before", "body.insertBefore"],
   ["insert-after", "body.insertAfter"],
+  ["symbol.rename", "declaration.rename"],
 ]);
 const MUTATE_JSX_TARGETS = "jsx:<selector> or id:jsx:<id>";
 const MUTATE_TS_TARGETS = "fn:<name>, class:<name>, method:<owner.name>, prop:<name>, or var:<name>";
@@ -773,7 +774,7 @@ function selectTsMatches(file: string, selector: string | undefined, kind: strin
     context: match.context,
     canReplaceBody: match.canReplaceBody,
     editHint: { tool: "mutate", file, target: match.selector, op: "body.replace" },
-    renameHint: ["fn", "class", "var"].includes(String(match.kind)) ? { tool: "mutate", file, target: match.selector, op: "declaration.rename" } : undefined,
+    renameHint: ["fn", "class", "var"].includes(String(match.kind)) || String(match.context ?? "").startsWith("class ") ? { tool: "mutate", file, target: match.selector, op: "declaration.rename" } : undefined,
     moveHint: { tool: "mutate", file, target: match.selector, op: "declaration.move" },
   }));
 }

@@ -192,6 +192,92 @@ test("ts-rename reports ambiguous and exported-symbol cases", () => {
   assert.ok(result.warnings.some((warning) => warning.code === "TS_RENAME_EXPORTED_SYMBOL"));
 });
 
+test("ts-rename renames class methods updating this references within class boundaries", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "tedit-ts-rename-method-"));
+  const file = join(workspace, "service.ts");
+  writeFileSync(file, [
+    "class Service {",
+    "  start() {",
+    "    return this.helper() + 1;",
+    "  }",
+    "  helper() {",
+    "    const inner = () => this.helper();",
+    "    function detached() { return this.helper; }",
+    "    return inner();",
+    "  }",
+    "}",
+    "const svc = new Service();",
+    "svc.helper();",
+    "",
+  ].join("\n"));
+
+  const result = runTsRename(file, { selector: "method:Service.helper", to: "compute", write: true, noBackup: true });
+  assert.equal(result.referencesUpdated, 2);
+  const source = readFileSync(file, "utf8");
+  assert.match(source, /compute\(\) \{/);
+  assert.match(source, /return this\.compute\(\) \+ 1/);
+  assert.match(source, /const inner = \(\) => this\.compute\(\)/);
+  assert.match(source, /function detached\(\) \{ return this\.helper; \}/);
+  assert.match(source, /svc\.helper\(\)/);
+  const warning = result.warnings.find((item) => item.code === "TS_RENAME_MEMBER_EXTERNAL_REFS");
+  assert.ok(warning);
+  assert.equal(warning.count, 2);
+});
+
+test("ts-rename renames private class members safely", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "tedit-ts-rename-private-"));
+  const file = join(workspace, "counter.ts");
+  writeFileSync(file, [
+    "class Counter {",
+    "  #value = 0;",
+    "  #bump() {",
+    "    this.#value += 1;",
+    "    return this.#value;",
+    "  }",
+    "  next() {",
+    "    this.#bump();",
+    "    return this.#value;",
+    "  }",
+    "}",
+    "",
+  ].join("\n"));
+
+  const method = runTsRename(file, { selector: "method:Counter.#bump", to: "#advance", write: true, noBackup: true });
+  assert.equal(method.referencesUpdated, 1);
+  let source = readFileSync(file, "utf8");
+  assert.match(source, /#advance\(\) \{/);
+  assert.match(source, /this\.#advance\(\);/);
+  assert.ok(!method.warnings.some((item) => item.code === "TS_RENAME_MEMBER_EXTERNAL_REFS"));
+
+  const prop = runTsRename(file, { selector: "prop:Counter.#value", to: "#total", write: true, noBackup: true });
+  assert.equal(prop.referencesUpdated, 3);
+  source = readFileSync(file, "utf8");
+  assert.match(source, /#total = 0;/);
+  assert.doesNotMatch(source, /#value/);
+});
+
+test("ts-rename still rejects object literal members with guidance", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "tedit-ts-rename-object-"));
+  const file = join(workspace, "handlers.ts");
+  writeFileSync(file, "const handlers = { save() { return 1; } };\nhandlers.save();\n");
+
+  assert.throws(
+    () => runTsRename(file, { selector: "method:handlers.save", to: "persist", dryRun: true }),
+    (error) => error.code === "TS_RENAME_UNSUPPORTED_TARGET",
+  );
+  assert.equal(readFileSync(file, "utf8"), "const handlers = { save() { return 1; } };\nhandlers.save();\n");
+});
+
+test("mcp mutate accepts symbol.rename as declaration.rename alias", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "tedit-ts-symbol-rename-"));
+  const file = join(workspace, "boot.ts");
+  writeFileSync(file, "function startServer() { return 1; }\nstartServer();\n");
+
+  const result = runMcpTool("mutate", { file, op: "symbol.rename", target: "fn:startServer", args: { to: "bootServer" }, diffMode: "stats" });
+  assert.equal(result.ok, true);
+  assert.match(readFileSync(file, "utf8"), /function bootServer\(\) \{ return 1; \}\nbootServer\(\);/);
+});
+
 test("mcp advanced ts tools return compact mutation contracts", () => {
   const workspace = mkdtempSync(join(tmpdir(), "tedit-ts-mcp-"));
   const file = join(workspace, "server.ts");
