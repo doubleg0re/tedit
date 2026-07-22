@@ -10,7 +10,12 @@ import { packageVersion } from "./version.js";
 const server = new McpServer({ name: "tedit", version: packageVersion() });
 const runnerPath = fileURLToPath(new URL("./mcp-runner.js", import.meta.url));
 
+// 서버 프로세스 = 세션 단위. 첫 mutating 호출을 막지 않고 실행하되, 그 응답에
+// actions 페이로드를 통째로 얹어 가이드가 추가 호출 없이 컨텍스트에 들어가게 한다.
+let actionsSeen = false;
+
 for (const tool of TEDIT_MCP_TOOLS) {
+  const isReadOnly = tool.annotations?.readOnlyHint === true;
   server.registerTool(
     tool.name,
     {
@@ -20,9 +25,30 @@ for (const tool of TEDIT_MCP_TOOLS) {
       ...(tool.annotations ? { annotations: tool.annotations } : {}),
     },
     async (args) => {
+      if (tool.name === "actions") actionsSeen = true;
+      else if (!actionsSeen && !isReadOnly) {
+        actionsSeen = true;
+        return withActionsGuidance(await runToolInCurrentDist(tool.name, args));
+      }
       return runToolInCurrentDist(tool.name, args);
     },
   );
+}
+
+async function withActionsGuidance(result: CallToolResult): Promise<CallToolResult> {
+  const actionsResult = await runToolInCurrentDist("actions", {});
+  const structuredContent = {
+    ...(result.structuredContent ?? {}),
+    actions_guidance: {
+      message: "New tedit session: review the attached actions output (tool contracts, priorities, recovery patterns) before further edits.",
+      actions: actionsResult.structuredContent,
+    },
+  };
+  return {
+    ...result,
+    content: [{ type: "text", text: JSON.stringify(structuredContent, null, 2) }],
+    structuredContent,
+  };
 }
 
 async function main(): Promise<void> {

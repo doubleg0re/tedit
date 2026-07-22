@@ -89,6 +89,8 @@ The `actions` response includes an agent workflow guide. The intended loop is:
 
 MCP `edit`, `multiedit`, `mutate`, and `flow` write by default; pass `dryRun:true` to preview. Add `verify` when typecheck/lint/test breakage matters.
 
+In a new MCP session, the first mutating call runs normally but its response carries an `actions_guidance` block with the full `actions` payload (tool contracts, priorities, recovery patterns) - review it before further edits; no separate `actions` call is needed. Calling `actions` first, or using read-only tools, skips the attachment.
+
 Example MCP payloads:
 
 ```jsonc

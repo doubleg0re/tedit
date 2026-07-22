@@ -31,8 +31,18 @@ function runTool(name: string, args: unknown): RunnerResponse {
     const options = args && typeof args === "object" && !Array.isArray(args)
       ? outputOptionsFromRecord(args as Record<string, unknown>)
       : {};
-    return { ok: false, result: formatAgentResult(raw, options) };
+    return { ok: false, result: formatAgentResult(withActionsHint(raw), options) };
   }
+}
+
+// 문법/계약 오사용은 대개 가이드 미확인 신호 — actions 재확인을 최상단 힌트로 밖는다.
+function withActionsHint(result: Record<string, unknown>): Record<string, unknown> {
+  const code = typeof result.code === "string" ? result.code : "";
+  if (!code.startsWith("INVALID_")) return result;
+  const existing = Array.isArray(result.suggestions) ? result.suggestions : [];
+  const hint = "Input contract mismatch: call the actions tool first - it returns the current op/target contract and examples for every tool.";
+  if (existing.includes(hint)) return result;
+  return { ...result, suggestions: [hint, ...existing] };
 }
 
 async function readStdin(): Promise<string> {

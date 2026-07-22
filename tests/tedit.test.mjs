@@ -2368,6 +2368,72 @@ test("mcp server lists tools and runs universal edit", async () => {
   }
 });
 
+test("mcp server attaches actions guidance to the first mutating call", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-mcp-gate-"));
+  const file = join(dir, "gate.ts");
+  writeFileSync(file, "const answer = 41;\n");
+
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [mcp],
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "tedit-test", version: "0.1.0" });
+
+  try {
+    await client.connect(transport);
+
+    const search = await client.callTool({ name: "search", arguments: { file, lines: "1" } });
+    assert.equal(search.isError, undefined);
+    assert.equal(search.structuredContent.actions_guidance, undefined);
+
+    const first = await client.callTool({ name: "edit", arguments: { file, find: "41", replace: "42", dryRun: true } });
+    assert.equal(first.isError, undefined);
+    assert.equal(first.structuredContent.ok, true);
+    const guidance = first.structuredContent.actions_guidance;
+    assert.ok(guidance);
+    assert.match(guidance.message, /review .*actions/i);
+    assert.ok(Array.isArray(guidance.actions.tools));
+    assert.ok(guidance.actions.actions.includes("edit.find"));
+
+    const second = await client.callTool({ name: "edit", arguments: { file, find: "41", replace: "42", dryRun: true } });
+    assert.equal(second.isError, undefined);
+    assert.equal(second.structuredContent.actions_guidance, undefined);
+
+    const invalid = await client.callTool({ name: "mutate", arguments: { file, op: "bogus.op", target: "fn:x", args: {}, dryRun: true } });
+    assert.equal(invalid.isError, true);
+    assert.ok(invalid.structuredContent.suggestions.some((item) => item.includes("actions")));
+  } finally {
+    await client.close();
+  }
+});
+
+test("mcp server skips the actions gate when actions ran first", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-mcp-gate-open-"));
+  const file = join(dir, "open.ts");
+  writeFileSync(file, "const answer = 41;\n");
+
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [mcp],
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "tedit-test", version: "0.1.0" });
+
+  try {
+    await client.connect(transport);
+
+    const actionsDiscovery = await client.callTool({ name: "actions", arguments: { detailFieldMaxBytes: 1 } });
+    assert.equal(actionsDiscovery.isError, undefined);
+
+    const edit = await client.callTool({ name: "edit", arguments: { file, find: "41", replace: "42", dryRun: true } });
+    assert.equal(edit.isError, undefined);
+    assert.equal(edit.structuredContent.ok, true);
+  } finally {
+    await client.close();
+  }
+});
+
 test("mcp server exposes advanced tools when profile is all", async () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-mcp-all-"));
   const jsxFile = join(dir, "Advanced.tsx");

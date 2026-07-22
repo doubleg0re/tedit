@@ -201,7 +201,7 @@ function releaseSmokeResult(ok, smoke) {
     checks: ok ? { passed: checks.length, failed: 0 } : checks,
     smoke: ok ? compactSmoke(smoke) : smoke,
     failures,
-    postPublishCheck: `npx -y ${pkg.name}@${pkg.version} --version`,
+    postPublishCheck: `npx -y -p ${pkg.name}@${pkg.version} tedit --version`,
   };
 }
 
