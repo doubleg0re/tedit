@@ -1182,7 +1182,7 @@ function mcpDiscoveryGuidance(filePath: string | undefined, ruleNames: string[])
       { when: "need change history before risky edit", first_tool: "history_trace", then: "search or edit", reason: "history_trace avoids hand-assembling blame/log commands" },
     ],
     failure_recovery: [
-      { code: "MATCH_NONE", suggestion: "Use returned candidates or search; retry with findLines/regex first. findFuzzy is whitespace-only best-effort, not semantic matching." },
+      { code: "MATCH_NONE", suggestion: "Use returned candidates or search; retry with findLines/regex first. findFuzzy is best-effort character matching (whitespace first, then confidence-gated small drift), never semantic; ambiguous or low-confidence candidates are reported, not written." },
       { code: "MATCH_NOT_UNIQUE", suggestion: "Use returned candidate line ranges or add expectCount when replaceAll is intended." },
       { code: "PARSE_BROKEN_AFTER_EDIT", suggestion: "Do not force write; inspect the proposed replacement and keep syntax balanced before retrying." },
       { code: "AST_MATCH_NONE", suggestion: "Use scan_strings candidates or switch selector type, for example JSXText instead of StringLiteral." },

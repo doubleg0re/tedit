@@ -2628,6 +2628,120 @@ test("base edit fuzzy strategy tolerates missing spaces around punctuation", () 
   assert.equal(readFileSync(file, "utf8"), "function save(next) {\n  return value;\n}\n");
 });
 
+test("base edit surfaces ranked drift candidates for small token drift", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "config.ts");
+  const original = "const timeout = 3000; // ms\nconst retries = 5;\n";
+  writeFileSync(file, original);
+
+  const failed = runFail(["edit", file, "--find", "const timout = 300; // ms", "--replace", "const timeout = 5000; // ms", "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "MATCH_NONE");
+  assert.equal(failed.body.details.drift_scan, "done");
+  assert.equal(failed.body.details.near_candidates[0].drift_kind, "token");
+  assert.equal(failed.body.details.near_candidates[0].find_exact, "const timeout = 3000; // ms");
+  assert.ok(failed.body.details.near_candidates[0].score >= 0.7);
+  const findExactHint = failed.body.details.retry_hints.find((hint) => hint.kind === "find-exact");
+  assert.ok(findExactHint);
+  assert.equal(findExactHint.findExact, "const timeout = 3000; // ms");
+  assert.equal(failed.body.details.match_confidence.auto_applied, false);
+  assert.equal(readFileSync(file, "utf8"), original);
+});
+
+test("base edit surfaces multi-line drift candidates with line-range retries", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "save.ts");
+  const original = "function save(value) {\n  return value;\n}\n";
+  writeFileSync(file, original);
+
+  const failed = runFail(["edit", file, "--find", "function save(vals) {\n  return vals;\n}", "--replace", "x", "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "MATCH_NONE");
+  assert.equal(failed.body.details.near_candidates[0].find_lines, "1:3");
+  assert.ok(failed.body.details.near_candidates[0].drift_kind);
+  assert.equal(readFileSync(file, "utf8"), original);
+});
+
+test("base edit exact fallback reports unique high-confidence drift without writing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "save.ts");
+  writeFileSync(file, "function save(value) {\n  return value;\n}\n");
+
+  const failed = runFail(["edit", file, "--find", "function save(value) {\n  return values;\n}", "--replace", "function save(value) {\n  return saved;\n}", "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "MATCH_FUZZY_ONLY");
+  assert.equal(failed.body.details.fuzzy_candidates[0].match_source, "char-drift");
+  assert.equal(failed.body.details.fuzzy_candidates[0].find_lines, "1:3");
+  assert.equal(readFileSync(file, "utf8"), "function save(value) {\n  return value;\n}\n");
+
+  run(["edit", file, "--find-fuzzy", "function save(value) {\n  return values;\n}", "--replace", "function save(value) {\n  return saved;\n}", "--write"]);
+  assert.equal(readFileSync(file, "utf8"), "function save(value) {\n  return saved;\n}\n");
+});
+
+test("base edit fuzzy strategy auto-applies a unique high-confidence drift match", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "totals.ts");
+  writeFileSync(file, "const result = computeTotals(items, opt);\n");
+
+  const result = JSON.parse(run(["edit", file, "--find-fuzzy", "const result = computeTotals(items, opts);", "--replace", "const result = computeTotals(items, options);", "--write", "--json"]));
+
+  assert.equal(result.success, true);
+  assert.equal(result.changed, true);
+  assert.equal(readFileSync(file, "utf8"), "const result = computeTotals(items, options);\n");
+});
+
+test("base edit fuzzy strategy refuses ambiguous drift matches", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "timers.ts");
+  const original = "setTimeout(cb, 1000);\nsetTimeout(cb, 1500);\n";
+  writeFileSync(file, original);
+
+  const failed = runFail(["edit", file, "--find-fuzzy", "setTimeout(cb, 1200);", "--replace", "setTimeout(cb, 2000);", "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "MATCH_NONE");
+  assert.match(failed.body.details.fuzzy_rejection.reason, /ambiguous/);
+  assert.equal(failed.body.details.fuzzy_rejection.candidates.length, 2);
+  assert.equal(readFileSync(file, "utf8"), original);
+});
+
+test("base edit fuzzy strategy refuses low-confidence and short drift matches", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const lowFile = join(dir, "summary.ts");
+  writeFileSync(lowFile, "function computeSummary(report) {\n");
+  const low = runFail(["edit", lowFile, "--find-fuzzy", "function computeSumary(reprot) {", "--replace", "x", "--write"]);
+  assert.equal(low.body.code, "MATCH_NONE");
+  assert.match(low.body.details.fuzzy_rejection.reason, /below auto-apply threshold/);
+  assert.equal(readFileSync(lowFile, "utf8"), "function computeSummary(report) {\n");
+
+  const shortFile = join(dir, "short.ts");
+  writeFileSync(shortFile, "const x = 1;\n");
+  const short = runFail(["edit", shortFile, "--find-fuzzy", "cont x = 1", "--replace", "x", "--write"]);
+  assert.equal(short.body.code, "MATCH_NONE");
+  assert.match(short.body.details.fuzzy_rejection.reason, /too short/);
+
+  const tinyFile = join(dir, "tiny.ts");
+  writeFileSync(tinyFile, "efgh\n");
+  const tiny = runFail(["edit", tinyFile, "--find-fuzzy", "abcd", "--replace", "x", "--write"]);
+  assert.equal(tiny.body.code, "MATCH_NONE");
+  assert.equal(tiny.body.details.drift_scan, "skipped_short_pattern");
+});
+
+test("base edit drift scan skips oversized files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "big.ts");
+  writeFileSync(file, "const alpha = 1;\n".repeat(40000));
+
+  const failed = runFail(["edit", file, "--find", "const beta = 99;", "--replace", "x", "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "MATCH_NONE");
+  assert.equal(failed.body.details.drift_scan, "skipped_large_file");
+});
+
 test("base edit anchor strategy inserts relative to a section marker", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const file = join(dir, "handlers.txt");

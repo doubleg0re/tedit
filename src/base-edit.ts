@@ -100,10 +100,11 @@ type RawMatch = {
 };
 
 type RecoveryHint = {
-  kind: "find-fuzzy" | "find-lines" | "replace-all";
+  kind: "find-fuzzy" | "find-lines" | "find-exact" | "replace-all";
   description: string;
   findFuzzy?: string;
   findLines?: string;
+  findExact?: string;
   replaceAll?: boolean;
   expectCount?: number;
   mutation?: Record<string, unknown>;
@@ -117,6 +118,40 @@ type NearTextCandidate = {
   distance: number;
   preview: string;
   context: string;
+  drift_kind?: DriftKind;
+  actual_text?: string;
+  find_exact?: string;
+};
+
+// char-drift 스캔은 결정적이어야 한다(타이머 금지) — 예산은 DP 셀 카운트로만 제한.
+const DRIFT_MIN_PATTERN_CHARS = 8;
+const DRIFT_MAX_PATTERN_CHARS = 2_000;
+const DRIFT_MAX_SOURCE_BYTES = 524_288;
+const DRIFT_CANDIDATE_MIN_SCORE = 0.7;
+const DRIFT_AUTO_APPLY_MIN_SCORE = 0.95;
+const DRIFT_AUTO_APPLY_MIN_PATTERN = 16;
+const DRIFT_AUTO_APPLY_MARGIN = 0.12;
+const DRIFT_MAX_CANDIDATES = 3;
+const DRIFT_SCAN_CELL_BUDGET = 20_000_000;
+
+type DriftKind = "whitespace" | "case" | "token";
+
+type DriftScanStatus = "done" | "skipped_short_pattern" | "skipped_long_pattern" | "skipped_large_file" | "budget_exhausted";
+
+type DriftCandidate = {
+  start: number;
+  end: number;
+  score: number;
+  distance: number;
+  driftKind: DriftKind;
+};
+
+type FuzzyFindResult = {
+  matches: RawMatch[];
+  driftMatch?: DriftCandidate;
+  driftCandidates?: DriftCandidate[];
+  rejection?: string;
+  scan?: DriftScanStatus;
 };
 
 export function planBaseEdit(options: BaseEditOptions): BaseEditPlan {
@@ -195,15 +230,29 @@ function validateOptions(options: BaseEditOptions): void {
 }
 
 function failNoMatch(options: BaseEditOptions): never {
+  let fuzzyDetail: FuzzyFindResult | undefined;
   if (options.strategy.kind === "exact" && options.strategy.autoFuzzy !== false) {
-    const fuzzyMatches = findRawMatches(options.source, { kind: "fuzzy", pattern: options.strategy.pattern });
+    fuzzyDetail = findFuzzyDetailed(options.source, options.strategy.pattern);
+    const fuzzyMatches = fuzzyDetail.matches;
     if (fuzzyMatches.length === 1) {
+      const driftMatch = fuzzyDetail.driftMatch;
       const retryHints = fuzzyOnlyRetryHints(options, fuzzyMatches);
-      fail("MATCH_FUZZY_ONLY", "Exact match failed, but one whitespace-insensitive match is available.", {
+      const fuzzyCandidates = fuzzyCandidateHints(options.source, options.strategy.pattern, fuzzyMatches);
+      if (driftMatch) {
+        for (const candidate of fuzzyCandidates) {
+          candidate.match_source = "char-drift";
+          candidate.score = Number(driftMatch.score.toFixed(3));
+          candidate.distance = driftMatch.distance;
+          candidate.drift_kind = driftMatch.driftKind;
+        }
+      }
+      fail("MATCH_FUZZY_ONLY", driftMatch
+        ? "Exact match failed, but one high-confidence fuzzy match with small character drift is available."
+        : "Exact match failed, but one whitespace-insensitive match is available.", {
         tried_strategy: describeStrategy(options.strategy),
-        fuzzy_strategy: { kind: "fuzzy", ignoreWhitespace: true },
+        fuzzy_strategy: driftMatch ? { kind: "fuzzy", ignoreWhitespace: true, charDrift: true } : { kind: "fuzzy", ignoreWhitespace: true },
         matches: summarizeMatches(options.source, fuzzyMatches),
-        fuzzy_candidates: fuzzyCandidateHints(options.source, options.strategy.pattern, fuzzyMatches),
+        fuzzy_candidates: fuzzyCandidates,
         retry_hints: retryHints,
         suggestions: [
           "Retry with findFuzzy (CLI: --find-fuzzy) to accept a whitespace-insensitive match.",
@@ -228,13 +277,34 @@ function failNoMatch(options: BaseEditOptions): never {
     }
   }
 
-  const nearCandidates = noMatchNearCandidates(options);
+  const driftDetail = options.strategy.kind === "fuzzy"
+    ? findFuzzyDetailed(options.source, options.strategy.pattern)
+    : fuzzyDetail;
+  const driftNear = (driftDetail?.driftCandidates ?? [])
+    .slice(0, DRIFT_MAX_CANDIDATES)
+    .map((candidate) => driftNearCandidate(options.source, candidate));
+  const nearCandidates = mergeNearCandidates(driftNear, noMatchNearCandidates(options));
   const retryHints = nearCandidateRetryHints(options, nearCandidates);
+  const exactHint = driftNear.length > 0 ? driftFindExactHint(options, driftNear[0]) : undefined;
+  if (exactHint) retryHints.push(exactHint);
+  const bestDrift = driftDetail?.driftCandidates?.[0];
   fail("MATCH_NONE", "No match found.", {
     tried_strategy: describeStrategy(options.strategy),
     matches: [],
     ...(nearCandidates.length > 0 ? { near_candidates: nearCandidates } : {}),
     ...(retryHints.length > 0 ? { retry_hints: retryHints, recovery_suggestions: recoveryNext(retryHints) } : {}),
+    ...(driftDetail?.scan ? {
+      drift_scan: driftDetail.scan,
+      match_confidence: {
+        ...(bestDrift ? { best_score: Number(bestDrift.score.toFixed(3)) } : {}),
+        auto_apply_threshold: DRIFT_AUTO_APPLY_MIN_SCORE,
+        auto_applied: false,
+        ...(driftDetail.rejection ? { reason: driftDetail.rejection } : {}),
+      },
+    } : {}),
+    ...(options.strategy.kind === "fuzzy" && driftDetail?.rejection
+      ? { fuzzy_rejection: { reason: driftDetail.rejection, candidates: driftNear } }
+      : {}),
     suggestions: noMatchSuggestions(nearCandidates.length),
     next_step_hint: nearCandidates.length > 0
       ? "Inspect the near candidates, then retry with findLines (CLI: --find-lines) or correct the find text."
@@ -362,16 +432,174 @@ function findExact(source: string, pattern: string): RawMatch[] {
 }
 
 function findFuzzy(source: string, pattern: string): RawMatch[] {
+  return findFuzzyDetailed(source, pattern).matches;
+}
+
+function findFuzzyDetailed(source: string, pattern: string): FuzzyFindResult {
   const normalizedPattern = normalizeWhitespace(pattern, true);
   if (normalizedPattern.text.length === 0) fail("INVALID_BASE_EDIT", "Fuzzy find pattern cannot be empty.");
 
   const normalizedSource = normalizeWhitespace(source, false);
   const matches = fuzzyNormalizedMatches(normalizedSource, normalizedPattern.text);
-  if (matches.length > 0) return matches;
+  if (matches.length > 0) return { matches };
 
   const compactPattern = normalizeNoWhitespace(pattern);
   if (compactPattern.text.length === 0) fail("INVALID_BASE_EDIT", "Fuzzy find pattern cannot be empty.");
-  return fuzzyNormalizedMatches(normalizeNoWhitespace(source), compactPattern.text);
+  const compactMatches = fuzzyNormalizedMatches(normalizeNoWhitespace(source), compactPattern.text);
+  if (compactMatches.length > 0) return { matches: compactMatches };
+
+  const drift = driftCandidateMatches(source, pattern);
+  const gate = evaluateDriftGate(drift.candidates, normalizedPattern.text.length);
+  if (gate.match) {
+    return { matches: [{ start: gate.match.start, end: gate.match.end }], driftMatch: gate.match, scan: drift.scan };
+  }
+  return { matches: [], driftCandidates: drift.candidates, rejection: gate.rejection, scan: drift.scan };
+}
+
+// 자동 적용은 유일·고신뢰·충분한 길이·차순위 격차가 전부 충족될 때만 — 그 외에는 보고만 한다.
+function evaluateDriftGate(candidates: DriftCandidate[], patternLength: number): { match?: DriftCandidate; rejection?: string } {
+  const [best, second] = candidates;
+  if (!best) return {};
+  if (patternLength < DRIFT_AUTO_APPLY_MIN_PATTERN) {
+    return { rejection: `pattern too short (${patternLength} < ${DRIFT_AUTO_APPLY_MIN_PATTERN} normalized chars) for char-drift auto-apply` };
+  }
+  if (second && second.score >= DRIFT_CANDIDATE_MIN_SCORE && best.score - second.score < DRIFT_AUTO_APPLY_MARGIN) {
+    return { rejection: `ambiguous: top candidates score ${best.score.toFixed(3)} and ${second.score.toFixed(3)} within ${DRIFT_AUTO_APPLY_MARGIN} margin - refusing to write` };
+  }
+  if (best.score < DRIFT_AUTO_APPLY_MIN_SCORE) {
+    return { rejection: `best score ${best.score.toFixed(3)} below auto-apply threshold ${DRIFT_AUTO_APPLY_MIN_SCORE}` };
+  }
+  return { match: best };
+}
+
+function driftCandidateMatches(source: string, pattern: string): { candidates: DriftCandidate[]; scan: DriftScanStatus } {
+  if (source.length > DRIFT_MAX_SOURCE_BYTES) return { candidates: [], scan: "skipped_large_file" };
+  const normalizedPattern = normalizeWhitespace(pattern, true);
+  const patternText = normalizedPattern.text;
+  if (patternText.length < DRIFT_MIN_PATTERN_CHARS) return { candidates: [], scan: "skipped_short_pattern" };
+  if (patternText.length > DRIFT_MAX_PATTERN_CHARS) return { candidates: [], scan: "skipped_long_pattern" };
+
+  const normalizedSource = normalizeWhitespace(source, false);
+  const text = normalizedSource.text;
+  const patternLength = patternText.length;
+  const maxDistance = Math.max(2, Math.ceil(patternLength * 0.3));
+  const firstChar = patternText[0];
+  const budget = { cells: 0 };
+  const collected: DriftCandidate[] = [];
+
+  for (let anchor = 0; anchor < text.length; anchor++) {
+    if (anchor > 0 && text[anchor - 1] !== " ") continue;
+    if (text[anchor] === " ") continue;
+    if (text[anchor] !== firstChar && text[anchor + 1] !== firstChar) continue;
+    const window = text.slice(anchor, anchor + patternLength + maxDistance);
+    if (window.length < Math.max(1, patternLength - maxDistance)) break;
+    const bestPrefix = prefixEditDistance(patternText, window, maxDistance, budget);
+    if (budget.cells > DRIFT_SCAN_CELL_BUDGET) {
+      return { candidates: rankDriftCandidates(collected), scan: "budget_exhausted" };
+    }
+    if (!bestPrefix || bestPrefix.matchedLength === 0) continue;
+    const score = similarityScore(bestPrefix.distance, patternLength, bestPrefix.matchedLength);
+    if (score < DRIFT_CANDIDATE_MIN_SCORE) continue;
+    collected.push({
+      start: normalizedSource.starts[anchor],
+      end: normalizedSource.ends[anchor + bestPrefix.matchedLength - 1],
+      score,
+      distance: bestPrefix.distance,
+      driftKind: classifyDrift(patternText, text.slice(anchor, anchor + bestPrefix.matchedLength)),
+    });
+  }
+  return { candidates: rankDriftCandidates(collected), scan: "done" };
+}
+
+// banded Levenshtein prefix-search: pattern 전체 vs window의 임의 prefix 중 최소 거리.
+function prefixEditDistance(pattern: string, window: string, maxDistance: number, budget: { cells: number }): { distance: number; matchedLength: number } | undefined {
+  const m = pattern.length;
+  const n = Math.min(window.length, m + maxDistance);
+  const infinity = maxDistance + 1;
+  let previous = new Array<number>(n + 1).fill(infinity);
+  let current = new Array<number>(n + 1).fill(infinity);
+  for (let j = 0; j <= Math.min(n, maxDistance); j++) previous[j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    const from = Math.max(0, i - maxDistance);
+    const to = Math.min(n, i + maxDistance);
+    budget.cells += to - from + 1;
+    if (budget.cells > DRIFT_SCAN_CELL_BUDGET) return undefined;
+    current.fill(infinity);
+    if (from === 0) current[0] = i;
+    let rowMin = current[0] ?? infinity;
+    for (let j = Math.max(1, from); j <= to; j++) {
+      const substitution = previous[j - 1] + (pattern[i - 1] === window[j - 1] ? 0 : 1);
+      const value = Math.min(substitution, previous[j] + 1, current[j - 1] + 1);
+      current[j] = value;
+      if (value < rowMin) rowMin = value;
+    }
+    if (rowMin > maxDistance) return undefined;
+    [previous, current] = [current, previous];
+  }
+
+  let best: { distance: number; matchedLength: number } | undefined;
+  for (let j = 0; j <= n; j++) {
+    const distance = previous[j];
+    if (distance > maxDistance) continue;
+    if (!best || distance < best.distance || (distance === best.distance && Math.abs(j - m) < Math.abs(best.matchedLength - m))) {
+      best = { distance, matchedLength: j };
+    }
+  }
+  return best;
+}
+
+function classifyDrift(patternNormalized: string, actualNormalized: string): DriftKind {
+  const patternCompact = patternNormalized.replace(/ /g, "");
+  const actualCompact = actualNormalized.replace(/ /g, "");
+  if (patternCompact === actualCompact) return "whitespace";
+  if (patternCompact.toLowerCase() === actualCompact.toLowerCase()) return "case";
+  return "token";
+}
+
+function rankDriftCandidates(candidates: DriftCandidate[]): DriftCandidate[] {
+  const sorted = [...candidates].sort((a, b) => b.score - a.score || a.distance - b.distance || a.start - b.start);
+  const kept: DriftCandidate[] = [];
+  for (const candidate of sorted) {
+    if (kept.some((existing) => candidate.start < existing.end && existing.start < candidate.end)) continue;
+    kept.push(candidate);
+    if (kept.length >= DRIFT_MAX_CANDIDATES + 1) break;
+  }
+  return kept;
+}
+
+function driftNearCandidate(source: string, candidate: DriftCandidate): NearTextCandidate {
+  const start = offsetToLineColumn(source, candidate.start);
+  const end = offsetToLineColumn(source, Math.max(candidate.start, candidate.end - 1));
+  const lineRange = start.line === end.line ? String(start.line) : `${start.line}:${end.line}`;
+  const actual = source.slice(candidate.start, candidate.end);
+  return {
+    line_range: lineRange,
+    find_lines: lineRange,
+    score: Number(candidate.score.toFixed(3)),
+    distance: candidate.distance,
+    preview: previewForSpan(source, candidate.start, candidate.end),
+    context: contextForLine(source, start.line),
+    drift_kind: candidate.driftKind,
+    actual_text: actual.length <= 200 ? actual : actual.slice(0, 200),
+    ...(actual.length <= 200 ? { find_exact: actual } : {}),
+  };
+}
+
+function mergeNearCandidates(driftCandidates: NearTextCandidate[], lineCandidates: NearTextCandidate[]): NearTextCandidate[] {
+  const seen = new Set(driftCandidates.map((candidate) => candidate.find_lines));
+  return [...driftCandidates, ...lineCandidates.filter((candidate) => !seen.has(candidate.find_lines))].slice(0, DRIFT_MAX_CANDIDATES + 1);
+}
+
+function driftFindExactHint(options: BaseEditOptions, candidate: NearTextCandidate): RecoveryHint | undefined {
+  if (!candidate.find_exact) return undefined;
+  return {
+    kind: "find-exact",
+    description: "Retry with findExact=" + jsonHint(candidate.find_exact) + " (CLI: --find " + jsonHint(candidate.find_exact) + ") to target the top drift candidate.",
+    findExact: candidate.find_exact,
+    mutation: mutationHint(options.mutation),
+    preview: candidate.preview,
+  };
 }
 
 function fuzzyNormalizedMatches(normalizedSource: { text: string; starts: number[]; ends: number[] }, pattern: string): RawMatch[] {

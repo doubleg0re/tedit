@@ -626,12 +626,20 @@ named backreferences are written as text rather than expanded like JavaScript
 tedit edit styles.css --find-regex '\bred\b' --replace blue --replace-all --expect-count 2 --write
 ```
 
-When exact matching fails, `tedit` tries a whitespace-insensitive fuzzy
-fallback only for diagnostics. A single fuzzy candidate returns
-`MATCH_FUZZY_ONLY` instead of guessing; the JSON error includes structured
-`retry_hints` and top-level `suggestions` such as `--find-fuzzy` or
-`--find-lines` so agents can retry deterministically. Opt in with
-`--find-fuzzy`:
+When exact matching fails, `tedit` tries a fuzzy fallback only for
+diagnostics: first whitespace-insensitive matching, then a confidence-gated
+character-drift scan for small typos (missing characters, transpositions).
+A single fuzzy candidate returns `MATCH_FUZZY_ONLY` instead of guessing; the
+JSON error includes structured `retry_hints` and top-level `suggestions` such
+as `--find-fuzzy` or `--find-lines` so agents can retry deterministically.
+Sub-threshold or ambiguous drift candidates surface as ranked
+`near_candidates` with `find_exact`/`find_lines` retry payloads and an honest
+rejection reason - they are never written automatically.
+
+Explicit `--find-fuzzy` is the only strategy that auto-applies a drift match,
+and only when the candidate is unique, scores at least 0.95, the normalized
+pattern is at least 16 characters, and the runner-up trails by a clear margin.
+Plain `--find` never writes through the fallback. Opt in with `--find-fuzzy`:
 
 ```bash
 tedit edit src/file.ts --find-fuzzy 'const answer = 42;' --replace 'const answer = 43;' --write

@@ -18,7 +18,7 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
     {
       name: "edit",
       title: "Universal Edit",
-      description: "Safer replacement for routine Edit calls: exact, line-range, regex, anchor, or best-effort whitespace-fuzzy edits with git-aware write policy, syntax parse verification, and retry hints. MCP writes by default; pass dryRun:true to preview.",
+      description: "Safer replacement for routine Edit calls: exact, line-range, regex, anchor, or best-effort fuzzy edits (whitespace and confidence-gated small character drift) with git-aware write policy, syntax parse verification, and retry hints. MCP writes by default; pass dryRun:true to preview.",
       category: "edit",
       aliases: ["safe_edit", "base_edit", "edit.replace"],
       bestFor: ["single localized text/code edit", "retryable exact/line match", "line-range or regex replacement"],

@@ -79,7 +79,7 @@ The `actions` response includes an agent workflow guide. The intended loop is:
 - `search` when the target is not certain yet or line context is needed.
 - `select` when a structural JSX/TSX or TS/JS target is available.
 - `mutate` after `select` for one structural target, e.g. JSX props/classes/text/wrap or TS body changes.
-- `edit` for one localized text replacement, insertion, deletion, regex, best-effort whitespace-fuzzy, or line-range change.
+- `edit` for one localized text replacement, insertion, deletion, regex, best-effort fuzzy (whitespace and confidence-gated small drift), or line-range change.
 - `multiedit` after `search` when the same change spans several places or files.
 - `apply_dry_run` when a successful dry-run returns `suggestedActions`; it reapplies the reviewed change by id after source-hash checks.
 - `delete_file` or `rename_file` for one-file cleanup or moves without hand-authoring a patch envelope.
