@@ -4,12 +4,59 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { runMcpTool, toolsForMcpProfile } from "../dist/mcp-tools.js";
+import { toErrorResult } from "../dist/errors.js";
+import { formatAgentResult } from "../dist/output.js";
 
 function readDetailValue(descriptor, extra = {}) {
   const detail = runMcpTool("read_detail", { id: descriptor.id, limitBytes: 50_000, ...extra });
   if (detail.data !== undefined) return detail.data;
   return JSON.parse(detail.text);
 }
+
+test("mcp edit stages an apply_dry_run id on high-confidence fuzzy-only failures", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "banner.ts");
+  const original = 'const banner = {\n  title: "오늘의 랜덤 아티스트 추천을 지금 바로 확인해 보세요",\n};\n';
+  writeFileSync(file, original);
+
+  let error;
+  try {
+    runMcpTool("edit", { file, findExact: "오늘의 럜덤 아티스트 추천을 지금 바로 확인해 보세요", replace: "오늘의 무작위 추천" });
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(error.code, "MATCH_FUZZY_ONLY");
+  assert.equal(readFileSync(file, "utf8"), original);
+  const staged = error.details.staged_apply;
+  assert.equal(staged.tool, "apply_dry_run");
+  assert.match(staged.arguments.id, /^dryrun_/);
+  assert.ok(error.details.recovery_suggestions[0].includes("apply_dry_run"));
+
+  const compactBody = formatAgentResult(toErrorResult(error), {});
+  assert.equal(compactBody.staged_apply.arguments.id, staged.arguments.id);
+  assert.ok(compactBody.suggestions.some((item) => item.includes("apply_dry_run")));
+
+  const applied = runMcpTool("apply_dry_run", { id: staged.arguments.id });
+  assert.equal(applied.ok, true);
+  assert.equal(readFileSync(file, "utf8"), 'const banner = {\n  title: "오늘의 무작위 추천",\n};\n');
+});
+
+test("mcp edit does not stage apply ids for low-confidence no-match failures", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "short.ts");
+  const original = 'const label = "랜딩섹션제목입니다";\n';
+  writeFileSync(file, original);
+
+  let error;
+  try {
+    runMcpTool("edit", { file, findExact: "럜딩섹션제목입니다", replace: "x" });
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(error.code, "MATCH_NONE");
+  assert.equal(error.details.staged_apply, undefined);
+  assert.equal(readFileSync(file, "utf8"), original);
+});
 
 test("mcp default profile tools share compact agent contracts", () => {
   const workspace = createWorkspace();

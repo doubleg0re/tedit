@@ -200,9 +200,17 @@ function compactErrorResult(record: JsonRecord, files: AgentFileSummary[], optio
   if (typeof record.code === "string") compact.code = record.code;
   if (typeof record.error === "string") compact.error = record.error;
   promoteErrorLocation(compact, record.details);
+  promoteStagedApply(compact, record.details);
   if (options.includeDetails && record.details !== undefined) compact.details = record.details;
   if (suggestions.length > 0) compact.suggestions = suggestions;
   return compact;
+}
+
+// staged_apply는 에러에서 바로 apply_dry_run으로 이어지는 경로라 compact에서도 숨기지 않는다.
+function promoteStagedApply(compact: JsonRecord, details: unknown): void {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return;
+  const staged = (details as JsonRecord).staged_apply;
+  if (staged && typeof staged === "object" && !Array.isArray(staged)) compact.staged_apply = staged;
 }
 
 const ERROR_LOCATION_KEYS = ["file", "edit", "parser", "parser_error", "line", "snippet"];

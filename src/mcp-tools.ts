@@ -18,7 +18,7 @@ import { historyTrace } from "./history-tools.js";
 import { runTsEdit as runTsEditEngine, runTsMove as runTsMoveEngine, runTsRename as runTsRenameEngine, runTsSelect } from "./ts-tools.js";
 import { unifiedDiff } from "./diff.js";
 import { runBaseEditOperation } from "./edit-engine.js";
-import { fail } from "./errors.js";
+import { fail, TeditError } from "./errors.js";
 import { formatAgentResult, outputOptionsFromRecord, readDetailArtifact } from "./output.js";
 import { parseMultieditInput, runMultiedit, runMultieditInput } from "./multiedit.js";
 import { parsePatchInput, runPatchInput } from "./patch.js";
@@ -32,7 +32,7 @@ import { runWorkspaceFlow, type WorkspaceFlowOptions, type WorkspaceFlowStep } f
 import { buildScaffoldSource, listTemplates, loadTemplateSpec, parseParams, type ScaffoldSpec } from "./scaffold.js";
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
 import { applyPostVerify, captureRestorePoints, verifySpecFromInput, type RestorePoint } from "./verify-command.js";
-import { attachDryRunApplySuggestion, loadDryRunApply } from "./dry-run-apply.js";
+import { attachDryRunApplySuggestion, loadDryRunApply, stageDryRunApply } from "./dry-run-apply.js";
 import { makeEDIT_TOOLS } from "./mcp/tools/edit.js";
 import { makeGENERATE_TOOLS } from "./mcp/tools/generate.js";
 import { makeDISCOVERY_TOOLS } from "./mcp/tools/discovery.js";
@@ -274,16 +274,47 @@ function runEditTool(args: unknown): unknown {
   const restorePoints = captureRestorePoints([filePath]);
   const expectCountValue = pick(input, "expectCount", "expect-count", "expect_count");
   const expectCount = optionalInteger(expectCountValue, "expectCount");
-  const { result } = runBaseEditOperation({
-    filePath,
-    strategy: resolveEditStrategy(input),
-    mutation: resolveEditMutation(input),
-    replaceAll: booleanValue(pick(input, "replaceAll", "replace-all", "replace_all")),
-    ...(expectCountValue === undefined ? {} : { expectCount }),
-    writeFlags: writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT),
-  });
+  try {
+    const { result } = runBaseEditOperation({
+      filePath,
+      strategy: resolveEditStrategy(input),
+      mutation: resolveEditMutation(input),
+      replaceAll: booleanValue(pick(input, "replaceAll", "replace-all", "replace_all")),
+      ...(expectCountValue === undefined ? {} : { expectCount }),
+      writeFlags: writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT),
+    });
+    return withVerifiedAgentFields(result, input, restorePoints);
+  } catch (error) {
+    throw withStagedFuzzyApply(error, input);
+  }
+}
 
-  return withVerifiedAgentFields(result, input, restorePoints);
+// MATCH_FUZZY_ONLY는 유일·고신뢰 매치라 안전선을 유지한 채 재입력 없는 적용이 가능하다 —
+// fuzzy dryRun을 미리 스테이징해 apply_dry_run 한 콜로 이어지게 한다. 그 외 에러는 손대지 않는다.
+function withStagedFuzzyApply(error: unknown, input: JsonRecord): unknown {
+  if (!(error instanceof TeditError) || error.code !== "MATCH_FUZZY_ONLY") return error;
+  const pattern = pick(input, "find", "findExact", "find-exact", "find_exact");
+  if (typeof pattern !== "string") return error;
+  try {
+    const stagedArgs: JsonRecord = { ...input, findFuzzy: pattern, dryRun: true };
+    for (const key of ["find", "findExact", "find-exact", "find_exact", "write", "dry-run", "dry_run"]) delete stagedArgs[key];
+    const stagedResult = runEditTool(stagedArgs);
+    const id = stageDryRunApply("edit", stagedArgs, stagedResult);
+    if (!id) return error;
+    const baseDetails = error.details && typeof error.details === "object" && !Array.isArray(error.details) ? error.details as JsonRecord : {};
+    const priorRecovery = Array.isArray(baseDetails.recovery_suggestions) ? baseDetails.recovery_suggestions.filter((item): item is string => typeof item === "string") : [];
+    return new TeditError(error.code, error.message, {
+      ...baseDetails,
+      staged_apply: {
+        tool: "apply_dry_run",
+        arguments: { id },
+        description: "Applies the staged high-confidence fuzzy match for this edit without resending arguments.",
+      },
+      recovery_suggestions: ["The fuzzy match is already staged: call apply_dry_run with staged_apply.arguments to apply it in one call.", ...priorRecovery].slice(0, 3),
+    });
+  } catch {
+    return error;
+  }
 }
 
 function runMultieditTool(args: unknown): unknown {

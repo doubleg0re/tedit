@@ -63,6 +63,15 @@ export function attachDryRunApplySuggestion(tool: string, args: unknown, result:
   return result;
 }
 
+export function stageDryRunApply(tool: string, args: JsonRecord, result: unknown): string | undefined {
+  if (!APPLYABLE_TOOLS.has(tool) || !isRecord(result) || !isDryRunMutation(result)) return undefined;
+  try {
+    return writeDryRunArtifact(tool, args, result);
+  } catch {
+    return undefined;
+  }
+}
+
 export function loadDryRunApply(id: string): { tool: string; args: JsonRecord } {
   const artifact = JSON.parse(readFileSync(dryRunPath(id), "utf8")) as DryRunArtifact;
   if (!artifact || typeof artifact !== "object" || !APPLYABLE_TOOLS.has(artifact.tool) || !isRecord(artifact.args) || !Array.isArray(artifact.files)) {

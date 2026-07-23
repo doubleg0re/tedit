@@ -2269,7 +2269,9 @@ test("mcp server lists tools and runs universal edit", async () => {
     });
     assert.equal(fuzzyMiss.isError, true);
     assert.equal(fuzzyMiss.structuredContent.code, "MATCH_FUZZY_ONLY");
-    assert.match(fuzzyMiss.structuredContent.suggestions[0], /--find-fuzzy/);
+    assert.match(fuzzyMiss.structuredContent.suggestions[0], /apply_dry_run/);
+    assert.match(fuzzyMiss.structuredContent.suggestions[1], /--find-fuzzy/);
+    assert.match(fuzzyMiss.structuredContent.staged_apply.arguments.id, /^dryrun_/);
 
     const fuzzyRetry = await client.callTool({
       name: "edit",
