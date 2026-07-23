@@ -58,6 +58,56 @@ test("mcp edit does not stage apply ids for low-confidence no-match failures", (
   assert.equal(readFileSync(file, "utf8"), original);
 });
 
+test("mcp edit reports unrecognized keys and supports retryFrom with renameKeys", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "label.ts");
+  writeFileSync(file, 'const label = "hello";\n');
+
+  let error;
+  try {
+    runMcpTool("edit", { file, stringA: 'const label = "hello";', replace: 'const label = "world";' });
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(error.code, "INVALID_MCP_INPUT");
+  assert.deepEqual(error.details.unrecognized_keys, ["stringA"]);
+  assert.match(error.details.retry_ref.id, /^args_/);
+  assert.ok(error.details.recovery_suggestions.some((item) => item.includes("renameKeys")));
+
+  const applied = runMcpTool("edit", { file, retryFrom: error.details.retry_ref.id, renameKeys: { stringA: "findExact" } });
+  assert.equal(applied.ok, true);
+  assert.equal(readFileSync(file, "utf8"), 'const label = "world";\n');
+});
+
+test("mcp edit retryFrom merges stored args with newly supplied fields", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "label.ts");
+  writeFileSync(file, 'const label = "hello";\n');
+
+  let error;
+  try {
+    runMcpTool("edit", { file, findExact: 'const label = "hello";' });
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(error.code, "INVALID_MCP_INPUT");
+  assert.match(error.details.retry_ref.id, /^args_/);
+
+  const applied = runMcpTool("edit", { file, retryFrom: error.details.retry_ref.id, replace: 'const label = "merged";' });
+  assert.equal(applied.ok, true);
+  assert.equal(readFileSync(file, "utf8"), 'const label = "merged";\n');
+});
+
+test("mcp edit accepts native-edit style old_string/new_string aliases", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "label.ts");
+  writeFileSync(file, 'const label = "hello";\n');
+
+  const result = runMcpTool("edit", { file, old_string: 'const label = "hello";', new_string: 'const label = "aliased";' });
+  assert.equal(result.ok, true);
+  assert.equal(readFileSync(file, "utf8"), 'const label = "aliased";\n');
+});
+
 test("mcp default profile tools share compact agent contracts", () => {
   const workspace = createWorkspace();
   const defaultTools = toolsForMcpProfile("agent").map((tool) => tool.name).sort();

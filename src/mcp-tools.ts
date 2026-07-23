@@ -33,6 +33,7 @@ import { buildScaffoldSource, listTemplates, loadTemplateSpec, parseParams, type
 import { maybeWriteBackup, resolveWritePolicy, writePolicyReport, type BackupResult } from "./write-policy.js";
 import { applyPostVerify, captureRestorePoints, verifySpecFromInput, type RestorePoint } from "./verify-command.js";
 import { attachDryRunApplySuggestion, loadDryRunApply, stageDryRunApply } from "./dry-run-apply.js";
+import { loadRetryArgs, storeRetryArgs } from "./retry-args.js";
 import { makeEDIT_TOOLS } from "./mcp/tools/edit.js";
 import { makeGENERATE_TOOLS } from "./mcp/tools/generate.js";
 import { makeDISCOVERY_TOOLS } from "./mcp/tools/discovery.js";
@@ -250,7 +251,7 @@ function runWholeFileTool(input: JsonRecord, label: string, kind: string, source
 }
 
 function runEditTool(args: unknown): unknown {
-  const input = recordInput(args, "edit");
+  const input = resolveRetryInput(recordInput(args, "edit"), "edit");
   const filePath = requiredString(input.file, "edit requires file.");
   const restorePoints = captureRestorePoints([filePath]);
   const expectCountValue = pick(input, "expectCount", "expect-count", "expect_count");
@@ -266,7 +267,81 @@ function runEditTool(args: unknown): unknown {
     });
     return withVerifiedAgentFields(result, input, restorePoints);
   } catch (error) {
-    throw withStagedFuzzyApply(error, input);
+    throw withRetryGuidance(withStagedFuzzyApply(error, input), input, "edit");
+  }
+}
+
+const RETRY_INPUT_KEYS = ["retryFrom", "retry-from", "retry_from", "renameKeys", "rename-keys", "rename_keys"];
+const EDIT_STRATEGY_KEYS = [
+  "find",
+  "findExact", "find-exact", "find_exact",
+  "findFuzzy", "find-fuzzy", "find_fuzzy",
+  "findRegex", "find-regex", "find_regex",
+  "findLines", "find-lines", "find_lines",
+  "findAnchorAfter", "find-anchor-after", "find_anchor_after",
+];
+// 스키마 밖 키지만 핸들러가 받아주는 alias는 unrecognized 판정에서 제외해야 한다.
+const EDIT_INPUT_ALIAS_KEYS = [
+  "old_string", "oldString", "old-string", "oldText", "old_text", "original",
+  "new_string", "newString", "new-string", "newText", "new_text", "replacement",
+  ...RETRY_INPUT_KEYS,
+];
+
+// retryFrom은 저장된 실패 콜 args를 재사용하고, renameKeys로 잘못 보낸 키를 옮긴 뒤, 이번 콜 필드로 덮어쓴다.
+function resolveRetryInput(input: JsonRecord, tool: string): JsonRecord {
+  const retryFrom = pick(input, "retryFrom", "retry-from", "retry_from");
+  if (retryFrom === undefined) return input;
+  const stored = { ...loadRetryArgs(requiredString(retryFrom, "retryFrom must be a string."), tool) };
+  const renameKeys = recordOrUndefined(pick(input, "renameKeys", "rename-keys", "rename_keys"), "renameKeys");
+  if (renameKeys) {
+    for (const [fromKey, toKey] of Object.entries(renameKeys)) {
+      if (typeof toKey !== "string") fail("INVALID_MCP_INPUT", "renameKeys values must be target key names.");
+      if (stored[fromKey] === undefined) continue;
+      stored[toKey] = stored[fromKey];
+      delete stored[fromKey];
+    }
+  }
+  const overrides: JsonRecord = { ...input };
+  for (const key of RETRY_INPUT_KEYS) delete overrides[key];
+  // 이번 콜에 find 전략 키가 오면 저장된 전략 키는 전부 폐기 — 머지로 전략이 2개가 되는 것을 막는다.
+  if (EDIT_STRATEGY_KEYS.some((key) => overrides[key] !== undefined)) {
+    for (const key of EDIT_STRATEGY_KEYS) delete stored[key];
+  }
+  return { ...stored, ...overrides };
+}
+
+function normalizeInputKey(key: string): string {
+  return key.toLowerCase().replace(/[-_]/g, "");
+}
+
+function unrecognizedInputKeys(input: JsonRecord, toolName: string): string[] {
+  const tool = TEDIT_MCP_ALL_TOOLS.find((candidate) => candidate.name === toolName);
+  if (!tool) return [];
+  const known = new Set([...Object.keys(tool.inputSchema), ...EDIT_INPUT_ALIAS_KEYS].map(normalizeInputKey));
+  return Object.keys(input).filter((key) => !known.has(normalizeInputKey(key)));
+}
+
+// 계약 실수 재시도가 값 재전송 없이 끝나도록 실패 콜 args를 저장하고 unrecognized 키와 retryFrom/renameKeys 운용법을 에러에 싣는다.
+function withRetryGuidance(error: unknown, input: JsonRecord, toolName: string): unknown {
+  if (!(error instanceof TeditError)) return error;
+  try {
+    const id = storeRetryArgs(toolName, input);
+    if (!id) return error;
+    const unrecognized = unrecognizedInputKeys(input, toolName);
+    const baseDetails = error.details && typeof error.details === "object" && !Array.isArray(error.details) ? error.details as JsonRecord : {};
+    const priorRecovery = Array.isArray(baseDetails.recovery_suggestions) ? baseDetails.recovery_suggestions.filter((item): item is string => typeof item === "string") : [];
+    const usage = unrecognized.length > 0
+      ? `Unrecognized keys: ${unrecognized.join(", ")}. If one held a real value, retry with { retryFrom: "${id}", renameKeys: { "<wrongKey>": "<correctKey>" } } plus any missing fields - stored values are reused, resent fields override.`
+      : `To retry without resending long values, call again with { retryFrom: "${id}" } plus only the corrected or missing fields.`;
+    const contractError = error.code === "INVALID_MCP_INPUT" || unrecognized.length > 0;
+    return new TeditError(error.code, error.message, {
+      ...baseDetails,
+      ...(unrecognized.length > 0 ? { unrecognized_keys: unrecognized } : {}),
+      retry_ref: { id },
+      recovery_suggestions: (contractError ? [usage, ...priorRecovery] : [...priorRecovery, usage]).slice(0, 3),
+    });
+  } catch {
+    return error;
   }
 }
 
@@ -1590,10 +1665,11 @@ function resolveEditStrategy(input: JsonRecord): BaseFindStrategy {
       contains: requiredString(contains, "edit contains/find must be a string."),
     };
   }
-  if (findExact !== undefined) {
+  const findExactAlias = pick(input, "old_string", "oldString", "old-string", "oldText", "old_text", "original");
+  if (findExact !== undefined || (findExactAlias !== undefined && explicitCount === 0 && find === undefined)) {
     return {
       kind: "exact",
-      pattern: requiredString(findExact, "edit findExact must be a string."),
+      pattern: requiredString(findExact ?? findExactAlias, "edit findExact must be a string."),
       autoFuzzy: !booleanValue(pick(input, "noFuzzyFallback", "no-fuzzy-fallback", "no_fuzzy_fallback")),
     };
   }
@@ -1618,7 +1694,7 @@ function resolveEditStrategy(input: JsonRecord): BaseFindStrategy {
 }
 
 function resolveEditMutation(input: JsonRecord): BaseEditMutation {
-  const replace = pick(input, "replace");
+  const replace = pick(input, "replace", "new_string", "newString", "new-string", "newText", "new_text", "replacement");
   const insertBefore = pick(input, "insertBefore", "insert-before", "insert_before");
   const insertAfter = pick(input, "insertAfter", "insert-after", "insert_after");
   const shouldDelete = booleanValue(input.delete);

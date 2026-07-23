@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod/v4";
 import { TEDIT_MCP_TOOLS } from "./mcp-tools.js";
 import { packageVersion } from "./version.js";
 
@@ -21,7 +22,8 @@ for (const tool of TEDIT_MCP_TOOLS) {
     {
       title: tool.title,
       description: tool.description,
-      inputSchema: tool.inputSchema,
+      // looseObject: unknown 키를 SDK 검증이 strip하면 핸들러가 unrecognized_keys를 보고할 수 없다.
+      inputSchema: z.looseObject(tool.inputSchema),
       ...(tool.annotations ? { annotations: tool.annotations } : {}),
     },
     async (args) => {

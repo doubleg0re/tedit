@@ -2273,6 +2273,16 @@ test("mcp server lists tools and runs universal edit", async () => {
     assert.match(fuzzyMiss.structuredContent.suggestions[1], /--find-fuzzy/);
     assert.match(fuzzyMiss.structuredContent.staged_apply.arguments.id, /^dryrun_/);
 
+    const unknownKeyMiss = await client.callTool({
+      name: "edit",
+      arguments: { file: mcpLoopFile, stringA: "function save( value )", replace: "ignored" },
+    });
+    assert.equal(unknownKeyMiss.isError, true);
+    assert.equal(unknownKeyMiss.structuredContent.code, "INVALID_MCP_INPUT");
+    assert.deepEqual(unknownKeyMiss.structuredContent.unrecognized_keys, ["stringA"]);
+    assert.match(unknownKeyMiss.structuredContent.retry_ref.id, /^args_/);
+    assert.ok(unknownKeyMiss.structuredContent.suggestions.some((item) => item.includes("renameKeys")));
+
     const fuzzyRetry = await client.callTool({
       name: "edit",
       arguments: { file: mcpLoopFile, findFuzzy: "function save( value )", replace: "function save(value)", write: true },

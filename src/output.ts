@@ -206,11 +206,15 @@ function compactErrorResult(record: JsonRecord, files: AgentFileSummary[], optio
   return compact;
 }
 
-// staged_apply는 에러에서 바로 apply_dry_run으로 이어지는 경로라 compact에서도 숨기지 않는다.
+// staged_apply/retry_ref/unrecognized_keys는 에러에서 바로 재시도로 이어지는 경로라 compact에서도 숨기지 않는다.
 function promoteStagedApply(compact: JsonRecord, details: unknown): void {
   if (!details || typeof details !== "object" || Array.isArray(details)) return;
-  const staged = (details as JsonRecord).staged_apply;
-  if (staged && typeof staged === "object" && !Array.isArray(staged)) compact.staged_apply = staged;
+  const record = details as JsonRecord;
+  for (const key of ["staged_apply", "retry_ref"]) {
+    const value = record[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) compact[key] = value;
+  }
+  if (Array.isArray(record.unrecognized_keys) && record.unrecognized_keys.length > 0) compact.unrecognized_keys = record.unrecognized_keys;
 }
 
 const ERROR_LOCATION_KEYS = ["file", "edit", "parser", "parser_error", "line", "snippet"];

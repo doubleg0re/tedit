@@ -24,6 +24,8 @@ export function makeEDIT_TOOLS(deps: any): readonly TeditMcpTool[] {
       bestFor: ["single localized text/code edit", "retryable exact/line match", "line-range or regex replacement"],
       inputSchema: {
         file: fileSchema,
+        retryFrom: z.string().optional().describe("Retry id from a failed call's retry_ref.id. Stored arguments are reused; fields sent in this call override them."),
+        renameKeys: z.record(z.string(), z.string()).optional().describe("With retryFrom: rename stored argument keys before merging, e.g. {\"stringA\": \"findExact\"}. Combinable with override fields in the same call."),
         find: z.string().optional(),
         findExact: z.string().optional(),
         findFuzzy: z.string().optional(),
