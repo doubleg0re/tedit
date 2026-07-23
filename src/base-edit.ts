@@ -489,13 +489,20 @@ function driftCandidateMatches(source: string, pattern: string): { candidates: D
   const patternLength = patternText.length;
   const maxDistance = Math.max(2, Math.ceil(patternLength * 0.3));
   const firstChar = patternText[0];
+  const secondChar = patternText[1];
   const budget = { cells: 0 };
   const collected: DriftCandidate[] = [];
+  // 공백뿐 아니라 따옴표·구두점 뒤도 anchor로 허용 — 문자열 리터럴 안에서 시작하는 패턴이 앞 따옴표를 매치에 끌고 들어가 distance를 부풀리지 않게.
+  const anchorBoundary = /[^\p{L}\p{N}_]/u;
 
   for (let anchor = 0; anchor < text.length; anchor++) {
-    if (anchor > 0 && text[anchor - 1] !== " ") continue;
+    if (anchor > 0 && !anchorBoundary.test(text[anchor - 1])) continue;
     if (text[anchor] === " ") continue;
-    if (text[anchor] !== firstChar && text[anchor + 1] !== firstChar) continue;
+    // 두 번째 글자 정렬도 통과시켜야 첫 글자 오타(치환·삽입·삭제)가 프리필터에서 잘리지 않는다.
+    if (
+      text[anchor] !== firstChar && text[anchor + 1] !== firstChar &&
+      text[anchor] !== secondChar && text[anchor + 1] !== secondChar
+    ) continue;
     const window = text.slice(anchor, anchor + patternLength + maxDistance);
     if (window.length < Math.max(1, patternLength - maxDistance)) break;
     const bestPrefix = prefixEditDistance(patternText, window, maxDistance, budget);

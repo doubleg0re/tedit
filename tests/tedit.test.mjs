@@ -2808,6 +2808,45 @@ test("base edit drift scan skips oversized files", () => {
   assert.equal(failed.body.details.drift_scan, "skipped_large_file");
 });
 
+test("base edit drift scan anchors after quote boundaries for in-string typos", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "banner.ts");
+  const original = 'const banner = {\n  title: "오늘의 랜덤 아티스트 추천을 지금 바로 확인해 보세요",\n};\n';
+  writeFileSync(file, original);
+
+  const failed = runFail(["edit", file, "--find", "오늘의 럜덤 아티스트 추천을 지금 바로 확인해 보세요", "--replace", "x", "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "MATCH_FUZZY_ONLY");
+  assert.equal(failed.body.details.fuzzy_candidates[0].match_source, "char-drift");
+  assert.equal(failed.body.details.fuzzy_candidates[0].distance, 1);
+  assert.equal(readFileSync(file, "utf8"), original);
+});
+
+test("base edit fuzzy strategy auto-applies in-string typo without eating the quote", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "banner.ts");
+  writeFileSync(file, 'const banner = {\n  title: "오늘의 랜덤 아티스트 추천을 지금 바로 확인해 보세요",\n};\n');
+
+  run(["edit", file, "--find-fuzzy", "오늘의 럜덤 아티스트 추천을 지금 바로 확인해 보세요", "--replace", "오늘의 무작위 추천", "--write"]);
+
+  assert.equal(readFileSync(file, "utf8"), 'const banner = {\n  title: "오늘의 무작위 추천",\n};\n');
+});
+
+test("base edit drift scan finds candidates when the typo is in the first character", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-"));
+  const file = join(dir, "config.ts");
+  const original = "const timeout = 3000; // ms\nconst retries = 5;\n";
+  writeFileSync(file, original);
+
+  const failed = runFail(["edit", file, "--find", "konst timeout = 3000; // ms", "--replace", "x", "--write"]);
+
+  assert.equal(failed.status, 1);
+  assert.equal(failed.body.code, "MATCH_FUZZY_ONLY");
+  assert.equal(failed.body.details.fuzzy_candidates[0].match_source, "char-drift");
+  assert.equal(readFileSync(file, "utf8"), original);
+});
+
 test("base edit parse-verifies mjs cjs mts module files", () => {
   const dir = mkdtempSync(join(tmpdir(), "tedit-"));
   const mjsFile = join(dir, "mod.mjs");
