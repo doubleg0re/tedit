@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { parse } from "@babel/parser";
 import traverseModule, { type NodePath, type TraverseOptions } from "@babel/traverse";
 import * as t from "@babel/types";
@@ -182,7 +182,7 @@ function applyMoveSymbols(options: MoveSymbolsOptions, mode: { write: boolean; d
 
   const nextSource = applyPatches(source, patches);
   const targetAdd = [
-    ...externalImportLines(model, importNames),
+    ...externalImportLines(model, importNames, options.from, options.to),
     ...(localDeps.length > 0 ? [`import { ${localDeps.sort().join(", ")} } from "${moduleSpecifier(options.to, options.from)}";`] : []),
     "",
     ...moved.map((symbol) => ensureExport(source.slice(symbol.range.start, symbol.range.end))),
@@ -231,7 +231,7 @@ function applyExtractArrayEntries(options: ExtractArrayEntriesOptions, mode: { w
 
   const entriesSource = selected.map((element) => normalizeEntryIndent(source, source.slice(nodeStart(element.node), nodeEnd(element.node)), element.node, "    ")).join(",\n");
   const targetAdd = [
-    ...externalImportLines(model, importNames),
+    ...externalImportLines(model, importNames, options.file, options.to),
     ...(localTypeDeps.length > 0 ? [`import type { ${localTypeDeps.join(", ")} } from "${moduleSpecifier(options.to, options.file)}";`] : []),
     "",
     ...(localValueDeps.length > 0 ? ["// ponytail: explicit any avoids runtime imports from the source module; tighten when dependency typing matters."] : []),
@@ -445,7 +445,15 @@ function assertContiguous(all: NodePath<t.Node>[], selected: NodePath<t.Node>[])
   for (let index = 1; index < indexes.length; index++) if (indexes[index] !== indexes[index - 1] + 1) fail("NON_CONTIGUOUS_ARRAY_ENTRIES", "extract_array_entries currently requires matched entries to be contiguous.");
 }
 
-function externalImportLines(model: Model, names: string[]): string[] {
+// 상대 import는 이동 대상 파일 디렉토리 기준으로 재계산해야 한다 — 원본 기준 경로를 그대로 옮기면 다른 디렉토리에서 깨진다.
+function rebaseImportSource(source: string, fromFile: string, toFile: string): string {
+  if (!source.startsWith(".")) return source;
+  const resolved = join(dirname(fromFile), source);
+  const rebased = relative(dirname(toFile), resolved).split(sep).join("/");
+  return rebased.startsWith(".") ? rebased : `./${rebased}`;
+}
+
+function externalImportLines(model: Model, names: string[], fromFile: string, toFile: string): string[] {
   const grouped = new Map<ImportInfo, string[]>();
   for (const name of names) {
     const info = model.importsByLocal.get(name);
@@ -455,14 +463,16 @@ function externalImportLines(model: Model, names: string[]): string[] {
     grouped.set(info, group);
   }
   return [...grouped.entries()].flatMap(([info, locals]) => {
-    if (locals.length === info.specifiers.length) return [info.code];
+    const source = rebaseImportSource(info.source, fromFile, toFile);
+    const verbatim = source === info.source ? info.code : info.code.replace(`"${info.source}"`, `"${source}"`).replace(`'${info.source}'`, `'${source}'`);
+    if (locals.length === info.specifiers.length) return [verbatim];
     const selected = locals.map((local) => info.specifiers.find((specifier) => specifier.local === local)).filter((specifier): specifier is ImportInfo["specifiers"][number] => Boolean(specifier));
-    if (selected.some((specifier) => !specifier.named)) return [info.code];
+    if (selected.some((specifier) => !specifier.named)) return [verbatim];
     const typeOnly = selected.filter((specifier) => info.importKind === "type" || specifier.importKind === "type");
     const values = selected.filter((specifier) => info.importKind !== "type" && specifier.importKind !== "type");
     return [
-      ...(values.length > 0 ? [`import { ${values.map(importClause).sort().join(", ")} } from "${info.source}";`] : []),
-      ...(typeOnly.length > 0 ? [`import type { ${typeOnly.map(importClause).sort().join(", ")} } from "${info.source}";`] : []),
+      ...(values.length > 0 ? [`import { ${values.map(importClause).sort().join(", ")} } from "${source}";`] : []),
+      ...(typeOnly.length > 0 ? [`import type { ${typeOnly.map(importClause).sort().join(", ")} } from "${source}";`] : []),
     ];
   });
 }

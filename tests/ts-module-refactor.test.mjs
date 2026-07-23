@@ -88,6 +88,37 @@ test("move_symbols preserves mixed value/type imports on partial import repair",
   assert.match(targetDiff, /import type \{ ToolSpec \} from "\.\/parser\.js"/);
 });
 
+test("move_symbols rebases relative imports when target lives in another directory", () => {
+  const dir = workspace("tedit-ts-move-rebase-");
+  const from = join(dir, "mcp-tools.ts");
+  const to = join(dir, "mcp", "handlers.ts");
+  writeFileSync(from, [
+    "import { parse } from \"./parser.js\";",
+    "import { helperA, helperB } from \"./util.js\";",
+    "",
+    "const LOCAL_PREFIX = \"tool\";",
+    "",
+    "export function runEditTool() {",
+    "  return parse(helperA(LOCAL_PREFIX + \":edit\"));",
+    "}",
+    "",
+    "export function runOtherTool() {",
+    "  return helperB(LOCAL_PREFIX);",
+    "}",
+    "",
+    "export const registry = [runEditTool, runOtherTool];",
+    "",
+  ].join("\n"));
+
+  const result = runMoveSymbols({ from, to, symbols: ["runEditTool"], dryRun: true, noBackup: true });
+  const targetDiff = result.files.find((file) => file.file === to).diff;
+  assert.match(targetDiff, /import \{ parse \} from "\.\.\/parser\.js"/);
+  assert.match(targetDiff, /import \{ helperA \} from "\.\.\/util\.js"/);
+  assert.match(targetDiff, /import \{ LOCAL_PREFIX \} from "\.\.\/mcp-tools\.js"/);
+  const sourceDiff = result.files.find((file) => file.file === from).diff;
+  assert.match(sourceDiff, /import \{ runEditTool \} from "\.\/mcp\/handlers\.js"/);
+});
+
 test("move_symbols dry-run splits a top-level symbol with import/export repair", () => {
   const dir = workspace("tedit-ts-move-symbols-");
   const from = join(dir, "mcp-tools.ts");
