@@ -1,6 +1,6 @@
 {
   "name": "tedit-tools",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Structure-aware JSX/TSX editing for coding agents.",
   "license": "MIT",
   "type": "module",
