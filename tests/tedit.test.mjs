@@ -1979,6 +1979,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "search",
       "select",
       "verify_file",
+      "version",
     ].sort());
     assert.ok(tools.tools.some((tool) => tool.name === "edit"));
     assert.ok(tools.tools.some((tool) => tool.name === "select"));
@@ -2099,6 +2100,7 @@ test("mcp server lists tools and runs universal edit", async () => {
       "search",
       "select",
       "verify_file",
+      "version",
     ].sort());
     assert.ok(actionsDiscovery.structuredContent.profiles.agent.includes("mutate"));
     assert.ok(actionsDiscovery.structuredContent.profiles.agent.includes("apply_dry_run"));

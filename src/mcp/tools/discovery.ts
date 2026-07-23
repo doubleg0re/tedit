@@ -3,8 +3,21 @@ import type { TeditMcpTool } from "../../mcp-tools.js";
 
 // ponytail: explicit any avoids runtime imports from the source module; tighten when dependency typing matters.
 export function makeDISCOVERY_TOOLS(deps: any): readonly TeditMcpTool[] {
-  const { detailFlagSchema, fileSchema, runActionsTool, runHistoryTraceTool, runInspectRangeTool, runReadDetailTool, runScanStringsTool, runSearchTextTool, runSearchTool, runSelectTool, runTemplatesTool } = deps;
+  const { detailFlagSchema, fileSchema, runActionsTool, runHistoryTraceTool, runInspectRangeTool, runReadDetailTool, runScanStringsTool, runSearchTextTool, runSearchTool, runSelectTool, runTemplatesTool, runVersionTool } = deps;
   return [
+    {
+      name: "version",
+      title: "Version",
+      description: "Report the loaded tedit version, MCP profile, node runtime, and package root. Use to confirm which install the MCP server is running after an upgrade.",
+      category: "discover",
+      aliases: ["about", "server_version"],
+      bestFor: ["checking the loaded tedit version", "diagnosing stale MCP server installs"],
+      inputSchema: {
+        ...detailFlagSchema,
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      handler: runVersionTool,
+    },
     {
       name: "actions",
       title: "Actions",

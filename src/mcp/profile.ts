@@ -18,6 +18,7 @@ const AGENT_MCP_TOOL_NAMES = new Set([
   "read_detail",
   "verify_file",
   "refactor",
+  "version",
 ]);
 
 export function teditMcpProfileFromEnv(env: NodeJS.ProcessEnv = process.env): TeditMcpProfile {

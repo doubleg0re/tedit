@@ -24,6 +24,7 @@ import { parseMultieditInput, runMultiedit, runMultieditInput } from "./multiedi
 import { parsePatchInput, runPatchInput } from "./patch.js";
 import { analyzeState, qualityWarnings } from "./quality.js";
 import { runRefactorState } from "./refactor-state.js";
+import { packageRoot, packageVersion } from "./version.js";
 import { applyRefactorPlan, buildExtractComponentPlan, buildRefactorStatePlan, writePlanFile } from "./refactor-plan.js";
 import { buildModuleSplitPlan, buildTsModuleGraph, runExtractArrayEntries, runMoveSymbols, type ExtractArrayEntriesOperation, type MoveSymbolsOperation } from "./ts-module-refactor.js";
 import type { ExtractOptions, HelperPolicy } from "./extract.js";
@@ -158,7 +159,7 @@ const elementSchema = z.unknown().describe("Element shorthand string or tree nod
 export const TEDIT_MCP_ALL_TOOLS: readonly TeditMcpTool[] = [
   ...makeEDIT_TOOLS({ fileSchema, runApplyDryRunTool, runDeleteFileTool, runEditTool, runFlowTool, runMultieditTool, runMutateTool, runPatchTool, runRenameFileTool, writeFlagSchema }),
   ...makeGENERATE_TOOLS({ fileSchema, runCreateFileTool, runFileWriteTool, runNewFileTool, runScaffoldFileTool, runWriteFileTool, writeFlagSchema }),
-  ...makeDISCOVERY_TOOLS({ detailFlagSchema, fileSchema, runActionsTool, runHistoryTraceTool, runInspectRangeTool, runReadDetailTool, runScanStringsTool, runSearchTextTool, runSearchTool, runSelectTool, runTemplatesTool }),
+  ...makeDISCOVERY_TOOLS({ detailFlagSchema, fileSchema, runActionsTool, runHistoryTraceTool, runInspectRangeTool, runReadDetailTool, runScanStringsTool, runSearchTextTool, runSearchTool, runSelectTool, runTemplatesTool, runVersionTool }),
   ...makeAST_TOOLS({ detailFlagSchema, fileSchema, runAstEditTool, runAstSelectTool, runTsEditTool, runTsMoveTool, runTsSelectTool, writeFlagSchema }),
   ...makeREFACTOR_TOOLS({ fileSchema, runAnalyzeStateTool, runRefactorTool, selectorSchema, writeFlagSchema }),
   ...makeVERIFY_TOOLS({ fileSchema, runVerifyFileTool }),
@@ -546,6 +547,21 @@ function runRenameFileTool(args: unknown): unknown {
   return withVerifiedAgentFields(runPatchInput(`*** Begin Patch\n*** Update File: ${filePath}\n*** Move to: ${to}\n*** End Patch\n`, writeFlagsFromInput(input)), input, restorePoints);
 }
 
+function runVersionTool(args: unknown): unknown {
+  const input = optionalRecordInput(args, "version");
+  const profile = teditMcpProfileFromEnv();
+  const version = packageVersion();
+  return withAgentFields({
+    success: true,
+    kind: "version",
+    summary: `tedit ${version} (${profile} profile)`,
+    version,
+    profile,
+    node: process.version,
+    packageRoot: packageRoot(),
+  }, input);
+}
+
 function runActionsTool(args: unknown): unknown {
   const input = optionalRecordInput(args, "actions");
   const filePath = optionalString(input.file);
@@ -574,6 +590,7 @@ function runActionsTool(args: unknown): unknown {
   ])];
   return withAgentFields({
     success: true,
+    version: packageVersion(),
     ...(filePath ? { file: filePath } : {}),
     tools,
     advanced_tools: advancedTools,

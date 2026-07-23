@@ -268,7 +268,7 @@ function compactPayloadResult(record: JsonRecord, kind: string, options: OutputO
   }
   if (kind === "actions") {
     if (typeof record.file === "string") compact.path = record.file;
-    copyKeys(record, compact, ["tools", "advanced_tools", "profiles", "rules", "actions", "guidance"]);
+    copyKeys(record, compact, ["version", "tools", "advanced_tools", "profiles", "rules", "actions", "guidance"]);
     return externalizeLargeFields(compact, options);
   }
   if (kind === "rules") {
@@ -726,7 +726,10 @@ function payloadSummary(record: JsonRecord, kind: string): string {
   if (kind === "inspect") return "node inspected";
   if (kind === "verify-file") return parseResultSummary(record);
   if (kind === "verify-files") return verifyFilesSummary(record);
-  if (kind === "actions" && Array.isArray(record.actions)) return String(record.actions.length) + " " + plural("action", record.actions.length) + " available";
+  if (kind === "actions" && Array.isArray(record.actions)) {
+    const versionPrefix = typeof record.version === "string" ? "tedit " + record.version + ", " : "";
+    return versionPrefix + String(record.actions.length) + " " + plural("action", record.actions.length) + " available";
+  }
   if (kind === "rules" && Array.isArray(record.rules)) return String(record.rules.length) + " " + plural("rule", record.rules.length) + " available";
   if (kind === "analyze-state") {
     const states = typeof record.states_total === "number" ? record.states_total : 0;

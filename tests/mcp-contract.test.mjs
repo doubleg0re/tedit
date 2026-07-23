@@ -30,12 +30,24 @@ test("mcp default profile tools share compact agent contracts", () => {
     "search",
     "select",
     "verify_file",
+    "version",
   ].sort());
+
+  const versionResult = runMcpTool("version", {});
+  assert.equal(versionResult.ok, true);
+  assert.equal(versionResult.kind, "version");
+  assert.match(versionResult.version, /^\d+\.\d+\.\d+/);
+  assert.equal(versionResult.profile, "agent");
+  assert.equal(versionResult.node, process.version);
+  assert.ok(existsSync(join(versionResult.packageRoot, "package.json")));
+  assert.match(versionResult.summary, /^tedit \d+\.\d+\.\d+ \(agent profile\)$/);
 
   const actions = runMcpTool("actions", {});
   assert.equal(actions.ok, true);
   assert.equal(actions.success, undefined);
   assert.equal(actions.kind, "actions");
+  assert.match(actions.version, /^\d+\.\d+\.\d+/);
+  assert.match(actions.summary, /^tedit \d+\.\d+\.\d+, \d+ actions available$/);
   assert.equal(actions.profiles.current, "agent");
   assert.deepEqual(actions.profiles.agent.sort(), defaultTools);
   assert.equal(actions.guidance.$detail, true);

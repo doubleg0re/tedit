@@ -70,7 +70,7 @@ Start with `tedit.actions` when unsure. It returns the current tool profile, fil
 The default MCP profile is `agent`, which keeps the callable tool list small and intent-oriented:
 
 `actions`, `select`, `search`, `edit`, `multiedit`, `mutate`, `apply_dry_run`, `patch`, `flow`,
-`refactor`, `file_write`, `delete_file`, `rename_file`, `read_detail`, and `verify_file`.
+`refactor`, `file_write`, `delete_file`, `rename_file`, `read_detail`, `verify_file`, and `version`.
 
 `select` is the structural target finder for JSX/TSX, TS/JS declarations, and supported file-aware targets. `search` is for text/range discovery.
 

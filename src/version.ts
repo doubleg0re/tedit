@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 export function packageVersion(): string {
   try {
@@ -7,4 +8,8 @@ export function packageVersion(): string {
   } catch {
     return "0.0.0";
   }
+}
+
+export function packageRoot(): string {
+  return fileURLToPath(new URL("..", import.meta.url));
 }
