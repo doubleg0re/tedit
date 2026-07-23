@@ -44,6 +44,7 @@ import { makeJSX_SINGLE_STEP_TOOLS } from "./mcp/tools/jsx-single-step.js";
 import { makeVERIFY_TOOLS } from "./mcp/tools/verify.js";
 import { isDefaultMcpToolName, MCP_WRITE_BY_DEFAULT, teditMcpProfileFromEnv, type TeditMcpProfile } from "./mcp/profile.js";
 import { makeWORKFLOW_TOOLS } from "./mcp/tools/workflow.js";
+import { MUTATE_AST_OPS, MUTATE_AST_TARGETS, MUTATE_IMPORT_OPS, MUTATE_JSX_OPS, MUTATE_JSX_TARGETS, MUTATE_OP_ALIASES, MUTATE_SUPPORTED_OPS, MUTATE_TS_OPS, MUTATE_TS_TARGETS, isMutateImportOp, isMutateJsxOp, mutateAstTarget, mutateJsxStep, mutateJsxTarget, mutateMissingTargetFail, mutateOperationFromInput, mutateTargetFail, mutateTargetHelp, mutateTargetSuggestion, mutateTsSelector, mutateUnsupportedOp, normalizeMutateOp, runMutateTool, validateMutateImportArgs } from "./mcp/mutate-tool.js";
 
 export { teditMcpProfileFromEnv } from "./mcp/profile.js";
 export type { TeditMcpProfile } from "./mcp/profile.js";
@@ -67,28 +68,8 @@ export type TeditMcpTool = {
   handler: (args: unknown) => unknown;
 };
 
-type JsonRecord = Record<string, unknown>;
+export type JsonRecord = Record<string, unknown>;
 type WriteFlagOptions = { defaultWrite?: boolean };
-
-const MUTATE_JSX_OPS = [
-  "prop.set", "prop.remove", "class.add", "class.remove", "class.replace",
-  "text.set", "text.replace", "expr.replace", "expr.wrap", "expr.unwrap", "expr.toTernary", "expr.toShortCircuit",
-  "wrap", "unwrap", "rename", "remove", "append", "prepend", "insertComment",
-] as const;
-const MUTATE_IMPORT_OPS = ["imports.add", "imports.remove", "imports.rename", "imports.move"] as const;
-const MUTATE_TS_OPS = ["body.replace", "body.insertBefore", "body.insertAfter", "declaration.move", "declaration.rename"] as const;
-const MUTATE_AST_OPS = ["ast.replace"] as const;
-const MUTATE_SUPPORTED_OPS = [...MUTATE_JSX_OPS, ...MUTATE_IMPORT_OPS, ...MUTATE_TS_OPS, ...MUTATE_AST_OPS] as const;
-const MUTATE_OP_ALIASES = new Map<string, string>([
-  ...MUTATE_SUPPORTED_OPS.map((op) => [op, op] as const),
-  ["replace-body", "body.replace"],
-  ["insert-before", "body.insertBefore"],
-  ["insert-after", "body.insertAfter"],
-  ["symbol.rename", "declaration.rename"],
-]);
-const MUTATE_JSX_TARGETS = "jsx:<selector> or id:jsx:<id>";
-const MUTATE_TS_TARGETS = "fn:<name>, class:<name>, method:<owner.name>, prop:<name>, or var:<name>";
-const MUTATE_AST_TARGETS = "ast:<selector>, string:<exact>, contains:<text>, jsxText:<text>, jsxAttr:<name>, objectKey:<key>, or call:<callee>";
 
 type VerifyFileEntry = { file: string } & ParseVerificationFields & { warnings: unknown[] };
 
@@ -345,204 +326,17 @@ function runFlowTool(args: unknown): unknown {
   }), input);
 }
 
-function runMutateTool(args: unknown): unknown {
-  const input = recordInput(args, "mutate");
-  const file = requiredString(input.file, "mutate requires file.");
-  const { op, args: opArgs } = mutateOperationFromInput(input);
-  if (!MUTATE_SUPPORTED_OPS.includes(op as typeof MUTATE_SUPPORTED_OPS[number])) mutateUnsupportedOp(op);
-
-  if (isMutateJsxOp(op)) {
-    const target = mutateJsxTarget(input.target, file, op, opArgs);
-    return withAgentFields(runWorkspaceFlow([mutateJsxStep(file, op, target, opArgs)], writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT)), input);
-  }
-
-  if (isMutateImportOp(op)) {
-    validateMutateImportArgs(op, opArgs);
-    return withAgentFields(runWorkspaceFlow([{ action: op, file, ...importFields(opArgs) }], writeFlagsFromInput(input, MCP_WRITE_BY_DEFAULT)), input);
-  }
-
-  if (op === "ast.replace") return runAstEditTool({ ...input, ...mutateAstTarget(input.target, op), replace: requiredString(pick(opArgs, "replace", "value", "text"), 'mutate op "ast.replace" requires args.replace, args.value, or args.text.') }, MCP_WRITE_BY_DEFAULT);
-
-  if (op === "body.replace") return runTsEditTool({ ...input, selector: mutateTsSelector(input.target, file, op), action: "replace-body", body: requiredString(pick(opArgs, "body", "value", "code"), 'mutate op "body.replace" requires args.body, args.value, or args.code.') });
-  if (op === "body.insertBefore") return runTsEditTool({ ...input, selector: mutateTsSelector(input.target, file, op), action: "insert-before", insertBefore: requiredString(pick(opArgs, "insertBefore", "body", "value", "code"), 'mutate op "body.insertBefore" requires args.insertBefore, args.body, args.value, or args.code.') });
-  if (op === "body.insertAfter") return runTsEditTool({ ...input, selector: mutateTsSelector(input.target, file, op), action: "insert-after", insertAfter: requiredString(pick(opArgs, "insertAfter", "body", "value", "code"), 'mutate op "body.insertAfter" requires args.insertAfter, args.body, args.value, or args.code.') });
-  if (op === "declaration.move") return runTsMoveTool({ ...input, target: mutateTsSelector(input.target, file, op), before: optionalString(opArgs.before), after: optionalString(opArgs.after), take: opArgs.take, drop: opArgs.drop, confirmTrivia: booleanValue(opArgs.confirmTrivia), sourceHash: optionalString(opArgs.sourceHash), includeTriviaContent: booleanValue(opArgs.includeTriviaContent) });
-  if (op === "declaration.rename") return runTsRenameTool({ ...input, selector: mutateTsSelector(input.target, file, op), to: requiredString(pick(opArgs, "to", "name"), 'mutate op "declaration.rename" requires args.to or args.name.') });
-
-  mutateUnsupportedOp(op);
-}
-
-function mutateOperationFromInput(input: JsonRecord): { op: string; args: JsonRecord } {
-  if (input.op !== undefined) {
-    const op = normalizeMutateOp(requiredString(input.op, "mutate requires op."));
-    return { op, args: recordOrUndefined(input.args, "mutate args") ?? recordOrUndefined(input[op], `mutate ${op} args`) ?? {} };
-  }
-  const opKeys = Object.keys(input).filter((key) => MUTATE_OP_ALIASES.has(key));
-  if (opKeys.length === 1) return { op: normalizeMutateOp(opKeys[0]), args: recordOrUndefined(input[opKeys[0]], `mutate ${opKeys[0]} args`) ?? {} };
-  if (opKeys.length > 1) fail("INVALID_MCP_INPUT", `mutate accepts only one operation key. Found: ${opKeys.join(", ")}.`);
-  fail("INVALID_MCP_INPUT", 'mutate requires op+args or one operation key like {"prop.set":{"name":"disabled","value":true}}.');
-}
-
-function normalizeMutateOp(op: string): string {
-  return MUTATE_OP_ALIASES.get(op) ?? op;
-}
-
-function isMutateJsxOp(op: string): op is typeof MUTATE_JSX_OPS[number] {
-  return (MUTATE_JSX_OPS as readonly string[]).includes(op);
-}
-
-function isMutateImportOp(op: string): op is typeof MUTATE_IMPORT_OPS[number] {
-  return (MUTATE_IMPORT_OPS as readonly string[]).includes(op);
-}
-
-function validateMutateImportArgs(op: typeof MUTATE_IMPORT_OPS[number], args: JsonRecord): void {
-  if (op === "imports.add" && args.from === undefined) fail("INVALID_MCP_INPUT", 'mutate op "imports.add" requires args.from.');
-  if (op === "imports.remove" && args.from === undefined) fail("INVALID_MCP_INPUT", 'mutate op "imports.remove" requires args.from.');
-  if (op === "imports.rename" && (args.from === undefined || args.name === undefined || args.to === undefined)) {
-    fail("INVALID_MCP_INPUT", 'mutate op "imports.rename" requires args.from, args.name, and args.to. Example: {"imports.rename":{"from":"./old","name":"OldName","to":"NewName"}}');
-  }
-  if (op === "imports.move" && (args.from === undefined || args.to === undefined)) fail("INVALID_MCP_INPUT", 'mutate op "imports.move" requires args.from and args.to.');
-}
-
-function mutateJsxStep(file: string, op: typeof MUTATE_JSX_OPS[number], target: string, args: JsonRecord): WorkspaceFlowStep {
-  if (op === "prop.set") return { action: "prop.set", file, target, name: requiredString(args.name, 'mutate op "prop.set" requires args.name. Example: {"args":{"name":"disabled","value":true}}'), value: propValue(args) };
-  if (op === "prop.remove") return { action: "prop.remove", file, target, name: requiredString(args.name, 'mutate op "prop.remove" requires args.name. Example: {"args":{"name":"disabled"}}') };
-  if (op === "class.add") return { action: "class.add", file, target, classes: classNamesInput(args, 'mutate op "class.add"') };
-  if (op === "class.remove") return { action: "class.remove", file, target, classes: classNamesInput(args, 'mutate op "class.remove"') };
-  if (op === "class.replace") return { action: "class.replace", file, target, from: requiredString(args.from, 'mutate op "class.replace" requires args.from. Example: {"args":{"from":"old","to":"new"}}'), to: requiredString(args.to, 'mutate op "class.replace" requires args.to. Example: {"args":{"from":"old","to":"new"}}') };
-  if (op === "text.set") return { action: "text.set", file, target, ...textSetValue(args) };
-  if (op === "text.replace") return { action: "text.replace", file, target, match: textMatch(args) as WorkspaceFlowStep["match"], with: textReplacement(args) as WorkspaceFlowStep["with"] };
-  if (op === "expr.replace") return { action: "expr.replace", file, target, code: requiredString(args.code, 'mutate op "expr.replace" requires args.code.') };
-  if (op === "expr.wrap") return { action: "expr.wrap", file, target, code: requiredString(args.code, 'mutate op "expr.wrap" requires args.code.') };
-  if (op === "expr.unwrap") return { action: "expr.unwrap", file, target };
-  if (op === "expr.toTernary") return { action: "expr.toTernary", file, target, ...(pick(args, "alternate", "value") === undefined ? {} : { value: String(pick(args, "alternate", "value")) }) };
-  if (op === "expr.toShortCircuit") return { action: "expr.toShortCircuit", file, target };
-  if (op === "wrap") return { action: "wrap", file, target, with: normalizeElementInput(pick(args, "with", "wrapper"), 'mutate op "wrap" requires args.with or args.wrapper.') };
-  if (op === "unwrap") return { action: "unwrap", file, target };
-  if (op === "rename") return { action: "rename", file, target, name: requiredString(pick(args, "to", "name"), 'mutate op "rename" requires args.to or args.name.') };
-  if (op === "remove") return { action: "remove", file, target };
-  if (op === "append") return { action: "append", file, target, element: normalizeElementInput(args.element, 'mutate op "append" requires args.element.') };
-  if (op === "prepend") return { action: "prepend", file, target, element: normalizeElementInput(args.element, 'mutate op "prepend" requires args.element.') };
-  if (op === "insertComment") return { action: "insertComment", file, target, text: requiredString(args.text, 'mutate op "insertComment" requires args.text.'), ...(args.position === undefined ? {} : { position: String(args.position) as WorkspaceFlowStep["position"] }) };
-  mutateUnsupportedOp(op);
-}
-
-function mutateUnsupportedOp(op: string): never {
-  fail("INVALID_MCP_INPUT", `mutate unsupported op: ${op}. Supported ops: ${MUTATE_SUPPORTED_OPS.join(", ")}.`, {
-    supportedOps: [...MUTATE_SUPPORTED_OPS],
-    validTargets: {
-      jsx: MUTATE_JSX_TARGETS,
-      ts: MUTATE_TS_TARGETS,
-      ast: MUTATE_AST_TARGETS,
-      imports: "target omitted",
-    },
-    suggestions: [
-      'Use actions to inspect mutate examples, or use op="prop.set" with target="jsx:Button".',
-      'For TS body replacement use op="body.replace" with target="fn:name" and args.body.',
-      'For AST string replacement use op="ast.replace" with target="objectKey:label" and args.replace.',
-    ],
-  });
-}
-
-function mutateJsxTarget(value: unknown, file: string, op: string, opArgs: JsonRecord = {}): string {
-  if (value && typeof value === "object" && !Array.isArray(value) && typeof (value as JsonRecord).id === "string") return mutateJsxTarget(`id:${(value as JsonRecord).id}`, file, op);
-  if (value === undefined || value === false) mutateMissingTargetFail(op, file, opArgs);
-  const raw = requiredString(value, `mutate op "${op}" requires target. Valid prefixes: ${mutateTargetHelp(op).prefixes.join(", ")}.`);
-  const [prefix, rest] = splitTargetPrefix(raw);
-  if (!prefix) mutateTargetFail(op, file, raw, prefix);
-  if (prefix === "jsx") {
-    assertJsxFile(file, prefix);
-    return rest;
-  }
-  if (prefix === "id") {
-    const [route, id] = splitTargetPrefix(rest);
-    if (route === "jsx") {
-      assertJsxFile(file, "id:jsx");
-      return id;
-    }
-  }
-  mutateTargetFail(op, file, raw, prefix);
-}
-
-function mutateMissingTargetFail(op: string, file: string, opArgs: JsonRecord): never {
-  const help = mutateTargetHelp(op);
-  const functionName = op === "text.replace" ? functionNameFromTextReplaceArgs(opArgs) : undefined;
-  fail("INVALID_MCP_INPUT", `mutate op "${op}" requires target. Valid prefixes: ${help.prefixes.join(", ")}.`, {
-    op,
-    validPrefixes: help.prefixes,
-    examples: help.examples,
-    suggestions: [
-      ...(functionName ? [`For replacing function ${functionName}, use mutate op="body.replace" target="fn:${functionName}" with args.body containing only the function body.`] : []),
-      ...(functionName ? ["For exact whole-block text replacement, use edit with find/replace instead of mutate text.replace."] : []),
-      "For JSX text replacement, pass target such as target=\"jsx:Button\" plus args.matchText/args.withText.",
-      `Call select on ${file} first when the structural target is ambiguous.`,
-    ],
-  });
-}
-
-function functionNameFromTextReplaceArgs(args: JsonRecord): string | undefined {
+export function functionNameFromTextReplaceArgs(args: JsonRecord): string | undefined {
   const source = typeof args.find === "string" ? args.find : typeof args.matchText === "string" ? args.matchText : undefined;
   return source?.match(/\bfunction\s+([A-Za-z_$][\w$]*)\s*\(/)?.[1];
 }
 
-function mutateTsSelector(value: unknown, file: string, op: string): string {
-  const raw = requiredString(value, `mutate op "${op}" requires target. Valid prefixes: ${mutateTargetHelp(op).prefixes.join(", ")}.`);
-  const [prefix] = splitTargetPrefix(raw);
-  if (mutateTargetHelp(op).prefixes.map((item) => item.replace(/:$/, "")).includes(prefix ?? "")) return raw;
-  mutateTargetFail(op, file, raw, prefix);
-}
-
-function mutateAstTarget(value: unknown, op: string): JsonRecord {
-  const raw = requiredString(value, `mutate op "${op}" requires target. Valid prefixes: ${mutateTargetHelp(op).prefixes.join(", ")}.`);
-  const [prefix, rest] = splitTargetPrefix(raw);
-  if (prefix === "ast") return { selector: rest };
-  if (prefix === "string") return { string: rest };
-  if (prefix === "contains") return { contains: rest };
-  if (prefix === "jsxText") return { jsxText: rest };
-  if (prefix === "jsxAttr") return { jsxAttr: rest };
-  if (prefix === "objectKey") return { objectKey: rest };
-  if (prefix === "call") return { call: rest };
-  mutateTargetFail(op, undefined, raw, prefix);
-}
-
-function mutateTargetHelp(op: string): { prefixes: string[]; examples: string[] } {
-  if (op === "body.replace") return { prefixes: ["fn:", "method:", "class:"], examples: ['target="fn:<name>"', 'target="method:<owner.name>"'] };
-  if (op === "body.insertBefore" || op === "body.insertAfter" || op === "declaration.move") return { prefixes: ["fn:", "class:", "method:", "prop:", "var:"], examples: ['target="fn:<name>"', 'target="class:<name>"'] };
-  if (op === "declaration.rename") return { prefixes: ["fn:", "class:", "var:"], examples: ['target="fn:<name>"', 'target="var:<name>"'] };
-  if (isMutateJsxOp(op)) return { prefixes: ["jsx:", "id:jsx:"], examples: ['target="jsx:Button"', 'target="id:jsx:<id>"'] };
-  if (op === "ast.replace") return { prefixes: ["objectKey:", "call:", "string:", "contains:", "jsxText:", "jsxAttr:", "ast:"], examples: ['target="objectKey:label"', 'target="call:toast.error"'] };
-  return { prefixes: [], examples: [] };
-}
-
-function mutateTargetFail(op: string, file: string | undefined, raw: string, prefix: string | undefined): never {
-  const help = mutateTargetHelp(op);
-  const suggestion = mutateTargetSuggestion(raw, help.prefixes);
-  fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix ?? "<none>"}: is not valid for ${op}${file ? ` on ${file}` : ""}. Valid prefixes for ${op}: ${help.prefixes.join(", ")}.`, {
-    op,
-    validPrefixes: help.prefixes,
-    examples: help.examples,
-    ...(suggestion ? { didYouMean: suggestion } : {}),
-    suggestions: [
-      ...(suggestion ? [`Did you mean ${suggestion}?`] : []),
-      ...(help.examples[0] ? [`Use ${help.examples[0]} for ${op}.`] : []),
-      "Call select first when the structural target is ambiguous.",
-    ],
-  });
-}
-
-function mutateTargetSuggestion(raw: string, prefixes: string[]): string | undefined {
-  const [, rest] = splitTargetPrefix(raw);
-  if (!rest || prefixes.length === 0) return undefined;
-  const prefix = prefixes[0].replace(/:$/, "");
-  return `${prefix}:${rest}`;
-}
-
-function assertJsxFile(file: string, prefix: string): void {
+export function assertJsxFile(file: string, prefix: string): void {
   const ext = extname(file).toLowerCase();
   if (![".jsx", ".tsx"].includes(ext)) fail("INVALID_MCP_INPUT", `mutate target prefix ${prefix}: is only valid for JSX/TSX files, got ${file}.`);
 }
 
-function splitTargetPrefix(value: string): [string | undefined, string] {
+export function splitTargetPrefix(value: string): [string | undefined, string] {
   const index = value.indexOf(":");
   if (index <= 0) return [undefined, value];
   return [value.slice(0, index), value.slice(index + 1)];
@@ -1081,7 +875,7 @@ function runAstSelectTool(args: unknown): unknown {
   return withAgentFields(runAstSelect(requiredString(input.file, "ast_select requires file."), requiredString(input.selector, "ast_select requires selector.")), input);
 }
 
-function runAstEditTool(args: unknown, options?: WriteFlagOptions): unknown {
+export function runAstEditTool(args: unknown, options?: WriteFlagOptions): unknown {
   const input = recordInput(args, "ast_edit");
   return withAgentFields(runAstEditEngine(requiredString(input.file, "ast_edit requires file."), {
     selector: astEditSelectorFromInput(input),
@@ -1095,7 +889,7 @@ function runTsSelectTool(args: unknown): unknown {
   return withAgentFields(runTsSelect(requiredString(input.file, "ts_select requires file."), optionalString(input.selector)), input);
 }
 
-function runTsEditTool(args: unknown): unknown {
+export function runTsEditTool(args: unknown): unknown {
   const input = recordInput(args, "ts_edit");
   const filePath = requiredString(input.file, "ts_edit requires file.");
   const restorePoints = captureRestorePoints([filePath]);
@@ -1113,7 +907,7 @@ function runTsEditTool(args: unknown): unknown {
   }), input, restorePoints);
 }
 
-function runTsMoveTool(args: unknown): unknown {
+export function runTsMoveTool(args: unknown): unknown {
   const input = recordInput(args, "ts_move");
   const filePath = requiredString(input.file, "ts_move requires file.");
   const restorePoints = captureRestorePoints([filePath]);
@@ -1130,7 +924,7 @@ function runTsMoveTool(args: unknown): unknown {
   }), input, restorePoints);
 }
 
-function runTsRenameTool(args: unknown): unknown {
+export function runTsRenameTool(args: unknown): unknown {
   const input = recordInput(args, "ts_rename");
   const filePath = requiredString(input.file, "ts_rename requires file.");
   const restorePoints = captureRestorePoints([filePath]);
@@ -1731,7 +1525,7 @@ function templateParamsFromInput(value: unknown): Record<string, string> {
   fail("INVALID_MCP_INPUT", "new_file params must be an object or key=value string array.");
 }
 
-function withAgentFields<T>(result: T, input: JsonRecord = {}): T {
+export function withAgentFields<T>(result: T, input: JsonRecord = {}): T {
   return formatAgentResult(result, outputOptionsFromRecord(input)) as T;
 }
 
@@ -1870,26 +1664,26 @@ function targetFromInput(input: JsonRecord, label: string): string {
   return requiredString(pick(input, "target", "id", "selector"), `${label} requires target, id, or selector.`);
 }
 
-function normalizeElementInput(value: unknown, message: string): WorkspaceFlowStep["element"] {
+export function normalizeElementInput(value: unknown, message: string): WorkspaceFlowStep["element"] {
   const raw = requiredValue(value, message);
   if (typeof raw === "string") return parseElementShorthand(raw);
   if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as WorkspaceFlowStep["element"];
   fail("INVALID_MCP_INPUT", "Element input must be a shorthand string or object spec.");
 }
-function classNamesInput(input: JsonRecord, label: string): string | string[] {
+export function classNamesInput(input: JsonRecord, label: string): string | string[] {
   const value = pick(input, "classes", "className", "class", "classNames");
   if (Array.isArray(value)) return value.map((item) => String(item));
   return requiredString(value, `${label} requires classes or className. Example: {"args":{"className":"tracking-[-0.02em]"}}`);
 }
 
-function propValue(input: JsonRecord): unknown {
+export function propValue(input: JsonRecord): unknown {
   if (input.expr !== undefined && input.value !== undefined) fail("INVALID_MCP_INPUT", "prop_set accepts only one of value or expr.");
   if (input.expr !== undefined) return { type: "expr", code: requiredString(input.expr, "prop_set expr must be a string.") };
   if (input.value !== undefined) return input.value;
   return true;
 }
 
-function textSetValue(input: JsonRecord): { value?: string; expr?: string } {
+export function textSetValue(input: JsonRecord): { value?: string; expr?: string } {
   const hasValue = input.value !== undefined;
   const hasExpr = input.expr !== undefined;
   if (hasValue === hasExpr) fail("INVALID_MCP_INPUT", "text_set requires exactly one of value or expr.");
@@ -1897,7 +1691,7 @@ function textSetValue(input: JsonRecord): { value?: string; expr?: string } {
   return { value: requiredString(input.value, "text_set value must be a string.") };
 }
 
-function textMatch(input: JsonRecord): unknown {
+export function textMatch(input: JsonRecord): unknown {
   if (input.match !== undefined) return input.match;
   const matchText = input.matchText;
   const matchExpr = input.matchExpr;
@@ -1909,7 +1703,7 @@ function textMatch(input: JsonRecord): unknown {
   return { kind: "any", value: requiredString(matchAny, "matchAny must be a string.") };
 }
 
-function textReplacement(input: JsonRecord): unknown {
+export function textReplacement(input: JsonRecord): unknown {
   if (input.with !== undefined) return input.with;
   const withText = input.withText;
   const withExpr = input.withExpr;
@@ -1919,7 +1713,7 @@ function textReplacement(input: JsonRecord): unknown {
   return { kind: "expr", code: requiredString(withExpr, "withExpr must be a string.") };
 }
 
-function importFields(input: JsonRecord): Pick<WorkspaceFlowStep, "from" | "to" | "named" | "default" | "namespace" | "name" | "value"> {
+export function importFields(input: JsonRecord): Pick<WorkspaceFlowStep, "from" | "to" | "named" | "default" | "namespace" | "name" | "value"> {
   return {
     from: requiredString(input.from, "imports tools require from."),
     ...(input.to === undefined ? {} : { to: requiredString(input.to, "to must be a string.") }),
@@ -1931,7 +1725,7 @@ function importFields(input: JsonRecord): Pick<WorkspaceFlowStep, "from" | "to" 
   };
 }
 
-function writeFlagsFromInput(input: JsonRecord, options: WriteFlagOptions = {}): WorkspaceFlowOptions {
+export function writeFlagsFromInput(input: JsonRecord, options: WriteFlagOptions = {}): WorkspaceFlowOptions {
   const dryRun = booleanValue(pick(input, "dryRun", "dry-run", "dry_run"));
   const write = input.write === undefined ? Boolean(options.defaultWrite) && !dryRun : booleanValue(input.write);
   if (write && dryRun) fail("INVALID_MCP_INPUT", "Use only one of write or dryRun.");
@@ -1943,7 +1737,7 @@ function writeFlagsFromInput(input: JsonRecord, options: WriteFlagOptions = {}):
   };
 }
 
-function recordInput(value: unknown, label: string): JsonRecord {
+export function recordInput(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     fail("INVALID_MCP_INPUT", `${label} arguments must be an object.`);
   }
@@ -1955,13 +1749,13 @@ function optionalRecordInput(value: unknown, label: string): JsonRecord {
   return recordInput(value, label);
 }
 
-function recordOrUndefined(value: unknown, label: string): Record<string, unknown> | undefined {
+export function recordOrUndefined(value: unknown, label: string): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
   if (!value || typeof value !== "object" || Array.isArray(value)) fail("INVALID_MCP_INPUT", `${label} must be an object.`);
   return value as Record<string, unknown>;
 }
 
-function pick(record: JsonRecord, ...keys: string[]): unknown {
+export function pick(record: JsonRecord, ...keys: string[]): unknown {
   for (const key of keys) {
     if (record[key] !== undefined) return record[key];
   }
@@ -1979,7 +1773,7 @@ function requiredPatchPath(value: unknown, message: string): string {
   return path;
 }
 
-function requiredString(value: unknown, message: string): string {
+export function requiredString(value: unknown, message: string): string {
   if (typeof value !== "string" || value.length === 0) fail("INVALID_MCP_INPUT", message);
   return value;
 }
@@ -1991,7 +1785,7 @@ function stringArray(value: unknown, label: string): string[] {
   fail("INVALID_MCP_INPUT", `${label} must be a string or string array.`);
 }
 
-function optionalString(value: unknown): string | undefined {
+export function optionalString(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   return requiredString(value, "Expected a string.");
 }
@@ -2015,6 +1809,6 @@ function optionalNonnegativeInteger(value: unknown, label: string): number | und
   return numberValue;
 }
 
-function booleanValue(value: unknown): boolean {
+export function booleanValue(value: unknown): boolean {
   return value === true || value === "true";
 }
