@@ -1267,7 +1267,7 @@ function verifyFilePaths(filePaths: string[]): Record<string, unknown> {
 
 function verifyFileEntry(filePath: string): VerifyFileEntry {
   const source = readFileSync(filePath, "utf8");
-  const verification = verifyParseForFile(filePath, source);
+  const verification = verifyParseForFile(filePath, source, true, "verify");
   return {
     file: filePath,
     ...parseVerificationFields(verification),
@@ -1425,7 +1425,7 @@ function finishCreation(args: ParsedArgs, filePath: string, source: string, resu
     throw new Error(`Refusing to overwrite existing file: ${filePath}. Use --overwrite to bypass.`);
   }
 
-  const parseVerification = verifyParseForFile(filePath, source);
+  const parseVerification = verifyParseForFile(filePath, source, true, "create");
 
   const previous = existed ? readFileSync(filePath, "utf8") : "";
   const changed = previous !== source;
@@ -2002,7 +2002,7 @@ function summarizeFailureReason(result: ErrorResult): string {
     return fuzzy + (matches ?? "multiple") + " candidates";
   }
   if (result.code === "MATCH_FUZZY_ONLY") return "fuzzy-only match available";
-  if (result.code === "PARSE_BROKEN_AFTER_EDIT") return "parse verification failed";
+  if (result.code === "PARSE_BROKEN_AFTER_EDIT" || result.code === "PARSE_BROKEN_ON_CREATE" || result.code === "PARSE_INVALID") return "parse verification failed";
   return result.error;
 }
 

@@ -105,6 +105,76 @@ test("markup and markdown invalid edits still fail atomically", () => {
   assert.equal(readFileSync(markdown, "utf8"), markdownInput);
 });
 
+test("valid YAML frontmatter (folded scalars, sequences, continuations) is accepted", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-md-frontmatter-"));
+  const file = join(dir, "SKILL.md");
+  const srcFile = join(dir, "source.md");
+  const source = [
+    "---",
+    "description: >-",
+    "  Folded scalar first line",
+    "  and its continuation",
+    "tags:",
+    "  - alpha",
+    "  - beta",
+    "keywords:",
+    "- gamma",
+    "- delta",
+    "title: Foo",
+    "---",
+    "# Body",
+    "",
+  ].join("\n");
+
+  // New-file creation must not be rejected as broken syntax.
+  writeFileSync(srcFile, source);
+  run(["write", file, "--from-file", srcFile, "--write"]);
+  assert.equal(readFileSync(file, "utf8"), source);
+
+  // verify-file must accept the same frontmatter.
+  run(["verify-file", file, "--json"]);
+
+  // The structural markdown parser must read the frontmatter too.
+  run(["prop", "set", file, "frontmatter", "draft", "false", "--write"]);
+  assert.match(readFileSync(file, "utf8"), /title: Foo\ndraft: false\n---/);
+});
+
+test("a leading --- opening prose with a colon stays a thematic break, not frontmatter", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-md-hr-"));
+  const file = join(dir, "notes.md");
+  // No closing fence, and the prose merely contains a colon; this must not be
+  // misread as an unclosed frontmatter block.
+  writeFileSync(file, ["---", "다음 상황에서 사용: 여러 요청을 배치로 처리할 때.", "More prose here.", ""].join("\n"));
+
+  const verified = JSON.parse(run(["verify-file", file, "--json"]));
+  assert.equal(verified.parse_verified, true);
+});
+
+test("parse failures are reported per context (create vs verify vs edit)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tedit-parse-context-"));
+  const srcFile = join(dir, "broken-source.json");
+  writeFileSync(srcFile, "{\"enabled\":}");
+
+  // Creating a new file: no edit exists, so the copy must not mention editing.
+  const created = runFail(["write", join(dir, "new.json"), "--from-file", srcFile, "--write", "--json"]);
+  assert.equal(created.body.code, "PARSE_BROKEN_ON_CREATE");
+  assert.doesNotMatch(created.body.error, /Edit would produce/);
+
+  // Verifying an unchanged file on disk: not an edit or a write.
+  const onDisk = join(dir, "config.json");
+  writeFileSync(onDisk, "{\"enabled\":}\n");
+  const verified = runFail(["verify-file", onDisk, "--json"]);
+  assert.equal(verified.body.code, "PARSE_INVALID");
+  assert.doesNotMatch(verified.body.error, /Edit would produce|no write was performed/);
+  assert.equal(readFileSync(onDisk, "utf8"), "{\"enabled\":}\n");
+
+  // Editing an existing file keeps the edit-centric code and copy.
+  const edited = join(dir, "edit.json");
+  writeFileSync(edited, "{\"enabled\": true}\n");
+  const failed = runFail(["edit", edited, "--find", "true", "--replace", "", "--write", "--json"]);
+  assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
+});
+
 function run(args) {
   const result = spawnSync(process.execPath, [cli, ...args], {
     encoding: "utf8",

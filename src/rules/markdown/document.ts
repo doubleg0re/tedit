@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { BaseRuleDocument } from "../../core/base-rule-document.js";
 import type { TextMatchSpec, TextValueSpec, TreeNodeInfo, TreeNodeSpec, ValueSpec } from "../../core/document.js";
+import { frontmatterStatus } from "../../core/frontmatter.js";
 import { fail } from "../../errors.js";
 
 export const MARKDOWN_ACTIONS = [
@@ -262,21 +263,6 @@ function parseFrontmatter(lines: string[], root: MarkdownNode): number {
     node.children.push(markdownNode(`$/frontmatter/${key}`, key, "frontmatter-entry", line, line, node, { key, value: match[2] }));
   }
   return end + 1;
-}
-
-function frontmatterStatus(lines: string[]): { kind: "closed"; end: number } | { kind: "unclosed" | "not-frontmatter" } {
-  let hasFrontmatterContent = false;
-  for (let index = 1; index < lines.length; index++) {
-    const line = (lines[index] ?? "").trim();
-    if (line === "---" || line === "...") return hasFrontmatterContent ? { kind: "closed", end: index } : { kind: "not-frontmatter" };
-    if (/^[^:#][^:]*:\s*.*$/.test(line)) {
-      hasFrontmatterContent = true;
-      continue;
-    }
-    if (!line || line.startsWith("#")) continue;
-    return hasFrontmatterContent ? { kind: "unclosed" } : { kind: "not-frontmatter" };
-  }
-  return hasFrontmatterContent ? { kind: "unclosed" } : { kind: "not-frontmatter" };
 }
 
 function parseCodeFence(lines: string[], start: number, parent: MarkdownNode, counters: Map<string, number>): number {

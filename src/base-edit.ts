@@ -1,3 +1,4 @@
+import { frontmatterStatus } from "./core/frontmatter.js";
 import { getOptionalAdapterForFile } from "./core/registry.js";
 import { unifiedDiff } from "./diff.js";
 import { fail, TeditError } from "./errors.js";
@@ -740,7 +741,31 @@ function largeExactFindHint(options: BaseEditOptions): BaseEditGuardrail[] {
   }];
 }
 
-export function verifyParseForFile(filePath: string, source: string, enabled = true): BaseParseVerification {
+// Parse failures are reported differently by context: an edit that would corrupt
+// a file, a whole-file create/overwrite, or a standalone verification of an
+// unchanged file. Only the edit path talks about "no write was performed"; the
+// others would misdiagnose a file that no edit ever touched.
+export type ParseFailureContext = "edit" | "create" | "verify";
+
+const PARSE_FAILURE_BY_CONTEXT: Record<ParseFailureContext, { code: string; message: string; hint: string }> = {
+  edit: {
+    code: "PARSE_BROKEN_AFTER_EDIT",
+    message: "Edit would produce invalid syntax for this file type; no write was performed.",
+    hint: "Inspect the reported line, fix the syntax, then rerun the same tedit command.",
+  },
+  create: {
+    code: "PARSE_BROKEN_ON_CREATE",
+    message: "New content is not valid syntax for this file type; nothing was written.",
+    hint: "Inspect the reported line, fix the source syntax, then rerun the same tedit command.",
+  },
+  verify: {
+    code: "PARSE_INVALID",
+    message: "File is not valid syntax for this file type.",
+    hint: "Inspect the reported line and fix the file's syntax.",
+  },
+};
+
+export function verifyParseForFile(filePath: string, source: string, enabled = true, context: ParseFailureContext = "edit"): BaseParseVerification {
   if (!enabled) return { verified: false, skipped: true, skipReason: "disabled" };
   const adapter = getOptionalAdapterForFile(filePath);
   const extension = extname(filePath).toLowerCase();
@@ -759,13 +784,14 @@ export function verifyParseForFile(filePath: string, source: string, enabled = t
     return { verified: true, parser };
   } catch (error) {
     const cause = unwrapParserError(error);
-    fail("PARSE_BROKEN_AFTER_EDIT", "Edit would produce invalid syntax for this file type; no write was performed.", {
+    const failure = PARSE_FAILURE_BY_CONTEXT[context];
+    fail(failure.code, failure.message, {
       rule: parser,
       parser,
       parser_error: cause instanceof Error ? cause.message : String(cause),
       ...parseErrorLocation(cause, source),
       ...(parser === "json" ? jsonParseLocation(cause) : {}),
-      next_step_hint: "Inspect the reported line, fix the syntax, then rerun the same tedit command.",
+      next_step_hint: failure.hint,
     });
   }
 }
@@ -918,23 +944,7 @@ function verifyFrontmatterFence(lines: string[]): void {
   const first = lines[0].replace(/^\uFEFF/, "");
   if (first.trim() !== "---") return;
 
-  const status = frontmatterStatus(lines);
-  if (status === "unclosed") throw new Error("Unclosed frontmatter fence opened at line 1.");
-}
-
-function frontmatterStatus(lines: string[]): "closed" | "unclosed" | "not-frontmatter" {
-  let hasFrontmatterContent = false;
-  for (let index = 1; index < lines.length; index++) {
-    const line = lines[index].trim();
-    if (line === "---" || line === "...") return hasFrontmatterContent ? "closed" : "not-frontmatter";
-    if (/^[^:#][^:]*:\s*.*$/.test(line)) {
-      hasFrontmatterContent = true;
-      continue;
-    }
-    if (!line || line.startsWith("#")) continue;
-    return hasFrontmatterContent ? "unclosed" : "not-frontmatter";
-  }
-  return hasFrontmatterContent ? "unclosed" : "not-frontmatter";
+  if (frontmatterStatus(lines).kind === "unclosed") throw new Error("Unclosed frontmatter fence opened at line 1.");
 }
 
 function verifyYamlLite(source: string): void {

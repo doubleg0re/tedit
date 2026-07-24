@@ -221,7 +221,7 @@ function runWholeFileTool(input: JsonRecord, label: string, kind: string, source
     fail("FILE_EXISTS", "Refusing to overwrite existing file: " + filePath + ". Pass overwrite=true to bypass.");
   }
 
-  const parseVerification = verifyParseForFile(filePath, source);
+  const parseVerification = verifyParseForFile(filePath, source, true, "create");
   const previous = existed ? readFileSync(filePath, "utf8") : "";
   const changed = previous !== source;
   const diff = unifiedDiff(previous, source, filePath);
@@ -1241,7 +1241,7 @@ function runVerifyFileTool(args: unknown): unknown {
 
   const filePath = filePaths[0];
   const source = readFileSync(filePath, "utf8");
-  const verification = verifyParseForFile(filePath, source);
+  const verification = verifyParseForFile(filePath, source, true, "verify");
   return withAgentFields({
     success: true,
     file: filePath,
@@ -1259,7 +1259,7 @@ function verifyFilePathsFromInput(input: JsonRecord): string[] {
 
 function verifyFileEntry(filePath: string): VerifyFileEntry {
   const source = readFileSync(filePath, "utf8");
-  const verification = verifyParseForFile(filePath, source);
+  const verification = verifyParseForFile(filePath, source, true, "verify");
   return {
     file: filePath,
     ...parseVerificationFields(verification),

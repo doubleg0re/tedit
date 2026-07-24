@@ -702,7 +702,7 @@ test("agent-facing diagnostics include rule hints suggestions and snippets", () 
   assert.match(unsupported.body.suggestions[0], /tedit actions/);
 
   const parseFailure = runFail(["verify-file", badYaml, "--json"]);
-  assert.equal(parseFailure.body.code, "PARSE_BROKEN_AFTER_EDIT");
+  assert.equal(parseFailure.body.code, "PARSE_INVALID");
   assert.equal(parseFailure.body.details.rule, "yaml-lite");
   assert.equal(parseFailure.body.details.line, 2);
   assert.equal(parseFailure.body.details.snippet, "name: two");
@@ -1150,7 +1150,7 @@ test("markdown rule treats an unclosed leading thematic break as content", () =>
   assert.equal(found.matches[0].attributes.text, "---\ncontent");
 
   const failed = runFail(["verify-file", frontmatterish, "--json"]);
-  assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
+  assert.equal(failed.body.code, "PARSE_INVALID");
 });
 
 test("markup rule edits html and xml structures", () => {
@@ -3208,7 +3208,7 @@ test("verify-file enforces Markdown and YAML lightweight boundaries", () => {
 
   for (const file of [tabYaml, oddIndentYaml, duplicateYaml, multiDocYaml]) {
     const failed = runFail(["verify-file", file, "--json"]);
-    assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
+    assert.equal(failed.body.code, "PARSE_INVALID");
   }
 });
 
@@ -3239,7 +3239,7 @@ test("verify-file fails on invalid parseable files without modifying them", () =
   const failed = runFail(["verify-file", file, "--json"]);
 
   assert.equal(failed.status, 1);
-  assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
+  assert.equal(failed.body.code, "PARSE_INVALID");
   assert.equal(readFileSync(file, "utf8"), "{\"enabled\":}\n");
 });
 
@@ -3259,7 +3259,7 @@ test("write creates files and verifies JSON before overwrite", () => {
 
   const failed = runFail(["write", file, "--source", "{\"enabled\":}", "--overwrite", "--write"]);
   assert.equal(failed.status, 1);
-  assert.equal(failed.body.code, "PARSE_BROKEN_AFTER_EDIT");
+  assert.equal(failed.body.code, "PARSE_BROKEN_ON_CREATE");
   assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { enabled: true });
 
   const overwritten = JSON.parse(run(["write", file, "--source", "{\"enabled\":false}", "--overwrite", "--write", "--json"]));
